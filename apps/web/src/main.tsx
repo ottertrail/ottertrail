@@ -6,7 +6,7 @@ import "./styles/globals.css";
 import { watchTheme } from "./lib/theme.ts";
 import { createAppRouter } from "./router.tsx";
 
-// public/theme.js set the theme before the first paint; this keeps it in step.
+// Keep the theme set by public/theme.js current after the first paint.
 watchTheme();
 
 const router = createAppRouter();

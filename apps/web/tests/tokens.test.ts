@@ -3,11 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 
 /*
- * Guards the contrast guarantees documented in docs/design-system.md, in
- * both themes. Reads the dark tokens (the :root block in globals.css) and
- * the light ones (:root:not(.dark), which sets only what differs, so a
- * token it leaves out keeps its dark value or reference), resolves var()
- * references within the theme, and checks WCAG 2.x contrast ratios.
+ * Guard WCAG 2.x contrast ratios in both themes (docs/design-system.md).
+ * Light tokens inherit omitted dark values; resolve var() within each theme.
  */
 
 const css = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
@@ -140,7 +137,7 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     }
   });
 
-  // The initial squares in the sidebar: the instance's, the project switcher's, and the user's avatar.
+  // Covers instance, project-switcher, and user-avatar initials.
   test("an initial's square stands apart from the sidebar, and its letter meets 4.5:1", () => {
     expect(contrast(resolveHex("hairline-strong"), resolveHex("sidebar"))).toBeGreaterThanOrEqual(
       1.3,
@@ -154,8 +151,8 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     }
   });
 
-  // A toggle group's chosen item (components/ui/toggle.tsx): a toggle-on fill with toggle-on-foreground text,
-  // beside unchosen items that are transparent on the group's surface, or muted while hovered.
+  // Unselected neighbors are transparent or muted on hover
+  // (components/ui/toggle.tsx).
   describe("a toggle group's chosen item stands out (WCAG 1.4.11)", () => {
     for (const surface of [...contentSurfaces, "canvas", "muted"]) {
       test(`its fill meets 3:1 against ${surface}`, () => {
@@ -169,9 +166,8 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     });
   });
 
-  // A field is drawn as its edge (input) around a wash of input-fill: 30% at rest, 50% on hover
-  // (components/ui/input.tsx, select.tsx; light fields are transparent, which the surface
-  // checks cover). Disabled fields (80%) are exempt, as WCAG allows.
+  // Dark fields use input-fill at 30% or 50% (components/ui/input.tsx, select.tsx).
+  // Surface checks cover transparent light fields. WCAG exempts disabled fields (80%).
   const fieldStates = [
     ["at rest", 0.3],
     ["on hover", 0.5],
@@ -206,7 +202,7 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     for (const surface of contentSurfaces) {
       expect(contrast(resolveHex("input"), resolveHex(surface))).toBeGreaterThanOrEqual(3);
     }
-    // The thumb (components/ui/switch.tsx): foreground in dark, background in light.
+    // Match components/ui/switch.tsx's theme-dependent thumb.
     const thumb = theme === "dark" ? "foreground" : "background";
     expect(contrast(resolveHex(thumb), resolveHex("input"))).toBeGreaterThanOrEqual(3);
     expect(contrast(resolveHex("background"), resolveHex("primary"))).toBeGreaterThanOrEqual(3);
@@ -247,7 +243,6 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
       theme === "dark" ? (a: number, b: number) => a - b : (a: number, b: number) => b - a;
     expect(lightness).toEqual(lightness.toSorted(order));
     expect(new Set(lightness).size).toBe(steps.length);
-    // Each step a little further from the card than the one before.
     const card = luminance(resolveHex("card"));
     const distance = lightness.map((value) => Math.abs(value - card));
     expect(distance).toEqual(distance.toSorted((a, b) => a - b));
@@ -259,8 +254,8 @@ test("the dark link color is not used as a fill behind white text", () => {
   expect(contrast("#ffffff", resolver(darkTokens)("link"))).toBeLessThan(4.5);
 });
 
-// The light theme used to fill a chosen toggle mid-grey with dark text: AA, but hard
-// to see. Its dark fill must stand well apart from every surface and the hover wash.
+// AA contrast alone can leave selection hard to see; require a stronger
+// difference from every surface and the hover fill.
 test("the light theme's chosen toggle stands well apart (7:1 or more)", () => {
   const resolveHex = resolver(themes.light);
   for (const surface of ["background", "card", "popover", "canvas", "muted"]) {

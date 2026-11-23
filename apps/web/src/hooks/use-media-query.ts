@@ -1,9 +1,8 @@
 import * as React from "react";
 
 /**
- * Whether a media query matches, kept current as the window changes. Use the
- * system's breakpoints in rem (docs/design-system.md#responsive-rules), so
- * they follow the reader's font size.
+ * Use rem breakpoints so they follow the reader's font size
+ * (docs/design-system.md#responsive-rules).
  */
 export function useMediaQuery(query: string): boolean {
   const subscribe = React.useCallback(
@@ -21,11 +20,11 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
-/** Under 60rem the sidebar is a menu in a sheet, and multi-column layouts go to one column. */
+/** Sidebar sheet and single-column layouts below 60rem. */
 export const NARROW_SHELL = "(width < 60rem)";
 
-/** A phone: the gutters narrow, and lists drop the columns their item's page has. */
+/** Narrow gutters; lists omit columns available on the item's page. */
 export const PHONE = "(width < 40rem)";
 
-/** Under 64rem a list-and-detail screen shows the list alone; an item opens its own page. */
+/** Below 64rem, workbench items open on separate pages. */
 export const NARROW_WORKBENCH = "(width < 64rem)";

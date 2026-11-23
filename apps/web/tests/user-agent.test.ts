@@ -2,8 +2,6 @@ import { describe, expect, test } from "vite-plus/test";
 
 import { deviceName, parseUserAgent } from "../src/lib/account-api.ts";
 
-/* The Sessions tab's browser and system, read from a User-Agent (lib/account-api.ts). */
-
 describe("parseUserAgent", () => {
   test("names the common browsers and systems", () => {
     expect(
@@ -39,15 +37,14 @@ describe("parseUserAgent", () => {
       `${"Edg/".repeat(4_000)}${digits}`,
     ];
     for (const userAgent of hostile) {
-      // The fastest of five: a busy machine (the full check runs the API's
-      // tests alongside) can pause any one run for longer than the limit.
+      // Use the fastest of five because concurrent API tests can pause a run.
       let fastest = Infinity;
       for (let run = 0; run < 5; run += 1) {
         const start = performance.now();
         parseUserAgent(userAgent);
         fastest = Math.min(fastest, performance.now() - start);
       }
-      // The quadratic pattern took about 144 ms on the first; linear ones take well under 1.
+      // Guard against quadratic parsing without failing on scheduling delays.
       expect(fastest).toBeLessThan(20);
     }
   });

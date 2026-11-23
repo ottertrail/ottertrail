@@ -1,13 +1,3 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full
- * nav: the app's sidebar, a sheet under 60rem · signature: the report strip; the list beside its detail
- * states: loading, empty, error, full · axes: dark+light/sans/orchid · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, the approved mockups set the blocks */
-/* Hallmark · dismissed F18 · data-slot is shadcn's hook here, not an image slot */
-/* Hallmark · dismissed F1 · the straight apostrophes are the app's copy, kept as found by the redesign */
-/* Hallmark · dismissed 54 · BreakdownTable's heading level comes from a prop */
-/* Hallmark · waive 49b · the Databases page's query shape links (a.line-clamp-2) · a shape shows its first two lines by design, the whole in its tooltip (TruncatedText) and on its page */
-/* Hallmark · dismissed F25 · a report table that scrolls on a phone pins its first column and its actions column (pinned-column.ts), with the scroll hint at the edge; a list with a chosen item (Members) shows the list or the item on a phone, one at a time */
-/* Hallmark · dismissed 70 · add-goal-dialog.tsx's "signup" is an example event name, not a success message */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -15,16 +5,12 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /*
- * Ottertrail design tokens: a dark theme and a light one.
+ * Dark tokens are the base; :root:not(.dark) overrides light values.
+ * References such as --primary: var(--brand) follow the theme.
+ * public/theme.js sets <html>'s dark class before paint; src/lib/theme.ts
+ * keeps it current for shadcn's dark: variants.
  *
- * The dark values are the base (:root). The light theme (:root:not(.dark)
- * below) sets only the values that differ; tokens that point at another
- * (--primary: var(--brand)) follow it. The theme is the `dark` class on
- * <html>, set before the first paint by public/theme.js and kept by
- * src/lib/theme.ts, so shadcn's dark: variants switch with it.
- *
- * Decisions and contrast notes are documented in docs/design-system.md. tests/tokens.test.ts checks the
- * documented contrast pairs in both themes, so update both when a value changes.
+ * Update docs/design-system.md and tests/tokens.test.ts when contrast values change.
  */
 
 @custom-variant dark (&:is(.dark *));
@@ -33,8 +19,8 @@
   color-scheme: dark;
 
   /*
-   * Neutrals: greys with a faint orchid tint (OKLCH hue 325, chroma 0.003 to
-   * 0.012), so they belong to the accent without reading as purple.
+   * Gray neutrals use a faint orchid tint to match the accent:
+   * OKLCH hue 325, chroma 0.003 to 0.012.
    */
   --canvas: #010101;
   --surface-1: #110f11;
@@ -45,15 +31,13 @@
   --hairline-strong: #373338;
   --hairline-tertiary: #423d42;
   /*
-   * The edge of a field (input, textarea, select, combobox, checkbox,
-   * radio): at least 3:1 on background, card and popover (WCAG 1.4.11), so
-   * a field can be found without its label.
+   * Field edges need at least 3:1 on background, card, and popover
+   * to be visible without labels (WCAG 1.4.11).
    */
   --field-edge: #746f75;
   /*
-   * The chosen item of a toggle group (Unresolved, Resolved, All): a fill
-   * at least 3:1 on the surfaces, on the unchosen items (transparent) and
-   * on their hover wash (muted), with ink text 4.6:1 on it.
+   * Selected toggles need at least 3:1 against surfaces, transparent
+   * neighbors, and their muted hover fill. Ink text has 4.6:1 contrast.
    */
   --toggle-on: var(--field-edge);
   --toggle-on-foreground: var(--ink);
@@ -76,7 +60,6 @@
   /* Link text: a lighter step of the accent. Too light for white text (2.51:1), so never a fill. */
   --link: #d588d9;
 
-  /* Feedback */
   --warning: #fab219;
   --danger: #f47373;
 
@@ -98,7 +81,7 @@
   --destructive: var(--danger);
   --border: var(--hairline);
   --input: var(--field-edge);
-  /* The wash inside fields and outline buttons (bg-input-fill/30), kept quiet. */
+  /* Subtle field and outline-button fill, used as bg-input-fill/30. */
   --input-fill: var(--hairline-strong);
   --ring: var(--brand-focus);
   --radius: 0.5rem;
@@ -129,10 +112,9 @@
   --chart-8: #e66767;
 
   /*
-   * Sequential scale (magnitude, low to high) for heatmaps such as the
-   * retention table: the chart-1 blue from near the card surface to a
-   * full step. Values are always written in the cell as well; ink text
-   * stays above 4.5:1 on every step (tests/tokens.test.ts).
+   * Heatmaps use chart-1 blue from low to high magnitude.
+   * Cells also show values as text; ink stays above 4.5:1 on every step
+   * (tests/tokens.test.ts).
    */
   --seq-1: #172437;
   --seq-2: #1a3354;
@@ -141,14 +123,11 @@
   --seq-5: #2563ad;
 
   /*
-   * The parts of a state chart that are not a problem (the Logs chart's
-   * info records, the Traces chart's traces without errors), beside the
-   * status colors: a light neutral, so warnings and errors stand out.
-   * ink-tertiary is the quieter part below it (debug, trace, or no
-   * severity). The dataviz validator on surface-1 and surface-2: the
-   * Logs chart's parts at least 13.8 apart under color blindness and
-   * 18.3 to normal vision, the Traces chart's two 8.2 and 15.6, every
-   * part at least 3:1 (docs/design-system.md, "Charts").
+   * Neutral info logs and error-free traces let warnings and errors stand out.
+   * ink-tertiary covers debug, trace, and missing severity.
+   * On surface-1 and surface-2, minimum color differences under color blindness
+   * and normal vision are 13.8 and 18.3 for Logs, 8.2 and 15.6 for Traces.
+   * Every part meets 3:1 (docs/design-system.md, "Charts").
    */
   --chart-neutral: #b0a9b0;
 
@@ -160,11 +139,9 @@
 }
 
 /*
- * The light theme: the same orchid and the same faintly tinted greys (OKLCH
- * hue 325) as a light ladder, from the docs site's light theme. The canvas
- * (page frame and sidebar) is the darkest step, the main panel near white,
- * cards a step down from it and popovers white. Text, links and the status
- * colors are darker steps, so each keeps its ratio on white.
+ * Light tones use orchid-tinted grays (OKLCH hue 325) from the docs site.
+ * The canvas is darkest; the panel is near white, cards slightly darker,
+ * and popovers white. Darker text, links, and status colors preserve contrast.
  */
 :root:not(.dark) {
   color-scheme: light;
@@ -180,9 +157,8 @@
   /* 3:1 or more on every surface and on a field's wash. */
   --field-edge: #7e787e; /* oklch(0.58 0.012 325) */
   /*
-   * A dark fill with white text, so the chosen item stands out at a glance:
-   * 7.7:1 or more on the surfaces and on the hover wash (muted), white on it
-   * 9.5:1. A mid-grey fill with dark text passed AA but read as muddy.
+   * Dark fill makes selection visible: at least 7.7:1 against surfaces
+   * and muted hover fills, with white text at 9.5:1.
    */
   --toggle-on: #4a444a; /* oklch(0.4 0.012 325) */
   --toggle-on-foreground: #ffffff;
@@ -203,11 +179,10 @@
   --warning: #8a5100; /* oklch(0.49 0.11 65) */
   --danger: #a90017; /* oklch(0.46 0.19 25) */
 
-  /* The hover wash: ink at 6%, where dark uses white at 6%. */
   --accent: rgb(25 20 25 / 0.06);
   /*
-   * A lighter fill than the hairline, so the chosen toggle (toggle-on) keeps
-   * 3:1 against it as a hovered neighbor; also secondary text's 5.1:1.
+   * Lighter than hairline to keep toggle-on at 3:1 against hovered neighbors
+   * and secondary text at 5.1:1.
    */
   --muted: #ebe6eb; /* oklch(0.93 0.009 325) */
 
@@ -228,9 +203,8 @@
   --chart-8: #e34948;
 
   /*
-   * The sequential scale turns around: on a light surface a larger value is
-   * darker. Steps 100 to 400 of the reference blue ramp; ink stays 5:1 or
-   * more on the darkest.
+   * Larger values are darker on light surfaces. Reference blue steps
+   * 100 to 400 keep ink at least 5:1 on the darkest step.
    */
   --seq-1: #cde2fb;
   --seq-2: #9ec5f4;
@@ -248,18 +222,16 @@
   --chart-neutral: #565056; /* oklch(0.44 0.012 325) */
 
   /*
-   * Status marks (chart parts, meters, the badges' tints). Warning's text
-   * is too light for a mark at 3:1 contrast to stay apart from critical, so
-   * the mark takes a lighter amber (3.5:1 on cards); a badge's text stays
-   * the warning text color.
+   * Warning marks use lighter amber (3.5:1 on cards) to stay distinct from
+   * critical at 3:1 contrast. Badge text keeps the warning text color.
    */
   --status-warning: #be7200; /* oklch(0.62 0.14 65) */
   --status-serious: #ba4f1f; /* oklch(0.56 0.15 42) */
 }
 
 /*
- * Page gutters (px-gutter): 24px, 16px under 40rem, so content keeps its
- * width on a phone. The header, the filter bar and page containers use it.
+ * Shared header, filter-bar, and page gutters narrow from 24px to 16px
+ * under 40rem to preserve content width on phones.
  */
 :root {
   --gutter: 1.5rem;
@@ -350,9 +322,8 @@
   --color-status-critical: var(--status-critical);
 
   /*
-   * Radius scale, set so shadcn's component classes need no local edits:
-   * buttons and inputs are rounded-lg (8px), cards are rounded-xl (12px),
-   * and badges are rounded-4xl (pill).
+   * Match shadcn's classes: rounded-lg buttons and inputs (8px),
+   * rounded-xl cards (12px), and rounded-4xl badges (pill).
    */
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -363,7 +334,6 @@
   --radius-4xl: 9999px;
 }
 
-/* Type scale. Use as text-display-lg, text-caption, etc. */
 @theme {
   --text-display-xl: 5rem;
   --text-display-xl--line-height: 1.05;
@@ -419,31 +389,24 @@
   }
 
   /*
-   * Links and other controls without a ring of their own (a report's text
-   * links, a table's sort buttons) get the focus ring at once, in full
-   * strength. shadcn's parts (with a data-slot) draw their own and are left
-   * out, so their ring never gets a second outline.
+   * Give plain controls a full-strength focus ring. Exclude shadcn's
+   * data-slot elements because they draw their own ring.
    */
   :where(a[href], button, [tabindex]:not([tabindex="-1"])):not([data-slot]):focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
-  /* Inside a table that scrolls, the ring is drawn inward, so the scroller never clips it. */
+  /* Draw focus rings inward so scrolling tables do not clip them. */
   :where([data-slot="table-container"])
     :where(a[href], button, [tabindex]:not([tabindex="-1"])):not([data-slot]):focus-visible {
     outline-offset: -2px;
   }
 
   /*
-   * Every enabled control a click acts on shows the pointer: Tailwind 4's
-   * preflight leaves buttons at the default arrow. Toggle and tab items,
-   * switches, checkboxes and radios, select and combobox triggers, menu and
-   * list options, a <summary>, and a label around a checkbox, radio or
-   * switch. A combobox's text field keeps its text cursor. Disabled
-   * controls keep their own cursor (the default arrow, or not-allowed where
-   * a control sets it). A class on the control (cursor-default on a
-   * tooltip's bar) wins, as utilities come after the base layer.
+   * Tailwind 4 preflight leaves buttons with an arrow; enabled controls
+   * need a pointer. Text inputs keep the text cursor, and disabled controls
+   * keep their own cursor. Utility classes override this base rule.
    */
   :is(
       button,

@@ -79,9 +79,8 @@ import { projectsQuery } from "@/lib/projects-api";
 import { type Device, isDevice } from "@/lib/speed-api";
 
 /**
- * Every page loads in a chunk of its own on first use (docs/dashboard.md,
- * "Code splitting"); the shell, the router, the session check, and the
- * layouts above the pages stay in the main chunk.
+ * Pages load on demand. Keep the shell, router, session check, and layouts
+ * in the main chunk (docs/dashboard.md, "Code splitting").
  */
 const AccountPage = lazyPage(() => import("@/features/account/account-page"), "AccountPage");
 const AlertsPage = lazyPage(() => import("@/features/alerts/alerts-page"), "AlertsPage");
@@ -149,15 +148,13 @@ const UptimePage = lazyPage(() => import("@/features/uptime/uptime-page"), "Upti
 const UserPage = lazyPage(() => import("@/features/users/user-page"), "UserPage");
 const UsersPage = lazyPage(() => import("@/features/users/users-page"), "UsersPage");
 
-/** Whether someone is signed in, from the cache while a recent check said so (sessionQuery). */
+/** Reuses recent session checks from the query cache. */
 const signedIn = (queryClient: QueryClient) => queryClient.fetchQuery(sessionQuery());
 
 /**
- * Reads a query value as JSON only when writing that JSON back gives the
- * same text, so the router's JSON reading never changes a value: "2024"
- * and "true" still read as values, while "2024.10", "1e3", or a 20-digit
- * number stay text, exactly as a hand-written filter has them. Links the
- * app builds quote such values, so they read back the same either way.
+ * Require an exact JSON round trip to preserve hand-written filters.
+ * "2024" and "true" parse; "2024.10", "1e3", and inexact 20-digit numbers stay text.
+ * App links quote these values to preserve them.
  */
 function parseExactJson(text: string): unknown {
   const value: unknown = JSON.parse(text);
@@ -170,22 +167,20 @@ function parseExactJson(text: string): unknown {
 const isClientError = (error: unknown) =>
   error instanceof ApiError && error.status >= 400 && error.status < 500;
 
-/** What every route can read from the router. */
 interface RouterContext {
   queryClient: QueryClient;
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Outlet,
-  // Before the shell: an address no route has, for someone signed out.
+  // Signed-out visitors see unknown URLs without the shell.
   notFoundComponent: RouteNotFound,
 });
 
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sign-in",
-  // A check that fails (a rate limit, the API down) shows the form: signing
-  // in works without knowing, and its own errors say what went wrong.
+  // Failed session checks must not block the sign-in form.
   beforeLoad: async ({ context }) => {
     if (await signedIn(context.queryClient).catch(() => false)) {
       throw redirect({ to: "/" });
@@ -202,7 +197,7 @@ const setupRoute = createRoute({
   pendingComponent: AuthPending,
 });
 
-/** Accepting an invitation: public, the token in the fragment (docs/access.md). */
+/** Public; the token stays in the fragment (docs/access.md). */
 const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/invite",
@@ -210,7 +205,7 @@ const inviteRoute = createRoute({
   pendingComponent: AuthPending,
 });
 
-/** Asking for a reset link by email ("Forgot password?"): public, with email set up. */
+/** Public when email is configured. */
 const forgotPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/forgot-password",
@@ -218,7 +213,7 @@ const forgotPasswordRoute = createRoute({
   pendingComponent: AuthPending,
 });
 
-/** Setting a password from a reset link: public, the token in the fragment. */
+/** Public; the reset token stays in the fragment. */
 const resetPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/reset-password",
@@ -227,19 +222,16 @@ const resetPasswordRoute = createRoute({
 });
 
 /**
- * Every page inside needs a session; without one (no session, or a 401),
- * the visitor goes to sign-in. A check that fails otherwise (a 429, a 5xx,
- * no answer) shows the error alone, before the shell, instead of signing
- * them out (RouteError).
- * An address no route has gets the 404 in the shell (the catch-all route
- * below), or, for someone signed out, alone (the root's notFoundComponent).
+ * Missing sessions and 401s redirect to sign-in. Other failures (429, 5xx,
+ * no response) show RouteError before the shell and preserve the session.
+ * Unknown URLs show a 404 inside the shell only for signed-in visitors.
  */
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   beforeLoad: async ({ context, preload, matches }) => {
-    // Hovering a link preloads its route: that is no reason to ask the API
-    // again (Better Auth rate-limits get-session), and the click checks.
+    // Skip preload session checks to avoid Better Auth's get-session rate limit.
+    // Navigation checks the session.
     if (preload) {
       return;
     }
@@ -251,12 +243,11 @@ const appRoute = createRoute({
       throw redirect({ to: "/sign-in" });
     }
   },
-  // Nothing while the session is checked: the shell, or sign-in, follows.
+  // Wait for the session check before showing the shell.
   pendingComponent: () => null,
   component: AppLayout,
 });
 
-/** Any address no other route has: the 404, in the shell. */
 const unknownAddressRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "$",
@@ -283,7 +274,6 @@ const homeRoute = createRoute({
   },
 });
 
-/** The list of projects: the instance level, above any one project. */
 const projectsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/projects",
@@ -291,16 +281,10 @@ const projectsRoute = createRoute({
   component: ProjectsPage,
 });
 
-/**
- * Inside one project. Every module (web analytics, speed, users, errors,
- * product analytics) is a page under it, and the sidebar
- * switches to the project's own menu.
- */
 const projectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/projects/$projectId",
-  // Another project is another page: its forms, edits and local state start
-  // afresh, never carried over from the project before.
+  // Discard forms, edits, and local state when switching projects.
   remountDeps: ({ params }) => params.projectId,
   component: function ProjectRouteComponent() {
     const { projectId } = projectRoute.useParams();
@@ -308,7 +292,6 @@ const projectRoute = createRoute({
   },
 });
 
-/** An address inside a project that no page has: the 404, under the project's menu. */
 const unknownProjectPageRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "$",
@@ -369,14 +352,10 @@ const webAnalyticsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/web-analytics",
   staticData: { title: "Web analytics", access: "web_analytics" },
-  // An unknown or missing period falls back to the default instead of failing.
-  // The router merges the result over the raw query, so an invalid period
-  // has to be overwritten, not just left out.
-  // Filters (country=DE, page=/pricing …) live in the address too, so a
-  // filtered view can be linked, reloaded, and left with the Back button.
-  // Chosen days (from, to) win over a period; days the API would refuse are
-  // dropped, so the page shows the default period instead of an error.
-  // The environment (env) is left out for production, the default.
+  // The router merges over the raw query: overwrite invalid values explicitly.
+  // URL filters support links, reloads, and Back navigation. Valid from/to days
+  // override the period; invalid days fall back to the default period.
+  // Omit the default production environment.
   validateSearch: (
     search: { period?: unknown; from?: unknown; to?: unknown; env?: unknown } & Partial<
       Record<keyof Filters, unknown>
@@ -496,7 +475,6 @@ const errorsRoute = createRoute({
       isStatusFilter(search.status) && search.status !== DEFAULT_STATUS_FILTER
         ? search.status
         : undefined,
-    // Whose groups: everyone's, the default, is left out.
     assignee:
       isAssigneeFilter(search.assignee) && search.assignee !== DEFAULT_ASSIGNEE_FILTER
         ? search.assignee
@@ -681,7 +659,6 @@ const tracesRoute = createRoute({
       name: filters.name,
       errors: filters.errors,
       min: filters.minDuration,
-      // The workbench's selected trace, when it ran, and its span shown.
       trace: isTraceId(search.trace) ? search.trace.toLowerCase() : undefined,
       ...traceSpanSearch(search),
     };
@@ -706,7 +683,6 @@ const isMoment = (value: unknown): value is string =>
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/.test(value) &&
   !Number.isNaN(Date.parse(value));
 
-/** When a trace ran, and the span shown, from an address. */
 function traceSpanSearch(search: { at?: unknown; span?: unknown }): {
   at: string | undefined;
   span: string | undefined;
@@ -737,7 +713,6 @@ const traceRoute = createRoute({
   }),
 });
 
-/** A server's log records: days and environment, and filters (service, severity, words, trace). */
 const logsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/logs",
@@ -781,7 +756,6 @@ const logsRoute = createRoute({
   }),
 });
 
-/** A server's metrics: days and environment, as on the other telemetry pages. */
 const metricsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/metrics",
@@ -856,7 +830,6 @@ const metricRoute = createRoute({
   }),
 });
 
-/** Each service's requests by route: days and environment; optionally one service, a route of it marked. */
 const servicesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/services",
@@ -881,7 +854,6 @@ const servicesRoute = createRoute({
   }),
 });
 
-/** One service's charts: its name in the path; days, environment, and optionally one of its routes. */
 const serviceRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/services/$service",
@@ -910,7 +882,6 @@ const serviceRoute = createRoute({
   }),
 });
 
-/** The database calls in traces: days, environment, and what the query shapes are sorted by. */
 const databasesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/databases",
@@ -937,7 +908,6 @@ const databasesRoute = createRoute({
   }),
 });
 
-/** One query shape: its ID in the path; days and environment. */
 const queryShapeRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/databases/$shapeId",
@@ -960,7 +930,6 @@ const queryShapeRoute = createRoute({
   }),
 });
 
-/** The LLM calls in traces: days, environment, and filters by service, provider, model, and feature. */
 const aiRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/ai",
@@ -991,7 +960,6 @@ const aiRoute = createRoute({
   }),
 });
 
-/** What the AI calls pages' addresses hold: the days, environment, and the list's filters. */
 type AiCallsSearchInput = ErrorSearchInput & {
   service?: unknown;
   provider?: unknown;
@@ -1017,7 +985,6 @@ function aiCallsSearch(search: AiCallsSearchInput) {
   };
 }
 
-/** The filters an AI calls page's address holds, for the page. */
 const aiCallFilters = (search: ReturnType<typeof aiCallsSearch>) => ({
   service: search.service,
   provider: search.provider,
@@ -1118,7 +1085,6 @@ const aiConversationRoute = createRoute({
   }),
 });
 
-/** The hosts that sent host metrics: days and environment. */
 const hostsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/hosts",
@@ -1140,7 +1106,6 @@ const hostsRoute = createRoute({
   }),
 });
 
-/** One host's charts: its host.name in the path. */
 const hostRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/hosts/$host",
@@ -1163,7 +1128,6 @@ const hostRoute = createRoute({
   }),
 });
 
-/** The project's uptime checks, and the days the selected one's detail covers. */
 const uptimeRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/uptime",
@@ -1182,7 +1146,6 @@ const uptimeRoute = createRoute({
   }),
 });
 
-/** One check: its ID in the path, and the days its chart, failures, and incidents cover. */
 const checkRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/uptime/$checkId",
@@ -1279,7 +1242,6 @@ const ruleRoute = createRoute({
   }),
 });
 
-/** Product analytics: its reports (events, funnel, retention) as tabs, each its own page. */
 const productRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/product",
@@ -1295,7 +1257,6 @@ const productRangeSearch = (search: ErrorSearchInput) => ({
   ...environmentSearch(search),
 });
 
-/** Product analytics opens on its events, keeping the days and environment. */
 const productIndexRoute = createRoute({
   getParentRoute: () => productRoute,
   path: "/",
@@ -1437,7 +1398,6 @@ const projectSettingsRoute = createRoute({
   }),
 });
 
-/** The instance's settings: the workspace level, above any one project. */
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
@@ -1553,11 +1513,7 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-/**
- * The dashboard's router, with its own query cache. The app makes one at
- * start-up; tests make one per test, with an in-memory history, so no state
- * carries over between them.
- */
+/** Creates an isolated query cache so router instances share no cached state. */
 export function createAppRouter({
   history,
   retryDelayMs,
@@ -1568,11 +1524,9 @@ export function createAppRouter({
 } = {}) {
   const queryClient = new QueryClient({
     queryCache: new QueryCache({
-      // A session that ended (signed out elsewhere, or expired) sends the
-      // visitor to sign-in instead of showing errors.
       onError: (error) => {
         if (error instanceof ApiError && error.status === 401) {
-          // As on signing out: whoever signs in next starts with nothing cached.
+          // Prevent the next user from seeing this user's cached data.
           queryClient.clear();
           void router.navigate({ to: "/sign-in" });
         }
@@ -1591,15 +1545,11 @@ export function createAppRouter({
     routeTree,
     ...(history === undefined ? {} : { history }),
     context: { queryClient },
-    // Hovering or focusing a link loads its page's chunk (and runs its
-    // routes' checks) 50ms later, so a click rarely waits for the download.
+    // Preload chunks and route checks after 50ms of hover or focus to reduce click latency.
     defaultPreload: "intent",
-    // A page still downloading after pendingMs (1s) shows a skeleton, for at
-    // least pendingMinMs (0.5s), so a quick load never flashes one.
+    // Delay skeletons by pendingMs (1s); keep them for pendingMinMs (0.5s) to avoid flashes.
     defaultPendingComponent: PagePending,
     defaultErrorComponent: RouteError,
-    // Any other 404 (an address the catch-all routes miss, a route that
-    // throws notFound()): the same state, in that route's place.
     defaultNotFoundComponent: RouteNotFound,
     parseSearch: parseSearchWith(parseExactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
@@ -1610,7 +1560,7 @@ export function createAppRouter({
     ),
   });
   router.subscribe("onBeforeNavigate", ({ fromLocation }) => {
-    // The first load comes from nowhere.
+    // Exclude the initial load from navigation tracking.
     if (fromLocation !== undefined) {
       markNavigated(router);
     }

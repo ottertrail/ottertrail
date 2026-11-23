@@ -5,10 +5,7 @@ import "../../src/styles/globals.css";
 import { createAppRouter } from "../../src/router.tsx";
 import { trackMounted } from "./mounted.ts";
 
-/**
- * Renders the whole dashboard at `path`, with an in-memory address bar, so
- * a test goes through the same routes, redirects, and layout as a visitor.
- */
+/** Uses real routes, redirects, and layout with in-memory history. */
 export function renderApp(path: string) {
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createAppRouter({ history, retryDelayMs: 0 });
@@ -23,7 +20,6 @@ export function renderApp(path: string) {
   return router;
 }
 
-/** The address the router shows, such as "/projects/abc/web-analytics?period=30d". */
 export function currentPath(router: ReturnType<typeof renderApp>): string {
   return router.state.location.href;
 }

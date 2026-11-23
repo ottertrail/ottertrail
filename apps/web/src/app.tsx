@@ -9,7 +9,7 @@ import { documentTitle, useDocumentTitle, useStatusTitle } from "@/lib/document-
 import { projectsQuery } from "@/lib/projects-api";
 import { rememberSidebar, sidebarOpen } from "@/lib/sidebar-state";
 
-/** Under 60rem the sidebar is a sheet: a link chosen in it closes it, as the page changes. */
+/** Closes the sidebar sheet after navigation below 60rem. */
 function CloseMenuOnNavigation() {
   const router = useRouter();
   const { setOpenMobile } = useSidebar();
@@ -20,7 +20,6 @@ function CloseMenuOnNavigation() {
   return null;
 }
 
-/** The tab's title: the page, then the project when inside one. */
 function TabTitle({
   page,
   projectId,
@@ -38,12 +37,10 @@ function TabTitle({
   return null;
 }
 
-/** The signed-in dashboard: the sidebar and the current page, with no header bar. */
 export function AppLayout() {
   const matches = useMatches();
   const { projectId } = useParams({ strict: false });
   const title = matches.findLast((match) => match.staticData.title !== undefined)?.staticData.title;
-  // Expanded unless this browser collapsed it (Ctrl or ⌘ B, or the sidebar's button).
   const [open, setOpen] = React.useState(sidebarOpen);
   const changeOpen = React.useCallback((next: boolean) => {
     setOpen(next);
@@ -55,7 +52,6 @@ export function AppLayout() {
       <TabTitle page={title} projectId={projectId} />
       <AppSidebar />
       <SidebarInset className="min-h-0 overflow-hidden min-[60rem]:ring-1 min-[60rem]:ring-border min-[60rem]:peer-data-[variant=inset]:shadow-none">
-        {/* No header bar: the page's title row scrolls with it. */}
         <PageWithHeader>
           <Outlet />
         </PageWithHeader>

@@ -2,13 +2,10 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import * as React from "react";
 
 /**
- * One text value kept in the address as `?<param>=<value>`, such as a
- * workbench's selected item or a settings page's tab, so it survives a
- * reload and goes back with the Back button. Undefined when it is absent;
- * setting undefined removes it. Other search values stay as they are.
- * `replace` changes the current history entry instead of adding one, for
- * steps the Back button should skip (moving through a list with keys);
- * `also` sets other values with it, such as what belongs to the old value.
+ * Keeps a text value in the URL for reloads and Back navigation.
+ * Missing or empty values read as undefined; setting undefined removes the value.
+ * Other search values are preserved. `replace` skips a new history entry;
+ * `also` updates related search values together.
  */
 export function useSearchParam(param: string) {
   const navigate = useNavigate();

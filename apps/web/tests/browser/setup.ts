@@ -6,14 +6,13 @@ import { fakeFetch, removeFakeApi } from "./fake-api.ts";
 import { installFakeEventSource } from "./fake-event-source.ts";
 import { unmountAll } from "./mounted.ts";
 
-// Runs before the test file loads the app, so every client that keeps a
-// reference to fetch at start-up (the sign-in client does) gets the fake one.
-// Nothing imported above loads the app.
+// Install before app imports so clients that capture fetch use the fake.
+// Imports above must not load the app.
 globalThis.fetch = fakeFetch;
-// Nor does the Server log's stream reach a server: tests play its side (fake-event-source.ts).
+// Keep Server log streams local to tests (fake-event-source.ts).
 installFakeEventSource();
 
-/** Console errors during a test, such as React or Base UI warnings; each test expects none. */
+/** Console errors fail the test, including React and Base UI warnings. */
 let consoleErrors: unknown[][] = [];
 
 beforeEach(async () => {
@@ -23,7 +22,7 @@ beforeEach(async () => {
   });
   window.localStorage.clear();
   installFakeEventSource();
-  // Each test starts on a dark device with no stored choice: System, so dark.
+  // Without a stored choice, System follows the emulated dark scheme.
   await emulateColorScheme("dark");
   resetThemeForTests();
 });

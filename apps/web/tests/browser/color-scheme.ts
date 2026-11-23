@@ -1,8 +1,7 @@
 import { commands } from "vite-plus/test/browser/context";
 
 /**
- * Sets the device's color scheme, as `prefers-color-scheme` reads it, through
- * the command vite.config.ts adds (Playwright's emulateMedia on the test page).
+ * Uses vite.config.ts's Playwright command to change prefers-color-scheme.
  */
 export async function emulateColorScheme(scheme: "light" | "dark"): Promise<void> {
   const command: unknown = Reflect.get(commands, "emulateColorScheme");

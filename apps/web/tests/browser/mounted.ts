@@ -1,4 +1,4 @@
-/** Apps a test rendered; the shared afterEach (setup.ts) unmounts them. */
+/** setup.ts unmounts these apps after each test. */
 const unmounts: (() => void)[] = [];
 
 export function trackMounted(unmount: () => void) {

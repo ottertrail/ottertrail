@@ -1,6 +1,6 @@
 import * as React from "react";
 
-/** Waits until `value` has stopped changing for `ms`, so typing does not send a request per key. */
+/** Debounces changes to avoid a request per keystroke. */
 export function useSettled<T>(value: T, ms: number): T {
   const [settled, setSettled] = React.useState(value);
   React.useEffect(() => {
