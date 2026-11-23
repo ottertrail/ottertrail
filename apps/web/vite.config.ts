@@ -40,6 +40,10 @@ function noApiInTests(): Plugin {
   };
 }
 
+// GitHub's runner for a private repository has 2 CPUs, against 14 threads
+// locally: in CI (CI=true) tests and waits get longer limits.
+const CI = process.env.CI === "true";
+
 export default defineConfig({
   plugins: lazyPlugins(() => [
     react(),
@@ -65,6 +69,7 @@ export default defineConfig({
     proxy: process.env.VITEST ? {} : Object.fromEntries(API_PATHS.map((path) => [path, apiOrigin])),
   },
   test: {
+    ...(CI ? { testTimeout: 60_000, expect: { poll: { timeout: 5_000 } } } : {}),
     projects: [
       {
         extends: true,

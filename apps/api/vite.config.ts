@@ -3,6 +3,10 @@ import { defineConfig } from "vite-plus";
 import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
 import { REFERRER_SPAM_COMMIT } from "./src/enrichment/referrer-spam/list.ts";
 
+// GitHub's runner for a private repository has 2 CPUs, against 14 threads
+// locally: in CI (CI=true) tests and waits get longer limits.
+const CI = process.env.CI === "true";
+
 export default defineConfig({
   pack: {
     entry: {
@@ -46,8 +50,8 @@ export default defineConfig({
   test: {
     environment: "node",
     // Database setup under concurrent load can exceed the default five seconds.
-    testTimeout: 15_000,
-    hookTimeout: 30_000,
+    testTimeout: CI ? 60_000 : 15_000,
+    hookTimeout: CI ? 120_000 : 30_000,
     // With a 7-CPU, 4 GB database VM, 5 workers matched 13 in total time
     // (170 s vs. 178 s) and cut the slowest setup from 8 s to 4.5 s.
     maxWorkers: 5,

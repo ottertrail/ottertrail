@@ -27,6 +27,10 @@ const scripts = {
   s: { entry: "src/snapshot.ts", banner: RRWEB_BANNER },
 };
 
+// GitHub's runner for a private repository has 2 CPUs, against 14 threads
+// locally: in CI (CI=true) tests and waits get longer limits.
+const CI = process.env.CI === "true";
+
 export default defineConfig({
   // Keep each script in one file for loading by script tag.
   pack: Object.entries(scripts).map(([name, script]) => ({
@@ -54,6 +58,7 @@ export default defineConfig({
     open: "/",
   },
   test: {
+    ...(CI ? { testTimeout: 60_000, expect: { poll: { timeout: 5_000 } } } : {}),
     // Tests live in tests/, not under the playground's root.
     root: import.meta.dirname,
     projects: [
