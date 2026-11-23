@@ -286,7 +286,7 @@ The request limit lets one client send 50 events in each of its requests, 100 a 
 
 That is also its cost: everyone behind one address shares one bucket. An office, a school, or a mobile carrier's shared address (carrier-grade NAT, where thousands of phones leave through a few addresses) can reach it on a busy site, and then their events wait and are retried (429, `Retry-After`): the tracker keeps up to 200 events and tries again, so a short peak loses nothing, but a long one can. A site whose visitors mostly arrive through one address would need a higher limit; it is a constant for now, not a setting.
 
-Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see [development](development.md#configuration)) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address.
+Behind a proxy (Cloudflare, Caddy), every request seems to come from the proxy's address. Set `TRUST_PROXY` (see [development](development.md#configuration)) so the API reads the client's address from `X-Forwarded-For`. Leave it unset without a proxy: otherwise any client could claim any address. Set the number of hops to exactly the number of proxies that append to `X-Forwarded-For`: a number too high is as unsafe as no proxy, because entries the client wrote then count. The Docker deployment sets `1`, for Caddy.
 
 ### Spam
 
@@ -515,11 +515,11 @@ A geolocation database maps IP address ranges to places. Ottertrail uses DB-IP's
 
 `GEO_SOURCE` picks where locations come from (see [development](development.md#configuration)):
 
-| Value                | Locations from                                                                                                                                                                                                                                                       |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `database` (default) | The file at `GEO_DATABASE_PATH`. If it is missing, the API starts anyway, stores events without a location, and logs a warning.                                                                                                                                      |
-| `cloudflare`         | Headers Cloudflare adds: `CF-IPCountry`, plus `CF-Region` and `CF-IPCity` with its "Add visitor location headers" managed transform. Cloudflare keeps them current. Use only when every request passes through Cloudflare, since anyone else can send these headers. |
-| `none`               | No location lookup.                                                                                                                                                                                                                                                  |
+| Value                | Locations from                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `database` (default) | The file at `GEO_DATABASE_PATH`. If it is missing, the API starts anyway, stores events without a location, and logs a warning.                                                                                                                                                                                                                                 |
+| `cloudflare`         | Headers Cloudflare adds: `CF-IPCountry`, plus `CF-Region` and `CF-IPCity` with its "Add visitor location headers" managed transform. Cloudflare keeps them current. Use only when every request passes through Cloudflare, since anyone else can send these headers: lock the server to Cloudflare ([deployment](deployment.md#lock-the-server-to-your-proxy)). |
+| `none`               | No location lookup.                                                                                                                                                                                                                                                                                                                                             |
 
 ### Why the file is held in memory
 
