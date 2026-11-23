@@ -360,6 +360,8 @@ export interface ReplayChunksTable {
   /** The browser stopped at the size limit: the replay is shorter than it was. */
   cut: boolean;
   data: Buffer;
+  /** What `data` unpacks to, in bytes: a replay's sum is capped (MAX_REPLAY_UNPACKED_BYTES). */
+  unpacked_bytes: ColumnType<number, number | undefined, never>;
   received_at: ColumnType<Date, Date | undefined, never>;
 }
 

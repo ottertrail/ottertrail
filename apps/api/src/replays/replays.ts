@@ -24,8 +24,15 @@ export const MAX_CHUNK_UNPACKED_BYTES = 1024 ** 2;
 export const MAX_CHUNKS = 100;
 /** Most bytes of one replay's chunks: the browser stops at 2,000,000. */
 export const MAX_REPLAY_BYTES = 2_100_000;
-/** Most a replay unpacks to when joined: its JSON, read once by the worker. */
-const MAX_REPLAY_JSON_BYTES = 64 * 1024 ** 2;
+/**
+ * Most a replay's chunks unpack to together: its JSON, which the worker
+ * parses, sorts, and compresses at once, and the viewer's tab parses too.
+ * A minute of a busy page comes to a few MiB; masked text compresses
+ * far better than the rest, so the compressed cap alone allows 100 MiB.
+ */
+export const MAX_REPLAY_UNPACKED_BYTES = 16 * 1024 ** 2;
+/** Most events of one recording: a minute of a busy page has a few thousand. */
+export const MAX_REPLAY_EVENTS = 100_000;
 /** A replay whose last chunk never came is given up after this long without one. */
 export const REPLAY_IDLE_MS = 5 * 60_000;
 /** Chunks are kept this long after their replay is joined, past the tracker's retries. */
@@ -67,6 +74,8 @@ export interface Chunk {
   last: boolean;
   cut: boolean;
   data: Buffer;
+  /** What `data` unpacks to, in bytes; unpacked here when left out. */
+  unpackedBytes?: number;
   /** When it arrived; now when left out. The development seed (scripts/seed-data.ts) sets past times. */
   receivedAt?: Date;
 }
@@ -74,15 +83,17 @@ export interface Chunk {
 /**
  * Keeps one chunk, once: "stored", or why not. A new replay (its first
  * chunk) is refused when the instance's replays already take
- * `limitBytes`; a replay past MAX_REPLAY_BYTES is refused; a chunk of a
- * replay already joined, or already kept, is a duplicate, as a retry is.
+ * `limitBytes`; a replay past MAX_REPLAY_BYTES is refused ("too_large"), or
+ * past MAX_REPLAY_UNPACKED_BYTES once unpacked ("unpacked_too_large"); a
+ * chunk of a replay already joined, or already kept, is a duplicate, as a
+ * retry is.
  */
 export async function storeChunk(
   db: Kysely<Database>,
   project: { id: string },
   chunk: Chunk,
   limitBytes: number,
-): Promise<"stored" | "duplicate" | "storage_full" | "too_large"> {
+): Promise<"stored" | "duplicate" | "storage_full" | "too_large" | "unpacked_too_large"> {
   const joined = await db
     .selectFrom("replays")
     .select("replay_id")
@@ -96,6 +107,7 @@ export async function storeChunk(
     .select([
       sql<string>`coalesce(sum(octet_length(data)), 0)`.as("bytes"),
       sql<string>`count(*)`.as("chunks"),
+      sql<string>`coalesce(sum(unpacked_bytes), 0)`.as("unpacked"),
     ])
     .where("project_id", "=", project.id)
     .where("replay_id", "=", chunk.replayId)
@@ -104,6 +116,12 @@ export async function storeChunk(
     return "storage_full";
   }
   if (Number(sofar.bytes) + chunk.data.byteLength > MAX_REPLAY_BYTES) return "too_large";
+  const unpackedBytes =
+    chunk.unpackedBytes ??
+    gunzipSync(chunk.data, { maxOutputLength: MAX_CHUNK_UNPACKED_BYTES }).byteLength;
+  if (Number(sofar.unpacked) + unpackedBytes > MAX_REPLAY_UNPACKED_BYTES) {
+    return "unpacked_too_large";
+  }
 
   const result = await db
     .insertInto("replay_chunks")
@@ -114,6 +132,7 @@ export async function storeChunk(
       last: chunk.last,
       cut: chunk.cut,
       data: chunk.data,
+      unpacked_bytes: unpackedBytes,
       ...(chunk.receivedAt === undefined ? {} : { received_at: chunk.receivedAt }),
     })
     .onConflict((oc) => oc.columns(["project_id", "replay_id", "seq"]).doNothing())
@@ -126,7 +145,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * The recording's JSON joined from its chunks, checked: `{"v":1,"events":
- * [...]}` with events, each an object with a numeric type and timestamp.
+ * [...]}` with events, at most MAX_REPLAY_EVENTS, each an object with a
+ * numeric type and timestamp.
  * Null when it is not. What was recorded is not read further: the player
  * treats it as untrusted.
  */
@@ -138,9 +158,9 @@ export function joinChunks(chunks: readonly Buffer[]): string | null {
 /** The chunks' text, unpacked: each is one gzip member. Null when they are not gzip. */
 function unpack(chunks: readonly Buffer[]): string | null {
   try {
-    return gunzipSync(Buffer.concat(chunks), { maxOutputLength: MAX_REPLAY_JSON_BYTES }).toString(
-      "utf8",
-    );
+    return gunzipSync(Buffer.concat(chunks), {
+      maxOutputLength: MAX_REPLAY_UNPACKED_BYTES,
+    }).toString("utf8");
   } catch {
     return null;
   }
@@ -193,6 +213,7 @@ function checkRecording(text: string): { text: string; events: RecordedEvent[] }
   }
   if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.events)) return null;
   const events: unknown[] = parsed.events;
+  if (events.length > MAX_REPLAY_EVENTS) return null;
   const isEvent = (event: unknown): event is RecordedEvent =>
     isRecord(event) &&
     typeof event.type === "number" &&
@@ -270,6 +291,10 @@ export async function joinReplays(
         eb(eb.fn.max("c.received_at"), "<", idleSince),
       ]),
     )
+    // Oldest first, so a flood of new replays cannot keep older ones waiting.
+    .orderBy((eb) => eb.fn.min("c.received_at"))
+    .orderBy("c.project_id")
+    .orderBy("c.replay_id")
     .limit(limit)
     .execute();
 

@@ -12,10 +12,13 @@ import {
   deleteExpiredReplays,
   deleteJoinedChunks,
   deleteProjectReplays,
+  joinChunks,
   joinReplays,
   MAX_CHUNKS,
   MAX_REPLAY_BYTES,
+  MAX_REPLAY_EVENTS,
   replayKeyOf,
+  storeChunk,
 } from "../src/replays/replays.ts";
 import { type ObjectStore, s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
@@ -43,6 +46,16 @@ const RECORDING = JSON.stringify({
     { type: 3, timestamp: 1_500, data: { source: 2, type: 2, id: 1 } },
   ],
 });
+
+/** A recording of `count` events, as one chunk. */
+const recordingOf = (count: number) => [
+  gzipSync(
+    JSON.stringify({
+      v: 1,
+      events: Array.from({ length: count }, () => ({ type: 3, timestamp: 1 })),
+    }),
+  ),
+];
 
 /** The recording cut into `pieces` pieces of text, each one gzip member, as the recorder sends them. */
 function chunksOf(text: string, pieces: number): Buffer[] {
@@ -78,9 +91,16 @@ function send(
   replay: string,
   seq: number,
   body: Buffer | string,
-  { last = false, cut = false, headers = {}, app = dashboard.app }: SendOptions = {},
+  {
+    last = false,
+    cut = false,
+    headers = {},
+    app = dashboard.app,
+    remoteAddress,
+  }: SendOptions & { remoteAddress?: string } = {},
 ) {
   return app.inject({
+    ...(remoteAddress === undefined ? {} : { remoteAddress }),
     method: "POST",
     url: `/api/replays?key=${key}&replay=${replay}&seq=${seq}&last=${last ? 1 : 0}&cut=${cut ? 1 : 0}`,
     headers: {
@@ -212,6 +232,11 @@ describe("collecting a replay's chunks", () => {
         error,
       });
     }
+    // The validator's own words are not for callers who are not signed in.
+    const invalid = await send(project.public_key, replay, MAX_CHUNKS, gzipSync("x"));
+    expect(invalid.json().message).toBe(
+      "The request is not a replay chunk: check its query (key, replay, seq, last, cut).",
+    );
     // The last number a chunk may have is stored: the table's check agrees with MAX_CHUNKS.
     const lastAllowed = randomUUID();
     expect(
@@ -268,6 +293,65 @@ describe("collecting a replay's chunks", () => {
     } finally {
       await full.close();
     }
+  });
+
+  test("stops a replay that would unpack past 16 MiB, however well it compresses", async () => {
+    const project = await newProject("Unpacked");
+    const replay = randomUUID();
+    // A megabyte of spaces is about a kilobyte of gzip: 16 of them pass, the 17th does not.
+    const chunk = gzipSync(Buffer.alloc(1_000_000, 32));
+    // An address of its own, so the address's limit is not this file's other tests'.
+    const remoteAddress = "198.51.100.16";
+    for (let seq = 0; seq < 16; seq += 1) {
+      expect(
+        (await send(project.public_key, replay, seq, chunk, { remoteAddress })).statusCode,
+      ).toBe(202);
+    }
+    const refused = await send(project.public_key, replay, 16, chunk, { remoteAddress });
+    expect([refused.statusCode, refused.json().error]).toEqual([413, "replay_too_large"]);
+    expect(refused.json().message).toBe(
+      "A replay unpacks to at most 16 MiB. Its chunks so far are kept; later ones are not.",
+    );
+    expect(await chunkCount(project.id, replay)).toBe("16");
+  });
+
+  test("limits an IPv6 network as one address, and chunks in progress", async () => {
+    const limited = await signedInDashboard({
+      objectStore: store,
+      replays: { limitBytes: 1024 ** 3, ipLimit: { capacity: 1, refillPerSecond: 0.001 } },
+    });
+    try {
+      const project = await newProject("One network", "errors", limited.db);
+      const from = (remoteAddress: string) =>
+        send(project.public_key, randomUUID(), 0, gzipSync("x"), {
+          app: limited.app,
+          remoteAddress,
+        });
+      expect((await from("2001:db8:5:6::1")).statusCode).toBe(202);
+      expect((await from("2001:db8:5:6::2")).statusCode).toBe(429);
+      expect((await from("2001:db8:5:7::1")).statusCode).toBe(202);
+    } finally {
+      await limited.close();
+    }
+
+    // At most 8 of one project's chunks at once, and 16 of all.
+    const one = await newProject("Many chunks");
+    const many = await Promise.all(
+      Array.from({ length: 9 }, () =>
+        send(one.public_key, randomUUID(), 0, gzipSync("x"), { remoteAddress: "198.51.100.8" }),
+      ),
+    );
+    expect(many.filter((response) => response.statusCode === 429)).toHaveLength(1);
+    const others = await Promise.all(["A", "B", "C"].map((name) => newProject(`Busy ${name}`)));
+    const all = await Promise.all(
+      Array.from({ length: 17 }, (_, index) =>
+        send(others[index % 3]?.public_key ?? "", randomUUID(), 0, gzipSync("x"), {
+          remoteAddress: "198.51.100.17",
+        }),
+      ),
+    );
+    const busy = all.filter((response) => response.statusCode === 503);
+    expect(busy.map((response) => response.json().error)).toEqual(["busy"]);
   });
 
   test("spends the project's own budget, in bytes, apart from events'", async () => {
@@ -540,6 +624,34 @@ describe("joining a replay's chunks", () => {
     // Not a recording: given up.
     expect(await chunkCount(project.id, notJson)).toBe("0");
     expect(await store.get(replayKeyOf(project.id, notJson))).toBeNull();
+  });
+
+  test("joins the oldest replays first", async () => {
+    const project = await newProject("Oldest first");
+    const chunk = { seq: 0, last: true, cut: false, data: gzipSync(RECORDING) };
+    const newer = Array.from({ length: 5 }, () => randomUUID());
+    for (const replayId of newer) {
+      await storeChunk(dashboard.db, project, { ...chunk, replayId }, 1024 ** 3);
+    }
+    const older = randomUUID();
+    await storeChunk(
+      dashboard.db,
+      project,
+      { ...chunk, replayId: older, receivedAt: new Date(Date.now() - 60_000) },
+      1024 ** 3,
+    );
+    await joinReplays(dashboard.db, store, { limit: 1, onlyProjectId: project.id });
+    const joined = await dashboard.db
+      .selectFrom("replays")
+      .select("replay_id")
+      .where("project_id", "=", project.id)
+      .execute();
+    expect(joined.map((row) => row.replay_id)).toEqual([older]);
+  });
+
+  test("gives up a recording of too many events", () => {
+    expect(joinChunks(recordingOf(MAX_REPLAY_EVENTS))).not.toBeNull();
+    expect(joinChunks(recordingOf(MAX_REPLAY_EVENTS + 1))).toBeNull();
   });
 
   test("deletes replays past their 30 days, and a deleted project's", async () => {
