@@ -26,10 +26,8 @@ import { cn } from "@/lib/utils";
 
 import { RuleFormDialog } from "./rule-form-dialog";
 
-/** What the page says after a rule is saved whose service or metric has not reported lately. */
 export type SavedWarning = { ruleName: string; warning: SaveWarning | null };
 
-/** Asks before deleting a rule, with its history. */
 function DeleteRuleDialog({
   projectId,
   rule,
@@ -49,7 +47,7 @@ function DeleteRuleDialog({
       try {
         await deleteRule(projectId, rule.id);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
+        // Treat deletion in another tab as success.
         if (!(error instanceof ApiError && error.code === "rule_not_found")) throw error;
       }
     },
@@ -98,11 +96,7 @@ function DeleteRuleDialog({
   );
 }
 
-/**
- * A rule's on or off switch, named for the rule: a quick action that saves
- * at once (docs/design-system.md, "The save rule"), disabled for those who
- * may not change rules.
- */
+/** Save immediately, per docs/design-system.md, "The save rule". */
 export function RuleSwitch({
   projectId,
   rule,
@@ -134,11 +128,6 @@ export function RuleSwitch({
   );
 }
 
-/**
- * Edit and delete for one rule, through the rule form and a confirmation:
- * icon buttons named for the rule in a list row (`compact`), buttons with
- * words in its detail. Nothing for those who may not change rules.
- */
 export function RuleActions({
   projectId,
   rule,

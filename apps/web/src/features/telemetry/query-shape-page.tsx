@@ -53,7 +53,6 @@ import {
 import { SLOTS } from "./split-colors";
 import type { ChartLine } from "./time-chart";
 
-/** What the shape is made from, in a sentence. */
 const KIND_TEXT: Record<ShapeKind, React.ReactNode> = {
   summary: (
     <>
@@ -80,11 +79,7 @@ const KIND_TEXT: Record<ShapeKind, React.ReactNode> = {
 
 const formatShare = (percent: number) => `${formatNumber(percent)}%`;
 
-/**
- * The charts of one shape's calls over the period. A color means one
- * thing on the page: calls take chart-1, the failed share chart-5, and the
- * percentiles chart-6 to chart-8, as on a service's page.
- */
+/** Match service chart color slots: calls 1, failure share 5, percentiles 6 to 8. */
 function Charts({ data, subject }: { data: ShapeDetail; subject: string }) {
   const step = stepText(data.stepSeconds);
   const duration = durationFormat(data.durations.p99Us);
@@ -131,7 +126,6 @@ function Charts({ data, subject }: { data: ShapeDetail; subject: string }) {
   );
 }
 
-/** The period's totals, as on the Databases page. */
 function Totals({ data }: { data: ShapeDetail }) {
   const { totals } = data;
   const figures = [
@@ -153,7 +147,6 @@ function Totals({ data }: { data: ShapeDetail }) {
   );
 }
 
-/** A service's name, as a link to its page when an address can name it. */
 function ServiceLink({
   projectId,
   service,
@@ -183,13 +176,6 @@ function ServiceLink({
   );
 }
 
-/**
- * One query shape's calls over the period: the shape in full, the totals
- * the Databases page shows, charts of calls per second, the failed share,
- * and the median, 95th, and 99th percentile, then the slowest calls (each
- * opening its span on its trace's page), the services that make the calls,
- * and the routes of the requests behind the latest ones.
- */
 export function QueryShapePage({
   projectId,
   shapeId,
@@ -203,7 +189,7 @@ export function QueryShapePage({
 }) {
   const navigate = useNavigate();
   const valid = isShapeId(shapeId);
-  // "007" and "7" name one shape; the API answers with "7".
+  // The API normalizes equivalent shape IDs, such as 007 and 7, to 7.
   const id = valid ? canonicalShapeId(shapeId) : shapeId;
   const detail = useQuery({
     ...shapeQuery(projectId, range, environment, id),
@@ -250,7 +236,6 @@ export function QueryShapePage({
               All databases
             </Link>
           </nav>
-          {/* The page header names it, so it is not repeated here. */}
           <PageTitle title={shapeTitle} />
           {shape !== null && (
             <>
@@ -336,7 +321,7 @@ export function QueryShapePage({
                 </p>
               </div>
               <ScrollHint>
-                {/* Only the trace link is pinned: a start time pinned too would leave no room to read the rest. */}
+                {/* Pin only the trace link to leave room for other columns. */}
                 <Table className="max-sm:min-w-[36rem]">
                   <caption className="sr-only">Slowest calls, slowest first</caption>
                   <TableHeader className="[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle">
@@ -391,7 +376,7 @@ export function QueryShapePage({
               </ScrollHint>
             </section>
 
-            {/* Side by side by the content's width, not the window's. */}
+            {/* Use content width for the columns. */}
             <div className="@container border-t pt-5">
               <div className="grid gap-x-8 gap-y-8 @5xl:grid-cols-2">
                 <section aria-labelledby="shape-services" className="flex min-w-0 flex-col gap-3">

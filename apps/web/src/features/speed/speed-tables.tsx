@@ -5,7 +5,6 @@ import { formatWhole } from "../analytics/format";
 import { deviceLabel, formatVital, rate, VITALS } from "./format";
 import { RatingIcon } from "./rating";
 
-/** The figures of a row: its loads, then each Core Web Vital's p75 with its rating's icon. */
 function figuresOf(row: SpeedRow, speed: Speed) {
   return [
     formatWhole(row.loads),
@@ -24,7 +23,6 @@ function figuresOf(row: SpeedRow, speed: Speed) {
 /** Each vital's heading names the percentile, so a stacked row on a phone reads "LCP p75". */
 const HEADINGS = ["Loads", ...CORE_VITALS.map((name) => `${VITALS[name].short} p75`)];
 
-/** The Core Web Vitals per kind of device, most loads first; the bar shows the loads. */
 export function DeviceTable({ speed }: { speed: Speed }) {
   return (
     <BreakdownTable
@@ -45,7 +43,6 @@ export function DeviceTable({ speed }: { speed: Speed }) {
   );
 }
 
-/** The pages with the most measured loads, and their Core Web Vitals. */
 export function PageTable({ speed }: { speed: Speed }) {
   return (
     <BreakdownTable
@@ -67,10 +64,6 @@ export function PageTable({ speed }: { speed: Speed }) {
   );
 }
 
-/**
- * What the tables show: the p75 of each Core Web Vital per device and page,
- * and which pages are listed.
- */
 export function SpeedTablesNote({ speed }: { speed: Speed }) {
   return (
     <p className="max-w-4xl text-xs text-pretty text-ink-subtle">

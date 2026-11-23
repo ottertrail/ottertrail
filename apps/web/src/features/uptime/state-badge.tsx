@@ -3,7 +3,6 @@ import { CirclePauseIcon } from "lucide-react";
 import { StatusBadge } from "@/components/status-badge";
 import type { Check } from "@/lib/uptime-api";
 
-/** A check's state, in words beside the icon: never color alone. */
 export function CheckStateBadge({ check }: { check: Pick<Check, "paused" | "state"> }) {
   if (check.paused) {
     return (

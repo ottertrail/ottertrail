@@ -60,7 +60,6 @@ import { ScrollReachChart, ScrollReachTable } from "./scroll-reach-chart";
 import { type DeviceChoice, type HeatmapsSearch, heatmapsSearchOf } from "./search";
 import { SnapshotSection } from "./snapshot-view";
 
-/** The device with the most pageviews of a page's answer for all devices; none without any. */
 function topDeviceOf(heatmap: Heatmap): HeatmapDevice | undefined {
   let top: { device: HeatmapDevice; pageviews: number } | undefined;
   for (const item of heatmap.devices) {
@@ -71,7 +70,6 @@ function topDeviceOf(heatmap: Heatmap): HeatmapDevice | undefined {
   return top?.device;
 }
 
-/** The device picker's choice for every class of device. */
 const ALL_DEVICES = "all";
 const DEVICE_ITEMS = [{ value: ALL_DEVICES, label: "All devices" }, ...HEATMAP_DEVICES];
 
@@ -107,11 +105,7 @@ function DevicePicker({
   );
 }
 
-/**
- * The page shown, from the pages with heatmap data (most pageviews first):
- * typing filters the list at once and, once typing pauses, asks the API,
- * which finds pages past the first 100.
- */
+/** Search after typing pauses to find pages beyond the first 100. */
 function PagePicker({
   projectId,
   range,
@@ -127,7 +121,6 @@ function PagePicker({
   path: string | undefined;
   onPath: (path: string) => void;
 }) {
-  // Only what the reader typed: the field also shows the chosen page.
   const [typed, setTyped] = React.useState("");
   const search = useSettled(typed.trim(), 250);
   const pages = useQuery(heatmapPagesQuery(projectId, range, environment, device, search));
@@ -169,7 +162,7 @@ function PagePicker({
         <ComboboxList>
           {(item: string) => (
             <ComboboxItem key={item} value={item}>
-              {/* The whole path, wrapped: a tooltip would not show on a highlighted option. */}
+              {/* Wrap the full path; highlighted options cannot show tooltips. */}
               <span className="min-w-0 font-mono text-xs break-all">{item}</span>
             </ComboboxItem>
           )}
@@ -179,17 +172,14 @@ function PagePicker({
   );
 }
 
-/** " on mobile in staging": what an empty state was asked about. */
 const whereText = (environment: string, device: HeatmapDevice | undefined) =>
   [
     device === undefined ? "" : ` on ${device}`,
     environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`,
   ].join("");
 
-/** The attribute the tracking snippet needs, as code. */
 const ATTRIBUTE = <code className="font-mono">data-heatmaps=&quot;on&quot;</code>;
 
-/** The setting is off and nothing is there: who turns it on, and how. */
 function HeatmapsOff({ projectId }: { projectId: string }) {
   const canManage = useAccess().can("projects");
   return (
@@ -230,7 +220,6 @@ function HeatmapsOff({ projectId }: { projectId: string }) {
   );
 }
 
-/** The setting is on, but no page sent anything in the period. */
 function NoData({
   environment,
   device,
@@ -240,7 +229,6 @@ function NoData({
   environment: string;
   device: HeatmapDevice | undefined;
   retentionDays: number;
-  /** The period began before the days kept. */
   clipped: boolean;
 }) {
   return (
@@ -261,7 +249,6 @@ function NoData({
   );
 }
 
-/** A chosen page, or a page on a chosen device, without data: other choices that have some. */
 function NoPageData({
   heatmap,
   pages,
@@ -272,7 +259,6 @@ function NoPageData({
   heatmap: Heatmap;
   pages: HeatmapPages | undefined;
   search: HeatmapsSearch;
-  /** The device shown: chosen, or the page's top device; none for all devices. */
   device: HeatmapDevice | undefined;
   projectId: string;
 }) {
@@ -355,7 +341,6 @@ function NoPageData({
   );
 }
 
-/** Shaped like the report: the strip, the chart, and two tables side by side. */
 function Loading() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
@@ -380,7 +365,6 @@ function Loading() {
   );
 }
 
-/** The figures, the scroll chart, and the two tables of one page. */
 function Report({
   heatmap,
   projectId,
@@ -394,8 +378,7 @@ function Report({
 }) {
   const canManage = useAccess().can("projects");
   const { totals } = heatmap;
-  // Scroll depth arrives when a visitor leaves the page: today's figures still grow.
-  // As of when the report appeared: a day that ends while it is open is not worth re-rendering for.
+  // Scroll depth arrives on page leave, so today's figures are incomplete. Use the report's opening time.
   const [openedAt] = React.useState(() => new Date());
   const [spots, setSpots] = React.useState<"rage" | "dead">("rage");
   const today = dayIn(heatmap.timeZone, openedAt);
@@ -510,7 +493,7 @@ function Report({
           <ScrollReachChart reach={heatmap.scroll.reach} averageFold={heatmap.scroll.averageFold} />
         )}
       </ReportChart>
-      {/* Side by side by the content's width, not the window's. */}
+      {/* Use content width for the columns. */}
       <section aria-label="Clicks" className="@container border-t pt-5">
         <div className="grid gap-x-8 gap-y-8 @5xl:grid-cols-2">
           <BreakdownTable
@@ -533,7 +516,6 @@ function Report({
                 </span>
               ),
               title: elementTitle(item.label, item.element),
-              // A name, or the path's last steps, leaves the rest of the path out.
               shortened:
                 elementTitle(item.label, item.element) !== elementName(item.label, item.element),
               action:
@@ -581,7 +563,6 @@ function Report({
                 </span>
               ),
               title: elementTitle(item.label, item.element),
-              // A name, or the path's last steps, leaves the rest of the path out.
               shortened:
                 elementTitle(item.label, item.element) !== elementName(item.label, item.element),
               bar: item.count,
@@ -604,12 +585,6 @@ function Report({
   );
 }
 
-/**
- * Where visitors click on a page and how far they scroll, for a period, an
- * environment, a page, and a class of device: figures, the scroll reach,
- * and the most-clicked elements, and "Open on your site", which draws them
- * over the live page.
- */
 export function HeatmapsPage({
   projectId,
   range,
@@ -631,18 +606,15 @@ export function HeatmapsPage({
       params: { projectId },
       search: heatmapsSearchOf({ ...search, ...next }),
     });
-  // Only the reader's own choice is in the address: a device, or "all".
+  // Save only explicit device choices in the address.
   const chosenDevice = device === "all" ? undefined : device;
   const pages = useQuery(heatmapPagesQuery(projectId, range, environment, chosenDevice));
-  // Without a page in the address, the first with data (the API lists most pageviews and clicks first).
+  // Default to the first page with data; the API sorts by pageviews and clicks.
   const shownPath =
     path ??
     (pages.data?.pages.find((item) => item.pageviews + item.clicks > 0) ?? pages.data?.pages[0])
       ?.path;
-  // Without a choice, the page's answer for all devices names the device
-  // with the most pageviews for this page and period, as each device's
-  // layout differs. Worked out on every render, never written to the
-  // address, so another page or period finds its own.
+  // Default to the page's most-viewed device because layouts differ. Recompute for each page and period without saving to the address.
   const allDevices = useQuery({
     ...heatmapQuery(projectId, range, environment, undefined, shownPath ?? ""),
     enabled: shownPath !== undefined && device === undefined,
@@ -651,12 +623,12 @@ export function HeatmapsPage({
     device === undefined && allDevices.data !== undefined && !allDevices.isPlaceholderData
       ? topDeviceOf(allDevices.data)
       : undefined;
-  // Until the answer for all devices is in, the default device is unknown.
+  // Wait for all-device data before choosing the default device.
   const deriving = device === undefined && (allDevices.isPending || allDevices.isPlaceholderData);
   const queryDevice = chosenDevice ?? derived;
   const heatmap = useQuery({
     ...heatmapQuery(projectId, range, environment, queryDevice, shownPath ?? ""),
-    // Not while the answer for all devices failed: Retry asks it again.
+    // Retry must refetch all-device data before this query runs.
     enabled: shownPath !== undefined && !deriving && !(device === undefined && allDevices.isError),
   });
 
@@ -675,7 +647,6 @@ export function HeatmapsPage({
         : undefined;
   const data = shownPath === undefined ? undefined : heatmap.data;
   const answered = data ?? pages.data;
-  // Nothing to show yet: the list of pages, or the page's heatmap, still loading.
   const waiting =
     pages.data === undefined ||
     (shownPath !== undefined && (deriving || heatmap.data === undefined));

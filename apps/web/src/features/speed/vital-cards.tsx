@@ -14,10 +14,6 @@ const BAR_COLORS = {
 
 const loadsText = (count: number) => `${formatWhole(count)} page ${count === 1 ? "load" : "loads"}`;
 
-/**
- * The share of good, needs-improvement, and poor loads: a bar for the
- * glance, and the percentages as text beside each rating's icon.
- */
 function ShareBar({ summary }: { summary: MetricSummary }) {
   const percents = shares(summary);
   if (percents === null) {
@@ -50,7 +46,6 @@ function ShareBar({ summary }: { summary: MetricSummary }) {
   );
 }
 
-/** "Largest Contentful Paint (LCP), p75": a vital's name, its abbreviation, and the percentile shown. */
 const vitalLabel = (name: VitalName) => `${VITALS[name].name} (${VITALS[name].short}), p75`;
 
 function ratingOf(name: VitalName, speed: Speed) {
@@ -58,11 +53,6 @@ function ratingOf(name: VitalName, speed: Speed) {
   return summary.p75 === null ? null : rate(name, summary.p75, speed.thresholds[name]);
 }
 
-/**
- * The Core Web Vitals in one strip: each p75, its rating in words (a badge
- * with an icon, never color alone), what it means, how the loads were
- * spread, and how many were measured.
- */
 export function CoreVitals({ speed }: { speed: Speed }) {
   const stats: Stat[] = CORE_VITALS.map((name) => {
     const summary = speed.metrics[name];
@@ -95,7 +85,7 @@ export function CoreVitals({ speed }: { speed: Speed }) {
 
 const SECONDARY: VitalName[] = ["fcp", "ttfb"];
 
-/** FCP and TTFB: not Core Web Vitals, but a slow first paint or server answer delays LCP too. */
+/** FCP and TTFB help explain slow LCP. */
 export function SecondaryVitals({ speed }: { speed: Speed }) {
   const stats: Stat[] = SECONDARY.map((name) => ({
     label: vitalLabel(name),

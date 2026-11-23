@@ -64,16 +64,10 @@ const SEVERITY_CHOICES = SEVERITIES.map((item) => ({
   label: item.value === "fatal" ? "Fatal" : `${item.label} and above`,
 }));
 
-/** The lowest severity number of warnings. */
 const WARN = SEVERITIES.find((item) => item.value === "warn")?.from ?? 13;
 const ERROR = SEVERITIES.find((item) => item.value === "error")?.from ?? 17;
 
-/**
- * The listed records, each a button that selects it, on one line: its
- * time, severity, service, and the start of its body, cut with an
- * ellipsis. A record has no page of its own; under 64rem the list is
- * `LogList`, whose rows open in place.
- */
+/** Below 64rem, open records in place because they have no separate page. */
 function LogRows({
   logs,
   timeZone,
@@ -85,7 +79,6 @@ function LogRows({
   logs: readonly LogSummary[];
   timeZone: string;
   label?: string;
-  /** The live view's lines where records were left out, each before its record. */
   notes?: readonly LiveNote[];
 } & WorkbenchListProps) {
   const notesBefore = (id: string) =>
@@ -139,12 +132,7 @@ function LogRows({
   );
 }
 
-/**
- * With nothing selected, the detail pane sums up the records loaded (so "at
- * least" while older ones wait): how many, how many are warnings and how
- * many errors or worse (only what the severity filter can list), and the
- * period's services, which the API counts whole.
- */
+/** Summarize loaded records as lower bounds while more remain. Service counts cover the full period. */
 function Summary({
   first,
   logs,
@@ -163,7 +151,7 @@ function Summary({
   const errors = logs.filter((log) => log.severityNumber >= ERROR).length;
   const stats: Stat[] = [
     { label: "Records", value: atLeast(logs.length, more) },
-    // A filter at error or above lists no warnings.
+    // An error-or-higher filter excludes warnings.
     ...(minimum < ERROR ? [{ label: "Warnings", value: atLeast(warnings, more) }] : []),
     { label: "Errors or worse", value: atLeast(errors, more) },
     { label: "Services", value: formatWhole(first.services.length) },
@@ -210,7 +198,6 @@ function Summary({
   );
 }
 
-/** In the detail pane: the selected record, or why it is not there. */
 function RecordDetail({
   id,
   log,
@@ -222,7 +209,6 @@ function RecordDetail({
   log: LogSummary | undefined;
   timeZone: string;
   projectId: string;
-  /** In the live view, whose list keeps only the newest arrivals. */
   live?: boolean;
 }) {
   if (log === undefined) {
@@ -285,17 +271,10 @@ function RecordDetail({
 
 const LIVE_HELP = `Records appear a few seconds after they are sent, since senders send them in batches. Live keeps the newest ${formatWhole(LIVE_TIMING.maxRecords)} records and stops after ${Math.round(LIVE_TIMING.stopAfterMs / 60_000)} minutes.`;
 
-/** "1 new record", "12 new records". */
 const newRecords = (count: number) =>
   `${formatWhole(count)} new ${count === 1 ? "record" : "records"}`;
 
-/**
- * The live view's workbench (docs/dashboard.md, "Live"): the records that
- * arrived since it started, newest first, polled while the tab shows. New
- * ones wait under "N new records" while it is paused, while the list is
- * scrolled away from its top, or while a record is selected, so the list
- * does not move under the reader. Rendered anew for other filters.
- */
+/** Hold arrivals while paused, scrolled, or selected so the list stays still (docs/dashboard.md, "Live"). Remount for new filters. */
 function LiveLogsView({
   projectId,
   environment,
@@ -307,7 +286,6 @@ function LiveLogsView({
   environment: string;
   filters: LogFilters;
   searchHint: React.ReactNode;
-  /** The services of the records seen, for the service filter. */
   onServices: (services: string[]) => void;
 }) {
   const narrow = useMediaQuery(NARROW_WORKBENCH);
@@ -325,7 +303,7 @@ function LiveLogsView({
     filters,
     paused,
     away: !atTop,
-    // Under 64rem a record opens in place: no selection holds the list.
+    // Below 64rem records expand in place, so selection does not hold arrivals.
     selected: narrow ? undefined : selected,
   });
   const [openOnArrival, setOpenOnArrival] = React.useState<string | undefined>(undefined);
@@ -477,17 +455,7 @@ function LiveLogsView({
   );
 }
 
-/**
- * A project's log records as a workbench (docs/design-system.md,
- * "Workbench"), newest first, for a period and an environment, filtered by
- * service, minimum severity, words in the body, and trace; fifty at a time
- * with older ones on request, under a chart of the period's records by
- * severity; beside the selected record's body, attributes, resource
- * attributes, and its trace (a link into the Traces workbench) or, with
- * none selected, a summary. A record has no page of its own: under 64rem
- * each row opens in place, as on a trace's page. With `live`, the period
- * gives way to the records arriving now (LiveLogsView).
- */
+/** Load 50 records at a time. Below 64rem records expand in place (docs/design-system.md, "Workbench"). */
 export function LogsPage({
   projectId,
   range,
@@ -502,19 +470,16 @@ export function LogsPage({
   live?: boolean;
 }) {
   const navigate = useNavigate();
-  // Live reads no period: the list's query waits (its cached answer still fills the filter bar).
+  // Live skips the period query; cached results still populate the filters.
   const list = useInfiniteQuery({
     ...logsQuery(projectId, range, environment, filters),
     enabled: !live,
   });
-  // In the live view, the services of the records it has seen.
   const [liveServices, setLiveServices] = React.useState<string[]>([]);
   const narrow = useMediaQuery(NARROW_WORKBENCH);
-  // On a narrow screen, the record an address named, open in the list.
   const [openOnArrival, setOpenOnArrival] = React.useState<string | undefined>(undefined);
   const search: LogsSearch = { range, environment, filters, live };
-  // A filter keeps the selected record beside the list, listed or not.
-  // Turning Live on or off clears the selection: the other view does not hold it.
+  // Keep selection across filter changes. Clear it when switching Live because the other view cannot hold it.
   const show = (next: Partial<LogsSearch>) =>
     void navigate({
       to: "/projects/$projectId/logs",
@@ -529,8 +494,7 @@ export function LogsPage({
     });
   const filter = (next: Partial<LogFilters>) => show({ filters: { ...filters, ...next } });
 
-  // Every record listed so far, so one a filter leaves out still shows beside the list:
-  // a cache that only grows, kept for the page's life.
+  // Retain loaded records for the page's lifetime so filtered-out selections remain visible.
   const [seen] = React.useState(() => new Map<string, LogSummary>());
   for (const page of list.data?.pages ?? []) {
     for (const log of page.logs) seen.set(log.id, log);
@@ -562,7 +526,6 @@ export function LogsPage({
       }
       period={
         live ? (
-          // The period gives way to Live, and comes back when Live is off.
           <Button
             variant="outline"
             disabled
@@ -650,7 +613,7 @@ export function LogsPage({
       words.
     </p>
   );
-  // Live needs nothing of the period's list: it shows even when the list failed or never ran.
+  // Live works even if the period query failed or never ran.
   if (live) {
     return (
       <div className="flex flex-col min-[64rem]:h-full min-[64rem]:min-h-0">
@@ -745,7 +708,6 @@ export function LogsPage({
                   </p>
                 )
               ) : narrow ? (
-                // No room beside the list: a record opens in place, as on a trace's page.
                 <div className="flex flex-col gap-3 px-gutter py-3">
                   {openOnArrival !== undefined && !logs.some((log) => log.id === openOnArrival) && (
                     <Alert>

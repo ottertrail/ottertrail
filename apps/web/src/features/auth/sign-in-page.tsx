@@ -22,11 +22,7 @@ import { fetchSetupStatus } from "@/lib/setup-api";
 
 import { AuthLayout } from "./auth-layout";
 
-/**
- * Whether the instance has its owner yet, and whether email is set up
- * (GET /api/setup, which tells nothing else); null while unknown or when
- * the check failed.
- */
+/** Return null while setup status is unknown or failed. */
 function useSetupStatus(): { ownerExists: boolean; emailConfigured: boolean } | null {
   const [status, setStatus] = React.useState<{
     ownerExists: boolean;
@@ -35,7 +31,7 @@ function useSetupStatus(): { ownerExists: boolean; emailConfigured: boolean } | 
   React.useEffect(() => {
     const controller = new AbortController();
     fetchSetupStatus(controller.signal).then(setStatus, () => {
-      // The sign-in form still works; the setup hint and the reset line are only extra.
+      // A failed setup check must not block sign-in.
     });
     return () => controller.abort();
   }, []);

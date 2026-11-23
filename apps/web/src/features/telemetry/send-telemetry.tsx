@@ -12,10 +12,7 @@ import {
 } from "@/components/ui/empty";
 import { WhenAllowed } from "@/components/when-allowed";
 
-/**
- * The environment variables every OpenTelemetry SDK reads. The secret key
- * stays a placeholder: the page never prints the real one.
- */
+/** Keep the secret key as a placeholder in SDK environment examples. */
 function exporterSettings(origin: string): string {
   return `OTEL_EXPORTER_OTLP_ENDPOINT=${origin}
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20sk_…
@@ -26,11 +23,6 @@ OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production,service.version=
 
 const TITLES = { traces: "No traces yet", logs: "No logs yet", metrics: "No metrics yet" };
 
-/**
- * Shown while a project has sent no spans (or no log records, or no
- * metrics) at all:
- * how a server sends them, over OTLP/HTTP with the project's secret key.
- */
 export function SendTelemetry({
   projectId,
   signal,

@@ -9,14 +9,8 @@ import { MISSING } from "@/lib/missing";
 
 import { type ListChartFrame, listBucketLabel } from "./list-chart-frame";
 
-/**
- * What the Logs and Traces lists' charts share (docs/dashboard.md, "Traces
- * and logs"): their place above the list, inside the list's pane; their
- * loading, failed, and empty states, which never hold up the list; their
- * numbers as a table; and choosing a bar to narrow the period to its days.
- */
+/** List charts load independently (docs/dashboard.md, "Traces and logs"). */
 
-/** A table of the chart's buckets that hold anything: its numbers ("Show the numbers"). */
 export function BucketTable({
   caption,
   frame,
@@ -74,11 +68,7 @@ export function BucketTable({
   );
 }
 
-/**
- * A list's chart in its pane, above the list: the chart's section
- * (`ReportChart`) with its own loading and failed states, so the list
- * shows whatever the chart does.
- */
+/** Keep chart loading and failures independent of the list. */
 export function ListChartSection({
   title,
   description,
@@ -96,7 +86,6 @@ export function ListChartSection({
   state: "pending" | "error" | "success";
   error?: Error | null;
   onRetry: () => void;
-  /** The chart, or why there is none. */
   children: React.ReactNode;
 }) {
   return (
@@ -133,7 +122,6 @@ export function ListChartSection({
   );
 }
 
-/** In place of a chart with nothing to draw. */
 export function NothingToChart({ children }: { children: React.ReactNode }) {
   return <p className="py-6 text-center text-sm text-ink-subtle">{children}</p>;
 }

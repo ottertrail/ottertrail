@@ -24,19 +24,15 @@ import { SERVER_LOG_TAB, ServerLogTab } from "./server-log-tab";
 import { StorageTab } from "./storage-tab";
 
 interface InstanceTab {
-  /** In the address: `?tab=<value>`. The first tab the user may see is the default. */
+  /** Default to the first permitted tab when ?tab is absent. */
   value: string;
   label: string;
-  /** Shown only to users with this permission (docs/access.md). */
+  /** Gate tabs by permission (docs/access.md). */
   permission: Permission;
   render: (props: InstanceTabProps) => React.ReactNode;
 }
 
-/**
- * The instance's settings tabs, in order. Adding a tab is one entry here:
- * the tab row, the address, the "Unsaved" mark, the leave guard and who
- * sees it follow from it.
- */
+/** Define tabs here so navigation, permissions, dirty state, and leave guards stay in sync. */
 const INSTANCE_TABS: readonly InstanceTab[] = [
   {
     value: "general",
@@ -85,24 +81,16 @@ const INSTANCE_TABS: readonly InstanceTab[] = [
 interface GeneralValues {
   name: string;
   timeZone: string;
-  /** The icon's address, a chosen image's data: URL, or null. */
   avatar: string | null;
 }
 
-/**
- * The instance's icon, name, and timezone: one form with its Save bar
- * (docs/design-system.md, "The save rule"). Save sends a changed icon
- * first, then the rest; if the rest fails, the icon stays saved and the
- * other edits stay. Saving a new timezone moves where days start in every
- * report, so every query but the settings' own is read again.
- */
+/** Save the icon first; preserve it and other edits if the rest fails. A timezone change invalidates reports (docs/design-system.md, "The save rule"). */
 function GeneralForm({
   settings,
   uploads,
   onDirty,
 }: {
   settings: Settings;
-  /** Whether the instance has object storage for the icon. */
   uploads: boolean;
   onDirty: (dirty: boolean) => void;
 }) {
@@ -117,7 +105,7 @@ function GeneralForm({
   const save = useMutation({
     mutationFn: async (values: GeneralValues) => {
       const before = form.initial;
-      // Saved, whatever happens to the rest: the sidebar shows it at once.
+      // Show the saved icon immediately, even if later fields fail.
       const submitted = await saveAvatarFirst(form, values, "/api/settings/avatar");
       if (submitted.avatar !== before.avatar) {
         void queryClient.invalidateQueries({ queryKey: meQuery().queryKey });
@@ -135,8 +123,7 @@ function GeneralForm({
         return;
       }
       queryClient.setQueryData(settingsQuery().queryKey, updated);
-      // Every page counts days in the timezone: everything shown but the
-      // settings themselves may change.
+      // Timezone changes affect every report's day boundaries; keep only settings cached.
       void queryClient.invalidateQueries({
         predicate: (query) => query.queryKey[0] !== settingsQuery().queryKey[0],
       });
@@ -195,7 +182,6 @@ function GeneralForm({
   );
 }
 
-/** The General tab, for the owner: the settings load here, as the location data's do. */
 function GeneralTab({ onDirty }: InstanceTabProps) {
   const settings = useQuery(settingsQuery());
   const uploads = useQuery(meQuery()).data?.avatarUploads ?? false;
@@ -212,7 +198,6 @@ function GeneralTab({ onDirty }: InstanceTabProps) {
   return <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />;
 }
 
-/** The tab row and a section, while who the user is still loads. */
 function PageSkeleton() {
   return (
     <div className="flex flex-col" aria-busy="true">
@@ -228,17 +213,11 @@ function PageSkeleton() {
   );
 }
 
-/**
- * The instance's settings: /settings (docs/access.md), as tabs, the chosen
- * one in `?tab=`. The owner has General (the name and timezone), Location
- * data, Backups, and the Server log; the owner and admins have Storage (what fills the
- * disk), AI models (the instance's prices), and the notification channels.
- * Members do not see the page.
- */
+/** Gate each settings tab by role (docs/access.md). */
 export function SettingsPage() {
   const me = useQuery(meQuery());
   const [dirty, setDirty] = React.useState<Record<string, boolean>>({});
-  // One stable callback per tab, so a form's effect does not run on every render.
+  // Stable callbacks prevent form effects from rerunning every render.
   const onDirty = React.useMemo(
     () =>
       Object.fromEntries(

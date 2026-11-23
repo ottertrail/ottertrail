@@ -38,10 +38,7 @@ import { formatLoad, formatPercent } from "./host-format";
 import { environmentSearch, rangeSearch } from "./search";
 import { SendHostMetrics } from "./send-host-metrics";
 
-/**
- * Fresh or stale, in words beside the icon: never color alone. Nothing for
- * a period that ended before now, which says nothing about the host now.
- */
+/** Hide freshness for historical periods; they cannot show the host's current state. */
 export function Freshness({ stale }: { stale: boolean | null }) {
   if (stale === null) return null;
   return stale ? (
@@ -51,16 +48,8 @@ export function Freshness({ stale }: { stale: boolean | null }) {
   );
 }
 
-/** A share at or above this is high: its bar turns the warning color, with a "High" badge. */
 export const HIGH_PERCENT = 90;
 
-/**
- * A share of 100%, as its figure with a small bar beside it: the bar is
- * decoration (the figure says the value), a meter on the blue ramp, its
- * track the ramp's darkest step. At HIGH_PERCENT and above the fill is the
- * warning color and a "High" badge (an icon and the word) follows the
- * figure, so the state is never color alone. Nothing sent is a dash.
- */
 function ShareCell({ percent, detail }: { percent: number | null; detail?: string | null }) {
   if (percent === null) {
     return (
@@ -69,7 +58,7 @@ function ShareCell({ percent, detail }: { percent: number | null; detail?: strin
       </TableCell>
     );
   }
-  // As shown: 89.96 reads "90%", so it is high too.
+  // Rate the rounded value: 89.96 displays as 90%.
   const high = Math.round(percent * 10) / 10 >= HIGH_PERCENT;
   const width = Math.min(100, Math.max(0, percent));
   return (
@@ -96,7 +85,6 @@ function ShareCell({ percent, detail }: { percent: number | null; detail?: strin
   );
 }
 
-/** A value, or a dash that says nothing was sent to work it out from. */
 function ValueCell({ text }: { text: string | null }) {
   return (
     <TableCell className="text-right tabular-nums">
@@ -105,11 +93,6 @@ function ValueCell({ text }: { text: string | null }) {
   );
 }
 
-/**
- * The hosts that sent host metrics in the period, by name, each with when
- * it was last seen, whether it is stale, and its latest CPU, memory,
- * fullest filesystem, and load. A host opens its charts.
- */
 export function HostsPage({
   projectId,
   range,

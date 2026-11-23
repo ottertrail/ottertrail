@@ -2,12 +2,7 @@ import type { MetricKind } from "@/lib/metrics-api";
 
 import { formatDuration } from "./format";
 
-/**
- * Metric values as the Metrics page shows them, by the metric's unit
- * (OpenTelemetry's units are UCUM: "ms", "s", "By", "1", "{request}"):
- * durations as the other telemetry pages show them, bytes in KiB, MiB,
- * GiB, and the rest as numbers with the unit after them.
- */
+/** Interpret OpenTelemetry units as UCUM (ms, s, By, 1, {request}). */
 
 export const KIND_LABELS: Record<MetricKind, string> = {
   gauge: "Gauge",
@@ -19,7 +14,7 @@ export const KIND_LABELS: Record<MetricKind, string> = {
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const precise = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
 
-/** 1,284, 12.9K, 0.25, 0.0333: three significant digits, compact from 10,000. */
+/** Use three significant digits; compact from 10,000. */
 export function formatNumber(value: number): string {
   if (value === 0) return "0";
   if (Math.abs(value) >= 10_000) return compact.format(value);
@@ -27,7 +22,6 @@ export function formatNumber(value: number): string {
   return precise.format(value);
 }
 
-/** Microseconds per unit of time. */
 const TIME_UNITS: Record<string, number> = {
   ns: 0.001,
   us: 1,
@@ -37,7 +31,6 @@ const TIME_UNITS: Record<string, number> = {
   min: 60_000_000,
   h: 3_600_000_000,
 };
-/** Bytes per unit of data. */
 const BYTE_UNITS: Record<string, number> = {
   By: 1,
   KBy: 1000,
@@ -59,14 +52,13 @@ function formatBytes(bytes: number): string {
   return `${bytes < 0 ? "-" : ""}${precise.format(value)} ${BYTE_STEPS[step]}`;
 }
 
-/** "{request}" → "requests": an annotation, OpenTelemetry's name for what is counted. */
+/** UCUM annotations name what is counted: {request} becomes requests. */
 export function unitText(unit: string): string {
   const annotation = /^\{(.+)\}$/.exec(unit);
   if (annotation?.[1] !== undefined) return annotation[1];
   return unit === "1" ? "" : unit;
 }
 
-/** A value in its unit: "12.4 ms", "1.5 MiB", "42%", "3.2 requests". */
 export function formatMetricValue(value: number, unit: string): string {
   const time = TIME_UNITS[unit];
   if (time !== undefined) {
@@ -81,15 +73,11 @@ export function formatMetricValue(value: number, unit: string): string {
   return text === "" ? formatNumber(value) : `${formatNumber(value)} ${text}`;
 }
 
-/** A rate: the value per second, "3.2 requests/s", "1.5 MiB/s". */
 export function formatRate(value: number, unit: string): string {
   return `${formatMetricValue(value, unit)}/s`;
 }
 
-/**
- * Durations on one chart in one unit, so its single axis reads alike: ms,
- * or s when the slowest value reaches a second.
- */
+/** Use one unit per chart: seconds when the largest duration reaches a second, otherwise milliseconds. */
 export function durationFormat(values: (number | null)[]): {
   unit: "ms" | "s";
   format: (us: number) => string;

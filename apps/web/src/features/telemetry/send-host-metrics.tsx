@@ -12,15 +12,7 @@ import {
 } from "@/components/ui/empty";
 import { WhenAllowed } from "@/components/when-allowed";
 
-/**
- * A minimal OpenTelemetry Collector configuration for host metrics: the
- * host metrics receiver's six scrapers with the utilization metrics on (so
- * the shares are exact), snap packages' read-only images, loopback and
- * container interfaces, and partitions and virtual disks left out (so
- * nothing counts twice); host.name from the operating system, batches,
- * and OTLP/HTTP to this instance. The secret key stays a placeholder: the
- * page never prints the real one.
- */
+/** Enable utilization metrics for exact shares. Exclude virtual and duplicate devices. Keep the secret key as a placeholder. */
 function collectorConfig(origin: string): string {
   return `receivers:
   host_metrics:
@@ -79,10 +71,6 @@ service:
       exporters: [otlp_http]`;
 }
 
-/**
- * Shown while a project has sent no host metrics at all: how a server's
- * OpenTelemetry Collector sends them, with the project's secret key.
- */
 export function SendHostMetrics({
   projectId,
   retentionDays,

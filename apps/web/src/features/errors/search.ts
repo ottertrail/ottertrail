@@ -6,17 +6,14 @@ import {
   type StatusFilter,
 } from "@/lib/errors-api";
 
-/** What the errors pages' addresses hold. */
 export interface ErrorsSearch {
   range: PageRange;
   environment: string;
-  /** The list only. */
   status?: StatusFilter;
-  /** The list only: whose groups. */
   assignee?: AssigneeFilter;
 }
 
-/** The address query: the default period, environment, status, and assignee are left out. */
+/** Omit default period, environment, status, and assignee from the query. */
 export const errorsSearchOf = ({ range, environment, status, assignee }: ErrorsSearch) => ({
   ...("period" in range
     ? range.period === DEFAULT_PERIOD

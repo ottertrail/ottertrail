@@ -51,12 +51,10 @@ import { formatWhole } from "../analytics/format";
 import { formatMoment, formatTime } from "../users/format";
 import { timeAgo } from "./format";
 
-/** The tab's value in the address: its counts are fetched only while it is the tab shown. */
 export const ACTIVITY_TAB = "activity";
-/** How often the counts are fetched again while the tab is shown: the API adds them every 15 seconds. */
+/** The API updates counts every 15 seconds. */
 const REFRESH_MS = 30_000;
 
-/** Each source's name, and what its items are. */
 const SOURCES: Record<IngestSource, { label: string; items: string }> = {
   browser_events: { label: "Browser events", items: "Events stored" },
   server_events: { label: "Server events", items: "Events stored" },
@@ -87,7 +85,6 @@ const OUTCOME_LABELS: Record<IngestOutcome, string> = {
 const isRefused = (outcome: IngestOutcome) => outcome.startsWith("refused_");
 const isFiltered = (outcome: IngestOutcome) => outcome.startsWith("filtered_");
 
-/** Requests in the window, of the outcomes `pick` chooses. */
 function sum(
   activity: SourceActivity,
   window: "hour" | "day" | "week",
@@ -103,16 +100,14 @@ function sum(
 
 const anyIn7Days = (activity: SourceActivity) => sum(activity, "week", () => true) > 0;
 
-/** What the links in a reason's line need. */
 interface Links {
   projectId: string;
-  /** Whether the user is the owner, who alone may open the Server log. */
+  /** Only the owner may open the Server log. */
   owner: boolean;
-  /** Closes the sheet as a link in it opens another tab. */
   onNavigate: () => void;
 }
 
-/** A link to another tab of the project's settings: Install, the first, has no `?tab=`. */
+/** The Install tab has no ?tab= value. */
 function TabLink({
   links,
   tab,
@@ -135,7 +130,6 @@ function TabLink({
   );
 }
 
-/** "the Server log", a link for the owner; the owner's, in words, for an admin. */
 function ServerLogLink({ links }: { links: Links }) {
   if (!links.owner) return <>the owner&apos;s Server log</>;
   return (
@@ -153,7 +147,6 @@ function ServerLogLink({ links }: { links: Links }) {
   );
 }
 
-/** What could not store a source's data when it answered 503. */
 const UNAVAILABLE: Record<IngestSource, string> = {
   // Visitor IDs and the instance's timezone come from PostgreSQL before the insert.
   browser_events: "ClickHouse or PostgreSQL couldn't store the data.",
@@ -169,7 +162,6 @@ const UNAVAILABLE: Record<IngestSource, string> = {
   source_maps: "The object store or PostgreSQL couldn't store the map.",
 };
 
-/** What one reason means for one source, and what to do: one plain line. */
 function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links): React.ReactNode {
   switch (outcome) {
     case "accepted":
@@ -289,7 +281,6 @@ function reasonText(source: IngestSource, outcome: IngestOutcome, links: Links):
   }
 }
 
-/** The counts of one source: each outcome by window, the items stored, and each reason's line. */
 function SourceSheet({
   activity,
   open,
@@ -473,14 +464,7 @@ function SourceTable({
   );
 }
 
-/**
- * The Activity tab of a project's settings (docs/dashboard.md, "Activity"):
- * per source, when data was last accepted, and how many requests were
- * accepted, refused, and filtered, fetched every 30 seconds while the tab
- * is shown. Sources with nothing in 7 days are folded into one line under
- * the table; a row opens a sheet with each outcome's counts and what each
- * reason means.
- */
+/** Refresh every 30 seconds while visible. Fold sources inactive for 7 days (docs/dashboard.md, "Activity"). */
 export function ActivityTab({ projectId }: { projectId: string }) {
   const [tab] = useSearchParam("tab");
   const shown = tab === ACTIVITY_TAB;

@@ -59,7 +59,6 @@ import { CheckView } from "./check-page";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime, intervalText } from "./format";
 import { CheckStateBadge } from "./state-badge";
 
-/** The latest run in words: its response time, or why it failed. */
 function LatestCell({ check }: { check: Check }) {
   if (check.lastCheckedAt === null) {
     return <span className="text-ink-subtle">Not run yet</span>;
@@ -75,12 +74,6 @@ function LatestCell({ check }: { check: Check }) {
   return <span className="tabular-nums">{formatMs(check.lastResponseMs ?? 0)}</span>;
 }
 
-/**
- * The checks, by name: what each requests (the name links to the check's
- * own page; in the workbench a plain click selects the row instead), its
- * state in words, its uptime over the last 24 hours, and its quick actions
- * (edit, pause or resume, delete), which act at once.
- */
 function CheckTable({
   checks,
   projectId,
@@ -101,7 +94,6 @@ function CheckTable({
       <colgroup>
         <col />
         <col className="w-24" />
-        {/* On a phone the check's page has the uptime: the name keeps the room. */}
         {!phone && <col className="w-20" />}
         {canManage && <col className="w-28" />}
       </colgroup>
@@ -183,12 +175,6 @@ function CheckTable({
   );
 }
 
-/**
- * With nothing selected, the detail pane sums up every check (the API lists
- * them all): how many are up, down, paused, and not known yet, then each
- * one's uptime over fixed windows, its latest run, and when it last ran. On a
- * narrow screen it follows the list, so checks can still be compared.
- */
 function Summary({
   data,
   projectId,
@@ -196,7 +182,6 @@ function Summary({
 }: {
   data: CheckList;
   projectId: string;
-  /** Under the list on a narrow screen, where no item is chosen beside it. */
   underList?: boolean;
 }) {
   const count = (test: (check: Check) => boolean) => data.checks.filter(test).length;
@@ -273,7 +258,6 @@ function Summary({
                     className={`py-1.5 pr-3 text-left align-top font-normal ${PINNED}`}
                   >
                     {underList ? (
-                      // No pane beside the list: the name opens the check's page.
                       <TruncatedText
                         text={check.name}
                         className="text-link hover:underline"
@@ -330,21 +314,14 @@ function Summary({
   );
 }
 
-/**
- * The project's uptime checks as a workbench (docs/design-system.md,
- * "Workbench"): each with its state in words and its uptime over the last
- * 24 hours, with edit, pause or resume, and delete on the row; beside the
- * selected check's detail (for the period in the address) or, with none
- * selected, every check's uptime. Under 64rem a row opens the check's own
- * page.
- */
+/** Uptime workbench. Below 64rem, rows open their own pages (docs/design-system.md, "Workbench"). */
 export function UptimePage({ projectId, range }: { projectId: string; range: PageRange }) {
   const navigate = useNavigate();
   const list = useQuery(checksQuery(projectId));
   const [adding, setAdding] = React.useState(false);
   const [selected, setSelected] = useSearchParam("check");
   const canManage = useAccess().canUse("uptime_alerts", "manage");
-  // The Workbench keeps the latest of this, so it may be a new function each render.
+  // Workbench keeps the latest callback; it need not be stable.
   const openPage = (checkId: string) =>
     void navigate({
       to: "/projects/$projectId/uptime/$checkId",

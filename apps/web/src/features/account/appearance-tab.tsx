@@ -11,11 +11,7 @@ const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-/**
- * The Appearance tab: the theme, System, Light or Dark. A choice applies at
- * once and has no Save bar: it is kept on this device (localStorage), and
- * nothing goes to the server (docs/design-system.md, "The save rule").
- */
+/** Apply the theme immediately and save it only in localStorage (docs/design-system.md, "The save rule"). */
 export function AppearanceTab() {
   const { choice } = useTheme();
   const id = React.useId();

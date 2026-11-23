@@ -35,10 +35,6 @@ import { RuleActions, RuleSwitch, type SavedWarning } from "./rule-actions";
 import { RuleStateBadge } from "./rule-state-badge";
 import { channelsText, watchesText } from "./rule-text";
 
-/**
- * A notice that a rule was saved whose service or metric has not reported
- * lately, or could not be checked, with a way to dismiss it.
- */
 export function SavedNotice({
   notice,
   onDismiss,
@@ -65,14 +61,7 @@ export function SavedNotice({
   );
 }
 
-/**
- * One alert rule with its loading, missing, and failed states: what it
- * watches, where it sends, whether it fires now (and why it is off or not
- * evaluated), its on or off switch, edit and delete, what it fires for
- * now, and the alerts it triggered. On the rule's own page, and in the
- * Alerts workbench beside the list, where `actions` links to the page and
- * a missing rule's link clears the selection instead.
- */
+/** Shared by the rule page and workbench. A missing rule clears the workbench selection. */
 export function RuleView({
   projectId,
   ruleId,
@@ -85,7 +74,6 @@ export function RuleView({
   ruleId: string;
   onWarning: (saved: SavedWarning) => void;
   onDeleted: () => void;
-  /** Beside the rule's name, such as a link to its own page. */
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
@@ -166,7 +154,6 @@ export function RuleView({
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1">
-            {/* On its own page, the page header names it, so it is not repeated here. */}
             {!inWorkbench && <PageTitle title={rule.name} />}
             {inWorkbench && (
               <h2 className="text-xl font-semibold break-words text-ink">{rule.name}</h2>
@@ -221,7 +208,6 @@ export function RuleView({
   );
 }
 
-/** One alert rule on its own page, for deep links and narrow screens. */
 export function RulePage({ projectId, ruleId }: { projectId: string; ruleId: string }) {
   const navigate = useNavigate();
   const [notice, setNotice] = React.useState<SavedWarning | null>(null);

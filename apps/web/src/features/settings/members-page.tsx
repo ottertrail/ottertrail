@@ -64,31 +64,29 @@ import {
   InviteDialog,
 } from "./member-dialogs";
 
-/** Whether `actor` may change, remove, or reset `target`: the API's rule (access/members.ts). */
+/** Match actor and target role rules in access/members.ts. */
 function mayManage(actor: Actor, target: { id: string; role: Role }) {
   if (target.id === actor.id || target.role === "owner") return false;
   if (actor.role === "owner") return true;
   return actor.role === "admin" && target.role === "member";
 }
 
-/** Whether `actor` may hand ownership to `target`: the owner, to anyone else. */
+/** Only the owner may transfer ownership, to another user. */
 const mayHandOver = (actor: Actor, target: Member) =>
   actor.role === "owner" && target.id !== actor.id;
 
-/** Whether `actor` may renew or revoke an invitation: an admin's only the owner (access/invitations.ts). */
+/** Only the owner may renew or revoke an admin invitation (access/invitations.ts). */
 const mayActOnInvitation = (actor: Actor, invitation: Invitation) =>
   actor.role === "owner" || invitation.role === "member";
 
 const ROLE_NAME: Record<Role, string> = { owner: "Owner", admin: "Admin", member: "Member" };
 
-/** What someone may reach: "Everything" for the owner and admins, a member's summary. */
 const accessText = (access: Member["access"]) =>
   access === null ? "Everything" : accessSummary(access);
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
-/** "in 5 days", "in 3 hours": how long an invitation's link still works; null once expired. */
 function expiresIn(iso: string, now: number): string | null {
   const left = Date.parse(iso) - now;
   if (left <= 0) return null;
@@ -100,19 +98,16 @@ function expiresIn(iso: string, now: number): string | null {
 
 const isExpired = (invitation: Invitation, now: number) => Date.parse(invitation.expiresAt) <= now;
 
-/** The row's menu button, by the person or invitation it acts on. */
 const menuButton = (id: string) =>
   document.querySelector<HTMLElement>(`[data-actions-for="${CSS.escape(id)}"]`);
 const tabButton = (tab: Tab) => document.querySelector<HTMLElement>(`[data-members-tab="${tab}"]`);
 
 type Tab = "members" | "invitations";
 
-/** What is open: the sheet or a dialog, and whom it acts on. */
 type Action =
   | { kind: "access" | "reset" | "owner" | "remove"; id: string }
   | { kind: "renew" | "revoke"; id: string };
 
-/** A row's actions menu, named for the person or invitation. */
 function RowMenu({ id, name, children }: { id: string; name: string; children: React.ReactNode }) {
   return (
     <DropdownMenu>
@@ -136,13 +131,12 @@ function RowMenu({ id, name, children }: { id: string; name: string; children: R
   );
 }
 
-/** A member's name: the button the row's click stands for where it opens Change access. */
 function PersonName({
   member,
   onOpen,
 }: {
   member: Member;
-  /** Opens Change access; left out where the viewer may not change them. */
+  /** Omit when the viewer cannot change access. */
   onOpen: (() => void) | undefined;
 }) {
   if (onOpen === undefined) {
@@ -299,7 +293,6 @@ function MembersTable({
   );
 }
 
-/** When an invitation's link stops working: "in 5 days", the moment in its tooltip-free text. */
 function Expiry({
   invitation,
   now,
@@ -438,14 +431,12 @@ function InvitationsTable({
   );
 }
 
-/** Under the members table: what the viewer can't do here, why, and what to do instead. */
 function membersNote(actor: Actor) {
   return actor.role === "owner"
     ? "Owners keep full access and can't remove themselves. To transfer ownership, choose Make owner in another person's menu."
     : "Only the owner can manage admins. You can't change your own access or the owner's. Ask the owner to change an admin's access.";
 }
 
-/** The page's shape while it loads: the tab row (as high as the settings tabs'), then rows. */
 function MembersSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading members">
@@ -461,18 +452,11 @@ function MembersSkeleton() {
   );
 }
 
-/** "3" after a tab's label, read as part of it. */
 const tabCount = (n: number) => (
   <span className="text-ink-subtle tabular-nums group-data-active/tab:text-ink-muted">{n}</span>
 );
 
-/**
- * The Members page (/settings/members; docs/access.md): two tabs, Members
- * and Invitations (`?tab=invitations`), each a table. A row's menu holds what
- * the viewer may do to that person within the role rules, and a click on a
- * member's row opens Change access, a sheet, where the viewer may change it.
- * Invite, at the top right, makes an invitation link.
- */
+/** Match member actions to role rules (docs/access.md). */
 export function MembersPage() {
   const me = useQuery(meQuery());
   const allowed = me.data?.permissions.members === true;
@@ -481,17 +465,14 @@ export function MembersPage() {
   const phone = useMediaQuery(PHONE);
   const [tabParam, setTab] = useSearchParam("tab");
   const tab: Tab = tabParam === "invitations" ? "invitations" : "members";
-  // When the page opened: invitations past it show as expired.
+  // Use the page opening time to determine expired invitations.
   const [now] = React.useState(() => Date.now());
-  // What the last removal, revocation or save did: said once, until the next action.
   const [notice, setNotice] = React.useState("");
-  // What is open, and whether: kept while it closes, so its content stays for the animation.
+  // Keep dialog and sheet content through the closing animation.
   const [action, setAction] = React.useState<Action | null>(null);
   const [open, setOpen] = React.useState(false);
-  // Opened again for the same person, the sheet or dialog starts afresh.
   const [opened, setOpened] = React.useState(0);
   const [password, setPassword] = React.useState("");
-  // Where focus goes once the sheet or dialog closes: a row's menu button, or a tab.
   const focusTo = React.useRef<{ menu: string } | { tab: Tab } | null>(null);
   const finalFocus = React.useCallback<FinalFocus>(() => {
     const to = focusTo.current;
@@ -544,8 +525,7 @@ export function MembersPage() {
     setOpen(true);
   };
 
-  // The row is going: focus goes to the nearest row after it with a menu (before it, at the
-  // end), or with none left, to its tab.
+  // After removal, focus the next row's menu, the previous at the end, or the tab if none remain.
   const leaveRow = (id: string, text: string) => {
     const kind: Tab = data.members.some((item) => item.id === id) ? "members" : "invitations";
     const withMenus =
@@ -744,14 +724,7 @@ export function MembersPage() {
         className="gap-0"
       >
         <div className="flex items-center gap-3 border-b px-gutter">
-          {/*
-           * The scrolling row starts a tab's padding (px-3) into the gutter,
-           * and the list drops its own 3px, so "Members" lines up with the
-           * table's first column, as on the settings pages. The height and
-           * the underline go on ui/tabs.tsx's own selectors, as in
-           * SettingsTabs, so the tabs fit the row and it never scrolls up
-           * and down.
-           */}
+          {/* Offset the tabs by px-3 to align Members with the first column. Use ui/tabs.tsx selectors to prevent vertical scrolling. */}
           <div className="-ms-3 min-w-0 flex-1 overflow-x-auto">
             <TabsList
               variant="line"

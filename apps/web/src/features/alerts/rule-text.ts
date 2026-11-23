@@ -4,7 +4,6 @@ import type { Check } from "@/lib/uptime-api";
 const minutes = (count: number) => (count === 1 ? "1 minute" : `${count} minutes`);
 const number = (value: number) => value.toLocaleString("en", { maximumFractionDigits: 6 });
 
-/** A metric rule's measure, as a sentence starts it. */
 const AGGREGATE_TEXT: Record<Aggregate, string> = {
   avg: "The average",
   min: "The minimum",
@@ -16,14 +15,12 @@ const AGGREGATE_TEXT: Record<Aggregate, string> = {
   p99: "The 99th percentile",
 };
 
-/** An AI cost rule's window, as a sentence ends it. */
 const COST_WINDOW_TEXT: Record<CostWindow, string> = {
   "1h": "the last hour",
   "1d": "the last 24 hours",
   month: "the month to date",
 };
 
-/** An AI rule's model and feature, as words: " of the model gpt-5 in the feature support", or "". */
 function aiScopeText(settings: Rule["settings"]): string {
   const model = settings.model ?? null;
   const feature = settings.feature ?? null;
@@ -33,7 +30,6 @@ function aiScopeText(settings: Rule["settings"]): string {
 const usd = (value: number) =>
   value.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 6 });
 
-/** What a rule watches, in a sentence, with its check's name when it names one. */
 export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "name">[]): string {
   const { settings } = rule;
   const checkId = settings.checkId ?? null;
@@ -100,7 +96,6 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
   return `${settings.threshold ?? 10} or more ${what} in ${minutes(settings.windowMinutes ?? 10)}, in ${where}`;
 }
 
-/** The channels' names, in the rule's order; a channel the instance no longer has says so. */
 export function channelsText(rule: Rule, channels: readonly ChannelName[]): string {
   if (rule.channelIds.length === 0) return "No channel";
   return rule.channelIds

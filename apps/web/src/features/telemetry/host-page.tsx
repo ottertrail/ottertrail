@@ -36,7 +36,6 @@ import { environmentSearch, rangeSearch } from "./search";
 import { assignSlots, OTHER_COLOR, SLOTS } from "./split-colors";
 import type { ChartLine } from "./time-chart";
 
-/** What each chart is called (its unit in the title) and says it shows. */
 const CHARTS: Record<
   HostChartId,
   { title: string; description: (step: string, metrics: string) => string; empty: string }
@@ -89,7 +88,6 @@ const CHARTS: Record<
   },
 };
 
-/** How a line is named in the legend, the tooltip, and the table. */
 const LINE_LABELS: Partial<Record<HostChartId, Record<string, string>>> = {
   network: { receive: "Received", transmit: "Sent" },
   disk: { read: "Read", write: "Written" },
@@ -109,7 +107,7 @@ function lineLabel(chart: HostChart, line: HostLine): string {
   return LINE_LABELS[chart.id]?.[line.value] ?? line.value;
 }
 
-/** A line's key: its value, never its label, so no value can pass for another line. */
+/** Identify lines by value so matching labels cannot merge them. */
 const keyOf = (line: HostLine) => (line.other ? "\u0000other" : `v${JSON.stringify(line.value)}`);
 
 function formatterOf(unit: string): (value: number) => string {
@@ -119,11 +117,7 @@ function formatterOf(unit: string): (value: number) => string {
   return (value) => formatMetricValue(value, unit);
 }
 
-/**
- * A chart's lines, each value in the color slot it first got while the
- * page is open (assignSlots), so a mount point or state keeps its color
- * when the period changes; "other" in gray.
- */
+/** Keep color slots stable across period changes (assignSlots); use gray for Other. */
 function linesOf(chart: HostChart, colors: Map<string, number>): ChartLine[] {
   const slots = assignSlots(
     colors,
@@ -177,7 +171,6 @@ function HostChartCard({
   );
 }
 
-/** One host's charts over the period: CPU, memory, filesystems, network, disks, and load. */
 export function HostPage({
   projectId,
   host,
@@ -190,7 +183,6 @@ export function HostPage({
   environment?: string;
 }) {
   const navigate = useNavigate();
-  // Each chart's values keep their colors while the page is open.
   const [colors] = React.useState(() => new Map<HostChartId, Map<string, number>>());
   const colorsOf = (id: HostChartId) => {
     const known = colors.get(id);
@@ -235,7 +227,6 @@ export function HostPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All hosts
           </Link>
-          {/* The page header names it, so it is not repeated here. */}
           <PageTitle title={host} />
           {data !== undefined && data.lastSeen !== null && (
             <p className="flex flex-wrap items-center gap-2 text-sm text-ink-subtle">

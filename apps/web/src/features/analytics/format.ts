@@ -10,12 +10,11 @@ export function formatCount(value: number): string {
   return value < 10_000 ? whole.format(value) : compact.format(value);
 }
 
-/** A count in full, for tables and lists: 12,904. */
 export function formatWhole(value: number): string {
   return whole.format(value);
 }
 
-/** An average such as views per visit, to one decimal place at most: 2, 1.5; "–" when there is no data. */
+/** Use at most one decimal; show the missing-value marker for null. */
 export function formatRatio(value: number | null): string {
   return value === null ? MISSING : oneDecimal.format(value);
 }
@@ -28,11 +27,7 @@ export interface Change {
   spoken: string;
 }
 
-/**
- * Change from the previous period in percent, rounded: for counts and
- * averages. A change too small to round to 1% is "<1%", never "no change".
- * null without a value to compare with (nothing before, or 0).
- */
+/** Changes below 1% show as "<1%". Return null if the previous value is missing or zero. */
 export function relativeChange(current: number | null, previous: number | null): Change | null {
   if (current === null || previous === null || previous === 0) {
     return null;
@@ -49,12 +44,7 @@ export function relativeChange(current: number | null, previous: number | null):
   return { direction, text, spoken: text };
 }
 
-/**
- * Change of a share (0 to 1, such as the bounce rate) in percentage points:
- * from 24% to 30% is 6 points, where a percentage (25%) would mislead.
- * Worked out from the whole percentages shown, so the change always
- * matches them.
- */
+/** Compare the displayed whole percentages so the change matches them. */
 export function pointsChange(current: number | null, previous: number | null): Change | null {
   if (current === null || previous === null) {
     return null;
@@ -71,22 +61,18 @@ export function pointsChange(current: number | null, previous: number | null): C
   };
 }
 
-/** "15:00" in a timezone, for a moment given as an ISO time. */
 export function formatTimeOfDay(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }).format(
     new Date(iso),
   );
 }
 
-/** A share from 0 to 1 as a whole percentage, or "–" when there is no data. */
+/** Format a share from 0 to 1; null shows the missing-value marker. */
 export function formatPercent(value: number | null): string {
   return value === null ? MISSING : `${Math.round(value * 100)}%`;
 }
 
-/**
- * A conversion rate from 0 to 1 as a percentage: one decimal below 10%
- * (5.2%), whole from there (17%); "<0.1%" for a share too small to show.
- */
+/** Use one decimal below 10%, whole percentages above, and "<0.1%" for smaller shares. */
 export function formatConversion(value: number): string {
   const percent = value * 100;
   if (percent === 0) return "0%";
@@ -95,7 +81,7 @@ export function formatConversion(value: number): string {
   return tenth < 10 ? `${tenth.toFixed(1)}%` : `${whole.format(Math.round(percent))}%`;
 }
 
-/** 45s, 3m 12s, 1h 05m; "–" when there is no data. */
+/** Format milliseconds as 45s, 3m 12s, or 1h 05m; null shows the missing-value marker. */
 export function formatDuration(ms: number | null): string {
   if (ms === null) {
     return MISSING;
@@ -111,7 +97,7 @@ export function formatDuration(ms: number | null): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/** "YYYY-MM-DD" as "16 Nov", or "Mon 16 Nov" with the weekday. Days are calendar days, so UTC. */
+/** Treat YYYY-MM-DD as a UTC calendar day. */
 export function formatDay(day: string, { weekday = false } = {}): string {
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -121,17 +107,13 @@ export function formatDay(day: string, { weekday = false } = {}): string {
   }).format(new Date(`${day}T00:00:00Z`));
 }
 
-/** A calendar day ("YYYY-MM-DD") with the given date parts. */
 function formatCalendarDay(day: string, parts: Intl.DateTimeFormatOptions): string {
   return new Intl.DateTimeFormat("en-GB", { ...parts, timeZone: "UTC" }).format(
     new Date(`${day}T00:00:00Z`),
   );
 }
 
-/**
- * "12 to 18 Nov 2026", "28 Nov to 4 Dec 2026", or "16 Nov 2026" for one
- * day: written with "to", never a dash (docs/design-system.md#dates).
- */
+/** Use "to" between dates (docs/design-system.md#dates). */
 export function formatDayRange(firstDay: string, lastDay: string): string {
   const format = formatCalendarDay;
   const full = { day: "numeric", month: "short", year: "numeric" } as const;

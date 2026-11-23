@@ -78,11 +78,9 @@ import { CallCost, CallStatus, CallView, COST_NOTE, ConversationView } from "./c
 import { type AiCallsPlace, aiCallsSearchOf, type AiCallsView } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, modelLabel } from "./format";
 
-/** A filter's choices: the values the period offers, each with its label. */
 const choices = (values: readonly string[] | undefined, label = (value: string) => value) =>
   (values ?? []).map((value) => ({ value, label: label(value) }));
 
-/** Whether any filter but the conversation narrows the list. */
 const narrowed = (filters: AiCallFilters) =>
   Object.entries(filters).some(([key, value]) => key !== "conversation" && value !== undefined);
 
@@ -95,7 +93,6 @@ const STATUSES = [
   { value: "failed", label: "Failed" },
 ] as const;
 
-/** The listed calls, newest first: the model (the row's link), what made it, and its figures. */
 function CallTable({
   calls,
   place,
@@ -109,7 +106,7 @@ function CallTable({
   timeZone: string;
   usersHidden: boolean;
 } & WorkbenchListProps) {
-  // A phone leaves out the tokens, which the call's page has.
+  // Omit tokens on phones; they remain on the call page.
   const phone = useMediaQuery(PHONE);
   return (
     <Table className="table-fixed">
@@ -192,13 +189,12 @@ function CallTable({
   );
 }
 
-/** "N calls had no price and are not in the cost." */
 const noPriceLine = (calls: number) =>
   calls === 0
     ? ""
     : `${formatWhole(calls)} ${calls === 1 ? "call had" : "calls had"} no price and ${calls === 1 ? "is" : "are"} not in the cost. `;
 
-/** With nothing selected: the period's calls with the filters, counted whole by the API. */
+/** Use the API total across all matching calls. */
 function CallsSummary({ first }: { first: AiCallFirstPage }) {
   const { totals } = first;
   const stats: Stat[] = [
@@ -232,7 +228,7 @@ function CallsSummary({ first }: { first: AiCallFirstPage }) {
   );
 }
 
-/** With nothing selected: the conversations listed, at least that many when some were left out. */
+/** Use "at least" if conversations were omitted. */
 function ConversationsSummary({ list }: { list: AiConversationList }) {
   const { conversations, more } = list;
   const turns = conversations.reduce((total, row) => total + row.calls, 0);
@@ -264,7 +260,6 @@ function ConversationsSummary({ list }: { list: AiConversationList }) {
   );
 }
 
-/** The period's conversations, by their last call: the ID (the row's link), who, and its figures. */
 function ConversationTable({
   conversations,
   place,
@@ -367,11 +362,7 @@ function ConversationTable({
   );
 }
 
-/**
- * A filter set by a link with no field of its own: the Calls view's
- * conversation (from a call or a conversation), or a user for a reader
- * without the Users area. Its value, and a button that removes it.
- */
+/** Keep link-only filters removable, including user filters without Users access. */
 function FilterChip({
   text,
   removeLabel,
@@ -436,7 +427,6 @@ function ListLoading() {
   );
 }
 
-/** While the project has never sent an AI call: where to read how. */
 function NoCallsYet() {
   return (
     <Empty className="border border-dashed p-10">
@@ -469,14 +459,7 @@ function DocsButton({ children }: { children: React.ReactNode }) {
 
 const notFound = (error: Error | null) => error instanceof ApiError && error.status === 404;
 
-/**
- * The project's AI calls as a workbench (docs/ai-usage.md, "The calls
- * list"; docs/design-system.md, "Workbench"): every call of the period,
- * newest first, a hundred at a time, beside the selected call; or, in the
- * Conversations view, the conversations the calls make, by their last
- * call, beside the selected one's calls. Every filter is in the address.
- * Under 64rem a row opens its own page.
- */
+/** Calls workbench, 100 calls per page. Below 64rem, rows open their own pages (docs/ai-usage.md, "The calls list"; docs/design-system.md, "Workbench"). */
 export function AiCallsPage({
   projectId,
   range,
@@ -507,10 +490,8 @@ export function AiCallsPage({
   const place: AiCallsPlace = { projectId, range, environment, filters };
 
   const calls = (list.data?.pages ?? []).flatMap((page) => page.calls);
-  // When a call ran: its row's start, else what the address says (a link from elsewhere).
   const atOf = (callId: string) => calls.find((call) => call.id === callId)?.at ?? at;
 
-  /** A new address for the list: the selection, and when the selected call ran, kept. */
   const show = (next: {
     range?: PageRange;
     environment?: string;
@@ -608,7 +589,7 @@ export function AiCallsPage({
                 className="w-32"
               />
             )}
-            {/* A user filter from a link stays removable for a reader without the Users area, whose list it refuses. */}
+            {/* Keep user filters removable without Users access. */}
             {filters.user !== undefined && usersHidden && (
               <FilterChip
                 text={`User ${filters.user}`}
@@ -721,7 +702,6 @@ export function AiCallsPage({
           className="min-[64rem]:min-h-0 min-[64rem]:flex-1"
           ids={calls.map((call) => call.id)}
           param="call"
-          // A call chosen is looked for at its start.
           selectionSearch={(id) => ({ at: id === undefined ? undefined : atOf(id) })}
           filterKey={JSON.stringify([range, environment, filters])}
           onOpenPage={(callId) =>

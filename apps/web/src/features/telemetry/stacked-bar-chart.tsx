@@ -5,28 +5,17 @@ import { TruncatedText } from "@/components/truncated-text";
 import { tickLabel, ticksFor } from "./chart-time";
 import { bucketStart, type ListChartFrame, listBucketLabel } from "./list-chart-frame";
 
-/**
- * Counts over time buckets as stacked bars, for the Logs and Traces lists'
- * charts: one y-axis from zero, a bar per bucket with its parts stacked
- * from the baseline in the order given, 2px of surface between parts and
- * between bars, a rounded top, a legend from two parts, and a readout of
- * the hovered bucket with every part's count and the total. A hidden range
- * input moves between buckets with the keyboard and reads each out; with
- * `onSelect`, a click or Enter on a bucket selects it. The table view is
- * the caller's ("Show the numbers").
- */
+/** A hidden range input provides keyboard navigation. The caller supplies the table view. */
 
 export interface BarPart {
   key: string;
   label: string;
-  /** A CSS color. */
   color: string;
   values: number[];
 }
 
 const AXIS_BAND = 28;
 const MARGIN = { top: 12, right: 16, left: 56 };
-/** The surface between parts and between bars. */
 const GAP = 2;
 const MAX_BAR = 24;
 
@@ -39,17 +28,14 @@ export function StackedBarChart({
   onSelect,
   selectHint,
 }: {
-  /** The buckets, each with its start on the clock of the instance's timezone. */
+  /** Bucket starts follow the instance timezone. */
   frame: ListChartFrame;
-  /** From the baseline up; the legend lists them in this order. */
+  /** Stack and list legend entries in the supplied order, from the baseline up. */
   parts: BarPart[];
-  /** What the chart shows: its accessible name. */
   label: string;
   formatValue: (value: number) => string;
   plotHeight?: number;
-  /** A bucket clicked or chosen with Enter; none when the chart offers nothing. */
   onSelect?: ((index: number) => void) | undefined;
-  /** What selecting a bucket does, under the readout, such as "Click to show this day". */
   selectHint?: string | undefined;
 }) {
   const { stepSeconds, timeZone } = frame;
@@ -103,7 +89,6 @@ export function StackedBarChart({
     `${listBucketLabel(frame, index)}: ${formatValue(totals[index] ?? 0)} in all${parts
       .map((part) => `, ${part.label} ${formatValue(part.values[index] ?? 0)}`)
       .join("")}`;
-  // The keyboard position starts on the latest bucket.
   const shown = active ?? Math.max(0, last);
   const tooltipOnLeft = active !== null && center(active) > width / 2;
 
@@ -132,7 +117,6 @@ export function StackedBarChart({
         style={{ height: chartHeight }}
         onPointerMove={(event) => setActive(bucketAt(event.clientX))}
         onPointerLeave={() => setActive(null)}
-        // The keyboard selects through the range input (Enter); a pointer, here.
         onPointerUp={(event) => {
           const index = bucketAt(event.clientX);
           if (onSelect !== undefined && index !== null) onSelect(index);

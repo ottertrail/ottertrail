@@ -50,7 +50,6 @@ import { SaveFunnelActions } from "./save-funnel-actions";
 import { SavedFunnelsCard } from "./saved-funnels-card";
 import { type FunnelSearch, funnelSearchOf } from "./search";
 
-/** Who to count, and for how long after step 1. Applies at once. */
 function FunnelSettings({
   count,
   window,
@@ -161,7 +160,6 @@ function FunnelNotes({ window }: { window: FunnelWindow }) {
   );
 }
 
-/** Until two steps are shown: what a funnel is, with an example to start from. */
 function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => void }) {
   return (
     <Empty className="border border-dashed p-10">
@@ -192,13 +190,6 @@ function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => voi
   );
 }
 
-/**
- * One ordered funnel: of the people who did step 1 in the period, how many
- * went on to each next step, in order, within the conversion window. The
- * steps, the count, and the window live in the address, with the saved
- * funnel last opened or saved, if any; the project's saved funnels are
- * listed above the steps.
- */
 export function FunnelPage({
   projectId,
   range,
@@ -211,7 +202,6 @@ export function FunnelPage({
   projectId: string;
   range: PageRange;
   environment?: string;
-  /** The saved funnel open in the address, by ID. */
   funnel?: string | undefined;
   steps: FunnelStep[];
   count: FunnelCount;
@@ -223,10 +213,10 @@ export function FunnelPage({
     ...funnelQuery(projectId, range, environment, steps, count, window),
     enabled: ready,
   });
-  // The project's event names, to suggest; the funnel works without them.
+  // Suggestions are optional; the funnel works without them.
   const events = useQuery(productEventsQuery(projectId, range, environment));
   const saved = useQuery(savedFunnelsQuery(projectId));
-  // Where focus goes once the shown funnel is saved: the button that did it is gone.
+  // Saving removes the trigger, so return focus to the Steps heading.
   const stepsHeadingRef = React.useRef<HTMLHeadingElement>(null);
   const search: FunnelSearch = { range, environment, funnel, steps, count, window };
   const show = (next: Partial<FunnelSearch>) =>
@@ -268,7 +258,6 @@ export function FunnelPage({
           search={search}
           openId={funnel}
           onDeleted={(deleted) => {
-            // The shown steps stay; they are just no longer saved.
             if (deleted.id === funnel) show({ funnel: undefined });
           }}
         />

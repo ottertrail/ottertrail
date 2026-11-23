@@ -7,10 +7,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-/**
- * Key and value pairs, such as a span's attributes, by key. Values are
- * text as stored: numbers and booleans as written, arrays as JSON.
- */
+/** Render stored values as text; arrays are JSON. */
 export function AttributeTable({
   caption,
   attributes,

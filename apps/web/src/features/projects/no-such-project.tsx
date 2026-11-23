@@ -1,9 +1,6 @@
 import { NotFound } from "@/components/route-states";
 
-/**
- * A project that does not exist, or one the person may not reach: the API
- * answers both with a 404, so the page cannot tell them apart either.
- */
+/** The API uses 404 for both missing and inaccessible projects. */
 export function NoSuchProject() {
   return (
     <NotFound

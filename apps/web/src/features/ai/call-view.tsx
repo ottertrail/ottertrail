@@ -45,10 +45,8 @@ import { formatMoment } from "../users/format";
 import { type AiCallsPlace, aiCallsSearchOf } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, isCutOff, modelLabel } from "./format";
 
-/** What every cost on these pages is. */
 export const COST_NOTE = "Cost is an estimate from token counts and model prices.";
 
-/** A call's status: Failed with its error type, Cut off at its token limit, or OK. */
 export function CallStatus({ call }: { call: AiListedCall }) {
   if (call.failed) {
     return (
@@ -64,12 +62,10 @@ export function CallStatus({ call }: { call: AiListedCall }) {
   return <span className="text-sm text-ink-subtle">OK</span>;
 }
 
-/** An estimated cost, or a dash named "No price" for a model without one. */
 export function CallCost({ costUsd }: { costUsd: number | null }) {
   return costUsd === null ? <Missing label="No price" /> : <>{formatUsd(costUsd)}</>;
 }
 
-/** "22 Nov 2026" for a calendar day ("YYYY-MM-DD"). */
 const formatCalendarDay = (day: string) =>
   new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -78,7 +74,6 @@ const formatCalendarDay = (day: string) =>
     timeZone: "UTC",
   }).format(new Date(`${day}T00:00:00Z`));
 
-/** "22 Nov 2026" for a moment, in the instance's timezone. */
 const formatDate = (iso: string, timeZone: string) =>
   new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -94,7 +89,6 @@ const perMillion = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
 });
 
-/** Where a call's price comes from, in Settings → AI models' words. */
 function priceSourceText(price: AiCallPrice, timeZone: string): string {
   if (price.source === "built_in") {
     return price.checked === null
@@ -108,7 +102,6 @@ function priceSourceText(price: AiCallPrice, timeZone: string): string {
   return `Custom price${on}${from}`;
 }
 
-/** "$3.00 input, $15.00 output, $0.30 cache read, cache write as input, per million tokens". */
 const ratesText = (rates: AiCallPrice["rates"]) =>
   `${[
     `${perMillion.format(rates.input)} input`,
@@ -121,7 +114,6 @@ const ratesText = (rates: AiCallPrice["rates"]) =>
       : `${perMillion.format(rates.cacheWrite)} cache write`,
   ].join(", ")}, per million tokens`;
 
-/** One fact: its label over its value; a missing value is a dash named in words. */
 function Fact({
   label,
   children,
@@ -130,7 +122,6 @@ function Fact({
 }: {
   label: string;
   children: React.ReactNode;
-  /** What a screen reader hears for a missing value. */
   missing?: string;
   wide?: boolean;
 }) {
@@ -159,7 +150,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const FACTS = "grid grid-cols-2 gap-x-6 gap-y-4 @xl:grid-cols-3";
 
-/** The address of the AI calls page in the Conversations view with `conversationId` chosen. */
 const conversationSearch = (place: AiCallsPlace, conversationId: string) =>
   aiCallsSearchOf({
     range: place.range,
@@ -168,7 +158,6 @@ const conversationSearch = (place: AiCallsPlace, conversationId: string) =>
     view: "conversations",
   });
 
-/** The address of the AI calls page listing only `conversationId`'s calls. */
 const conversationCallsSearch = (place: AiCallsPlace, conversationId: string) =>
   aiCallsSearchOf({
     range: place.range,
@@ -201,12 +190,7 @@ function Failure({ title, error, retry }: { title: string; error: Error; retry: 
   );
 }
 
-/**
- * One AI call: every field stored of it, its estimated cost with where the
- * price comes from, its trace, and its conversation. On its own page
- * (under 64rem) and beside the list (`inWorkbench`), where links to a
- * conversation stay on the workbench.
- */
+/** Conversation links stay in the workbench when embedded. */
 export function CallView({
   place,
   callId,
@@ -216,10 +200,8 @@ export function CallView({
 }: {
   place: AiCallsPlace;
   callId: string;
-  /** When it started, when known: where it is looked for. */
   at: string | undefined;
   inWorkbench?: boolean;
-  /** Beside its name, such as a link to its own page. */
   actions?: React.ReactNode;
 }) {
   const { projectId } = place;
@@ -435,7 +417,6 @@ export function CallView({
   );
 }
 
-/** One call on its own page, for narrow screens and links. */
 export function CallPage({
   place,
   callId,
@@ -464,7 +445,6 @@ export function CallPage({
 const sameDay = (a: string, b: string, timeZone: string) =>
   formatDate(a, timeZone) === formatDate(b, timeZone);
 
-/** "07:38:12", the time of a turn. */
 const formatClock = (iso: string, timeZone: string) =>
   new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
@@ -475,7 +455,6 @@ const formatClock = (iso: string, timeZone: string) =>
 
 const HEAD = "h-8 text-xs font-normal text-ink-subtle";
 
-/** A conversation's calls in order: each turn's time opens it in the list. */
 function Turns({ place, detail }: { place: AiCallsPlace; detail: AiConversationDetail }) {
   const { calls, timeZone } = detail;
   const first = calls[0]?.at;
@@ -567,11 +546,6 @@ function Turns({ place, detail }: { place: AiCallsPlace; detail: AiConversationD
   );
 }
 
-/**
- * One conversation: its figures in the period and its calls in order, each
- * opening in the list. On its own page (under 64rem) and beside the
- * Conversations list (`inWorkbench`).
- */
 export function ConversationView({
   place,
   conversationId,
@@ -701,7 +675,6 @@ export function ConversationView({
   );
 }
 
-/** One conversation on its own page, for narrow screens and links. */
 export function ConversationPage({
   place,
   conversationId,

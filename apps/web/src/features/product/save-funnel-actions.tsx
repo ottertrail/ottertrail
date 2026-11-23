@@ -18,13 +18,9 @@ import {
 import { DefinitionSummary, FunnelNameDialog } from "./funnel-name-dialog";
 import { isShownFunnel } from "./search";
 
-/** The look of a Save that has nothing to save: it stays focusable, as the Save bar's does. */
+/** Keep inactive Save focusable (docs/design-system.md, "The save rule"). */
 const RESTING = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 
-/**
- * A button that saves a new funnel. Disabled with nothing to save (no
- * funnel shown), and at the limit, with the reason.
- */
 function SaveNewButton({
   label,
   atLimit,
@@ -50,7 +46,6 @@ function SaveNewButton({
         variant="outline"
         size="sm"
         disabled={atLimit || nothingToSave}
-        // With nothing to save it stays focusable; at the limit it is plainly disabled.
         focusableWhenDisabled={!atLimit}
         className={RESTING}
         aria-describedby={atLimit ? reasonId : undefined}
@@ -63,13 +58,7 @@ function SaveNewButton({
   );
 }
 
-/**
- * Saving the funnel shown (the address's steps, count, and window, not an
- * unshown draft in the editor): as a new saved funnel, or over the saved
- * funnel open in the address when it has changed since. By the save rule,
- * Save is disabled while there is nothing new to save: before a funnel is
- * shown, and while the open saved funnel is shown as it was saved.
- */
+/** Save the shown definition from the address; the editor may hold an unshown draft. */
 export function SaveFunnelActions({
   projectId,
   shown,
@@ -80,20 +69,11 @@ export function SaveFunnelActions({
   onSaved,
 }: {
   projectId: string;
-  /** The funnel shown; null until one is (fewer than two steps in the address). */
   shown: FunnelDefinition | null;
-  /** The saved funnels; undefined while they load, or when they could not load. */
   funnels: SavedFunnel[] | undefined;
-  /** Whether they are still loading. */
   loading: boolean;
-  /** The saved funnel open in the address, if any. */
   openId: string | undefined;
-  /**
-   * Where focus goes once a new funnel is saved from the dialog: the Steps
-   * heading, since Save funnel gives way to Save changes.
-   */
   returnFocus: React.RefObject<HTMLElement | null>;
-  /** After a new funnel is saved: open it. */
   onSaved: (funnel: SavedFunnel) => void;
 }) {
   const queryClient = useQueryClient();
@@ -102,15 +82,14 @@ export function SaveFunnelActions({
     mutationFn: ({ funnel, definition }: { funnel: SavedFunnel; definition: FunnelDefinition }) =>
       updateFunnel(projectId, funnel, funnel.name, definition),
     onSuccess: (funnel) => {
-      // Shown as saved at once, so Save changes is disabled again with no second click.
-      // Focus stays on it: disabled, it stays focusable, beside the status that says so.
+      // Update the cache immediately to prevent a second save. Keep focus on the disabled button.
       rememberSavedFunnel(queryClient, projectId, funnel);
     },
-    // Changed or deleted elsewhere: the list as it is now, to look at before trying again.
+    // Refetch after conflicts before retrying.
     onError: () => void queryClient.invalidateQueries({ queryKey: savedFunnelsKey(projectId) }),
   });
 
-  // A failure shows for the funnel and steps it was for, not for others shown since.
+  // Show failures only for the definition that failed.
   const failedFor =
     saveChanges.variables === undefined
       ? undefined
@@ -119,9 +98,9 @@ export function SaveFunnelActions({
   const atLimit = (funnels?.length ?? 0) >= MAX_SAVED_FUNNELS;
   const unchanged = open !== undefined && shown !== null && isShownFunnel(open, shown);
   const saveNew = () => setNaming(true);
-  // Until the list loads, whether the open funnel has changed is not known.
+  // Wait for the saved list before comparing the open funnel.
   const known = !(openId !== undefined && loading);
-  // A saved funnel open with no funnel shown (its steps gone from the address) is not compared.
+  // Skip comparison when the address has no steps to show.
   const compared = shown === null ? undefined : open;
 
   return (

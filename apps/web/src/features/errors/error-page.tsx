@@ -55,25 +55,15 @@ import { EnvironmentSelect, PeriodSelect } from "./range-controls";
 import { type ErrorsSearch, errorsSearchOf } from "./search";
 import { StackCard } from "./stack-card";
 
-/**
- * The shared cards (stack, trend, alert rules) as flat sections, parted by
- * a hairline rather than set in a card: the detail reads top to bottom.
- */
 const SECTION_LOOK =
   "gap-3 overflow-visible rounded-none border-t bg-transparent pt-5 pb-0 ring-0 [--card-spacing:0]";
 
-/**
- * Where the detail is narrower than 48rem (a phone, or the pane beside the
- * errors list), a wide table's rows stack into blocks, each value after its
- * column's name, which CSS draws from `data-label` so the cell's text stays
- * its value. By the detail's own width (`@container`), not the window's.
- */
+/** Below 48rem of container width, stack rows and use data-label for headings. */
 const stackTable = "@max-3xl:block";
 const stackRow = "@max-3xl:flex @max-3xl:flex-col @max-3xl:py-2";
 const stackCell =
   "@max-3xl:flex @max-3xl:items-center @max-3xl:justify-between @max-3xl:gap-3 @max-3xl:px-0 @max-3xl:py-0.5 @max-3xl:before:shrink-0 @max-3xl:before:font-sans @max-3xl:before:text-ink-subtle @max-3xl:before:content-[attr(data-label)]";
 
-/** A section of the detail: a hairline, its heading, an optional line under it. */
 function DetailSection({
   title,
   description,
@@ -104,10 +94,6 @@ function DetailSection({
   );
 }
 
-/**
- * The group's status, and the button that changes it. `buttonRef` lets a
- * workbench's `e` key press it, so the key and the button are one action.
- */
 function Resolution({
   projectId,
   detail,
@@ -117,7 +103,6 @@ function Resolution({
   projectId: string;
   detail: ErrorDetail;
   buttonRef?: React.Ref<HTMLButtonElement>;
-  /** Shows the key that presses the button, in a workbench. */
   keyHint?: boolean;
 }) {
   const { group, timeZone } = detail;
@@ -125,7 +110,7 @@ function Resolution({
   const change = useMutation({
     mutationFn: (status: "resolved" | "unresolved") =>
       setErrorStatus(projectId, group.fingerprint, status),
-    // Pending until both pages have the new status, so the button never shows the old one.
+    // Wait for both caches so the button cannot show stale status.
     onSuccess: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["errors", projectId] }),
@@ -182,7 +167,6 @@ function Resolution({
   );
 }
 
-/** The counts in the period, then when it was first and last seen. */
 function Stats({ detail }: { detail: ErrorDetail }) {
   const { group, timeZone } = detail;
   // A moment may wrap to two lines in a narrow column; a count never does.
@@ -216,14 +200,12 @@ function Stats({ detail }: { detail: ErrorDetail }) {
 
 const known = (rows: ErrorBreakdownRow[]) => rows.some((row) => row.value !== null);
 
-/** Whether the group happens on servers, in browsers, or both, from its breakdowns. */
 function sourcesOf(detail: ErrorDetail) {
   const servers = known(detail.breakdowns.service);
   const browsers = !servers || known(detail.breakdowns.browser) || known(detail.breakdowns.os);
   return { servers, browsers };
 }
 
-/** The breakdowns the group has: a browser's, a server's, or both. */
 function breakdownCards(detail: ErrorDetail) {
   const { servers, browsers } = sourcesOf(detail);
   const cards: { name: ErrorBreakdown; title: string; heading: string }[] = [
@@ -244,7 +226,6 @@ function breakdownCards(detail: ErrorDetail) {
   return cards;
 }
 
-/** Where the group happens: its pages or routes, browsers, systems, services, and releases. */
 function Breakdowns({ detail }: { detail: ErrorDetail }) {
   return (
     <DetailSection title="Where it happens">
@@ -282,24 +263,20 @@ function Breakdowns({ detail }: { detail: ErrorDetail }) {
   );
 }
 
-/** "Firefox 132.0", or whichever part is known. */
 const browserText = (occurrence: Occurrence) =>
   [occurrence.browser, occurrence.browserVersion].filter((part) => part !== null).join(" ");
 
 const isServer = (occurrence: Occurrence) => occurrence.service !== null;
 
-/** A column's heading for browsers' occurrences, servers', or both. */
 function columnHeading(occurrences: Occurrence[], browser: string, server: string, both: string) {
   const servers = occurrences.some(isServer);
   const browsers = occurrences.some((occurrence) => !isServer(occurrence));
   return servers && browsers ? both : servers ? server : browser;
 }
 
-/** The trace and span IDs, as a tooltip. */
 const traceTitle = (occurrence: Occurrence) =>
   `Trace ${occurrence.traceId ?? "(none)"}, span ${occurrence.spanId ?? "(none)"}`;
 
-/** A server occurrence's trace, as a link to the trace's page, opened on its span. */
 function TraceLink({
   projectId,
   occurrence,
@@ -333,11 +310,6 @@ function TraceLink({
 const hasTrace = (occurrence: Occurrence): occurrence is Occurrence & { traceId: string } =>
   occurrence.traceId !== null;
 
-/**
- * The latest occurrence's service, trace, and span, for a server's
- * exception. The trace ID opens the trace's page, with its spans and logs,
- * on the span the exception happened in.
- */
 function ServerSection({ projectId, occurrence }: { projectId: string; occurrence: Occurrence }) {
   const items = [
     { label: "Service", value: occurrence.service },
@@ -392,7 +364,6 @@ function Occurrences({
       title="Latest occurrences"
       description={`The ${detail.occurrences.length === 1 ? "latest" : `latest ${detail.occurrences.length}`} in this period, newest first, in ${detail.timeZone}.`}
     >
-      {/* In a narrow detail each occurrence stacks into a block, every value labelled. */}
       <Table className={stackTable}>
         <caption className="sr-only">Latest occurrences, newest first</caption>
         <TableHeader className="@max-3xl:sr-only">
@@ -460,7 +431,6 @@ function Occurrences({
                     <TruncatedText text={occurrence.service ?? ""} className="max-w-48" />
                   </TableCell>
                   <TableCell data-label={headings.system} className={`font-mono ${stackCell}`}>
-                    {/* The tooltip names the span too. */}
                     <TruncatedText text={traceTitle(occurrence)} className="max-w-40">
                       {hasTrace(occurrence) ? (
                         <TraceLink
@@ -504,14 +474,6 @@ function Occurrences({
   );
 }
 
-/**
- * One error group in full: its status (with Resolve or Reopen), its
- * assignee, its numbers,
- * the latest occurrence's server (for a server's exception), the latest
- * stack (a browser's mapped with the release's source maps where it can be),
- * its latest occurrences, a trend, where it happens, and the alert rules that
- * watch it. The page and the errors workbench both show it.
- */
 function Detail({
   projectId,
   detail,
@@ -525,7 +487,6 @@ function Detail({
   environment: string;
   resolveRef?: React.Ref<HTMLButtonElement>;
   actions?: React.ReactNode;
-  /** On its own page the header shows the type, so its heading here is for screen readers only. */
   ownPage?: boolean;
 }) {
   const { group } = detail;
@@ -585,7 +546,6 @@ function Detail({
   );
 }
 
-/** The group has no occurrence in the period and environment shown. */
 function NoOccurrence({
   projectId,
   fingerprint,
@@ -664,11 +624,6 @@ function NoOccurrence({
   );
 }
 
-/**
- * An error group's detail for a period and environment, with its loading,
- * failed, and empty states: on its own page, and in the errors workbench
- * beside the list.
- */
 export function ErrorView({
   projectId,
   fingerprint,
@@ -682,11 +637,8 @@ export function ErrorView({
   fingerprint: string;
   range: PageRange;
   environment: string;
-  /** The Resolve or Reopen button, for a key that presses it. */
   resolveRef?: React.Ref<HTMLButtonElement>;
-  /** Beside the error's name, such as a link to its own page. */
   actions?: React.ReactNode;
-  /** On the error's own page, whose header names it. */
   ownPage?: boolean;
 }) {
   const query = useQuery(errorQuery(projectId, fingerprint, range, environment));
@@ -747,10 +699,7 @@ export function ErrorView({
   );
 }
 
-/**
- * One error group on its own page, for deep links and narrow screens: the
- * period and environment in the filter bar, then its detail.
- */
+/** Keep the period and environment in the page address. */
 export function ErrorPage({
   projectId,
   fingerprint,

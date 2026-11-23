@@ -60,7 +60,6 @@ import { storageQuery } from "@/lib/storage-api";
 import { formatMoment } from "../uptime/format";
 import { ChannelFormDialog } from "./channel-form-dialog";
 
-/** What each event type is called in the list. */
 const EVENT_TEXT: Record<string, string> = {
   "check.down": "Check down",
   "check.up": "Check up",
@@ -89,12 +88,10 @@ const EVENT_TEXT: Record<string, string> = {
   test: "Test",
 };
 
-/** A delivery's state in words, with an icon: never color alone. */
 function DeliveryStatusBadge({ delivery }: { delivery: Delivery }) {
   if (delivery.status === "sent") return <StatusBadge tone="good">Sent</StatusBadge>;
   if (delivery.status === "failed") return <StatusBadge tone="critical">Failed</StatusBadge>;
   if (delivery.lastError !== null) return <StatusBadge tone="warning">Retrying</StatusBadge>;
-  // Taken by the worker, its first attempt not finished yet.
   if (delivery.attempts > 0) {
     return (
       <StatusBadge
@@ -108,7 +105,6 @@ function DeliveryStatusBadge({ delivery }: { delivery: Delivery }) {
   return <StatusBadge tone="neutral">Queued</StatusBadge>;
 }
 
-/** A channel's deliveries of the last 30 days, newest first, 20 at a time. */
 function DeliveryList({ channel, timeZone }: { channel: Channel; timeZone: string }) {
   const query = useInfiniteQuery(deliveriesQuery(channel.id));
   if (query.isPending) {
@@ -211,7 +207,7 @@ function DeliveryList({ channel, timeZone }: { channel: Channel; timeZone: strin
   );
 }
 
-/** Asks before giving a webhook a new secret, which stops the current one at once. */
+/** Replacing the webhook secret invalidates the current secret immediately. */
 function RotateSecretDialog({
   channel,
   onRotated,
@@ -223,7 +219,7 @@ function RotateSecretDialog({
   const queryClient = useQueryClient();
   const rotate = useMutation({
     mutationFn: () => rotateSecret(channel.id),
-    // The answer holds the new secret: not kept once the dialog is done with it.
+    // Discard the new secret when the dialog closes.
     gcTime: 0,
     onSuccess: ({ secret }) => {
       void queryClient.invalidateQueries({ queryKey: channelsQuery().queryKey, exact: true });
@@ -272,7 +268,6 @@ function RotateSecretDialog({
   );
 }
 
-/** Asks before deleting a channel, with its deliveries. */
 function DeleteChannelDialog({
   channel,
   open,
@@ -288,14 +283,13 @@ function DeleteChannelDialog({
       try {
         await deleteChannel(channel.id);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
         if (!(error instanceof ApiError && error.code === "channel_not_found")) throw error;
       }
     },
     onSuccess: () => {
       onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: channelsQuery().queryKey, exact: true });
-      // The Storage tab lists the channels too (storage-tab.tsx).
+      // Storage also lists channels (storage-tab.tsx).
       void queryClient.invalidateQueries({ queryKey: storageQuery().queryKey, exact: true });
     },
   });
@@ -332,10 +326,7 @@ function DeleteChannelDialog({
   );
 }
 
-/**
- * A webhook's signing secret: fetched only when Show is pressed, kept in
- * this component while shown, and forgotten on Hide; copied or replaced.
- */
+/** Fetch the signing secret only on Show and discard it on Hide. */
 function WebhookSecret({ channel }: { channel: Channel }) {
   const [secret, setSecret] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -400,7 +391,6 @@ function WebhookSecret({ channel }: { channel: Channel }) {
   );
 }
 
-/** One channel: what it is, its actions, its secret, and its deliveries on demand. */
 function ChannelItem({
   channel,
   timeZone,
@@ -516,11 +506,6 @@ function ChannelItem({
   );
 }
 
-/**
- * Email is set up: what it sends, and a test email to the signed-in user's
- * own address, sent while they wait, with the mail server's answer as a
- * status in words (never color alone).
- */
 function EmailSetUp() {
   const test = useMutation({ mutationFn: sendTestEmail });
   return (
@@ -559,13 +544,7 @@ function EmailSetUp() {
   );
 }
 
-/**
- * The Notification channels tab of the instance's Settings, for the owner
- * and admins: email lists and webhooks, with whether email is set up, a
- * test send, a webhook's secret, and each channel's recent deliveries.
- * Adding, editing, deleting and sending a test are dialogs and actions on
- * the list, not a form with a Save bar.
- */
+/** Channel actions save immediately; there is no Save bar. */
 export function NotificationChannels({ timeZone }: { timeZone: string }) {
   const list = useQuery(channelsQuery());
   const [adding, setAdding] = React.useState(false);

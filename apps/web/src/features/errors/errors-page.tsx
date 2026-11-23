@@ -76,17 +76,14 @@ import { ErrorStatusBadge } from "./error-status";
 import { EnvironmentSelect, PeriodSelect } from "./range-controls";
 import { type ErrorsSearch, errorsSearchOf } from "./search";
 
-/** How a site reports an error it caught. */
 const CAPTURE_EXAMPLE = `try {
   await saveOrder(order);
 } catch (error) {
   window.ottertrail?.captureError(error);
 }`;
 
-/** The most errors the summary names, by users affected. */
 const TOP_ERRORS = 5;
 
-/** What the list says beside the guidance, so the two do not repeat each other. */
 const EMPTY_LIST: Record<StatusFilter, string> = {
   unresolved: "Nothing unresolved in this period.",
   resolved: "Nothing resolved in this period.",
@@ -99,7 +96,6 @@ const EMPTY_TITLES: Record<StatusFilter, string> = {
   all: "No errors in this period",
 };
 
-/** The list filtered by assignee, and empty. */
 const EMPTY_ASSIGNED: Record<Exclude<AssigneeFilter, "everyone">, string> = {
   me: "No errors assigned to you in this period",
   none: "No unassigned errors in this period",
@@ -170,11 +166,7 @@ const headClass = LIST_HEAD;
 const gutterStart = GUTTER_START;
 const gutterEnd = GUTTER_END;
 
-/**
- * The listed groups, latest seen first (the order the API reads them in, so
- * a list cut at 1,000 stays the latest 1,000). A row's link is the error's
- * own page; in the workbench a plain click selects the row instead.
- */
+/** Keep API order so the 1,000-group limit retains the latest groups. */
 function ErrorTable({
   list,
   projectId,
@@ -231,7 +223,6 @@ function ErrorTable({
                       params={{ projectId, fingerprint: group.fingerprint }}
                       search={detailSearch}
                       aria-current={chosen ? "true" : undefined}
-                      // A new tab or window still opens the page; a plain click selects.
                       {...ROW_LINK}
                       onClick={selectOnPlainClick(select, group.fingerprint)}
                     />
@@ -272,15 +263,9 @@ function ErrorTable({
   );
 }
 
-/** Seen for the first time within the period's days, in the instance's timezone. */
 const isNew = (group: ErrorGroup, list: ErrorList) =>
   dayIn(list.timeZone, new Date(group.firstSeen)) >= list.firstDay;
 
-/**
- * With nothing selected, the detail pane sums up the listed groups: how many
- * are unresolved, new, and regressed (and resolved, when they are listed),
- * the ones that affect the most known users, and how to start.
- */
 function Summary({
   list,
   status,
@@ -291,13 +276,13 @@ function Summary({
   projectId: string;
 }) {
   const open = list.groups.filter((group) => group.status !== "resolved");
-  // A list cut at 1,000 holds the latest seen: each count is at least what it holds.
+  // A list capped at 1,000 gives lower bounds for counts.
   const count = (n: number) => (list.truncated ? `${formatWhole(n)}+` : formatWhole(n));
   const newStat: Stat = {
     label: "New",
     value: count(list.groups.filter((group) => isNew(group, list)).length),
   };
-  // Only the figures of the groups listed: the resolved list holds no unresolved ones.
+  // Count only listed groups; a resolved-only list has no unresolved groups.
   const stats: Stat[] =
     status === "resolved"
       ? [{ label: "Resolved", value: count(list.groups.length) }, newStat]
@@ -312,7 +297,6 @@ function Summary({
             ? [{ label: "Resolved", value: count(list.groups.length - open.length) }]
             : []),
         ];
-  // The open errors when there are any; on the resolved list, those.
   const ranked = (open.length > 0 ? open : list.groups)
     .toSorted((a, b) => b.users - a.users || b.occurrences - a.occurrences)
     .slice(0, TOP_ERRORS);
@@ -412,7 +396,6 @@ function Summary({
   );
 }
 
-/** The list's shape while it loads. */
 function LoadingList() {
   return (
     <div className="flex flex-col gap-2 px-gutter py-4" aria-busy="true" aria-label="Loading">
@@ -423,15 +406,7 @@ function LoadingList() {
   );
 }
 
-/**
- * The project's errors as a workbench (docs/design-system.md, "Workbench"):
- * one row per group (occurrences with one fingerprint), latest seen first,
- * for a period and an environment, by status, beside the selected group's
- * detail or, with none selected, a summary of the list. Counts are for the
- * period; first and last seen for all time. `j`, `k` and `Esc` move the
- * selection, and `e` resolves or reopens the selected group. Under 64rem a
- * row opens the error's own page.
- */
+/** Counts cover the period; first and last seen cover all time (docs/design-system.md, "Workbench"). */
 export function ErrorsPage({
   projectId,
   range,
@@ -449,7 +424,6 @@ export function ErrorsPage({
   const query = useQuery(errorsQuery(projectId, range, environment, status, assignee));
   const search: ErrorsSearch = { range, environment, status, assignee };
   const narrow = useMediaQuery(NARROW_WORKBENCH);
-  // The detail's Resolve or Reopen button, which `e` presses.
   const resolveRef = React.useRef<HTMLButtonElement>(null);
   const canChange = useAccess().canUse("errors", "manage");
   const action = React.useMemo<WorkbenchAction | undefined>(
@@ -466,7 +440,7 @@ export function ErrorsPage({
       search: errorsSearchOf({ ...search, ...next }),
     });
   const detailSearch = errorsSearchOf({ range, environment });
-  // The Workbench keeps the latest of this, so it may be a new function each render.
+  // Workbench keeps the latest callback; it need not be stable.
   const openPage = (fingerprint: string) =>
     void navigate({
       to: "/projects/$projectId/errors/$fingerprint",
@@ -497,7 +471,6 @@ export function ErrorsPage({
           <ToggleGroup
             value={[status]}
             onValueChange={(value) => {
-              // Pressing the shown status again keeps it; one is always shown.
               const [next] = value;
               if (isStatusFilter(next)) show({ status: next });
             }}
@@ -605,7 +578,6 @@ export function ErrorsPage({
             )}
             {empty ? (
               narrow ? (
-                // No room for the guidance beside the list: it takes the list's place.
                 <div className="px-gutter py-5">
                   <NoErrors status={status} environment={environment} assignee={assignee} />
                 </div>

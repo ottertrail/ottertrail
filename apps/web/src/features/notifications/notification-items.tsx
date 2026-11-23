@@ -22,14 +22,12 @@ import type { InboxItem } from "@/lib/notifications-api";
 import { formatMoment, timeAgo } from "../users/format";
 import { useMarkNotification } from "./inbox-hooks";
 
-/** Kinds that say something is fine again. */
 const isRecovery = (kind: string) =>
   kind.endsWith("_resolved") ||
   kind === "check.up" ||
   kind === "certificate.renewed" ||
   kind === "storage.recovered";
 
-/** Each kind's icon, and whether it tells of a problem (red) or a recovery (green). */
 function iconOf(kind: string): { icon: typeof BugIcon; tone: string } {
   if (isRecovery(kind)) return { icon: CircleCheckIcon, tone: "text-success" };
   if (kind === "error.assigned") return { icon: UserRoundCheckIcon, tone: "text-ink-muted" };
@@ -45,15 +43,9 @@ function iconOf(kind: string): { icon: typeof BugIcon; tone: string } {
   return { icon: ArchiveRestoreIcon, tone: "text-ink-muted" };
 }
 
-/** Whether a click is a plain one, which the page handles: not a new tab or window. */
 const plainClick = (event: React.MouseEvent) =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 
-/**
- * One item: its icon, its title (the link to what it is about), the
- * project and when, and a button that marks it read or unread. Opening it
- * marks it read.
- */
 function NotificationItem({
   item,
   timeZone,
@@ -114,7 +106,6 @@ function NotificationItem({
   );
 }
 
-/** Items, newest first, parted by hairlines. */
 export function NotificationList({
   items,
   timeZone,
@@ -123,7 +114,6 @@ export function NotificationList({
 }: {
   items: InboxItem[];
   timeZone: string | undefined;
-  /** Called before a plain click navigates, such as to close the popover. */
   onOpen?: () => void;
   className?: string;
 }) {

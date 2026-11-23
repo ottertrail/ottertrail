@@ -55,17 +55,7 @@ import { formatBytes } from "@/lib/source-maps-api";
 import { formatMoment, formatSpan } from "../uptime/format";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
 
-/**
- * The Backups tab of the instance's Settings (`?tab=backups`), for the
- * owner only (docs/dashboard.md, "Backups"): the last backup and the next,
- * Back up now and Test restore, the backups in the bucket as the worker
- * last listed them; the schedule, one form under the save rule, with the
- * destination the worker reported (its BACKUP_S3_*, read only) and Test
- * connection; and the backup key, shown on request, with a reminder until
- * the owner says it is saved.
- */
-
-/** While the worker has work under way or asked for, the tab reads the status again this often. */
+/** Backup destination comes from the worker's BACKUP_S3_* values (docs/dashboard.md, "Backups"). */
 const POLL_MS = 5000;
 
 const BACKUPS_DOCS_URL = `${DOCS_URL}/self-hosting/backups/#set-up-scheduled-backups`;
@@ -95,7 +85,6 @@ const TRIGGER_TEXT: Record<BackupRun["trigger"], string> = {
   retry: "retry",
 };
 
-/** When a run ended (or started, while it runs), in the instance's timezone. */
 const runTime = (run: BackupRun, timeZone: string) =>
   formatMoment(run.finishedAt ?? run.startedAt, timeZone);
 
@@ -120,7 +109,6 @@ function RunBadge({ run }: { run: BackupRun }) {
   );
 }
 
-/** One line of the status: a label and its value. */
 function StatusRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1 sm:grid-cols-[10rem_1fr] sm:gap-4">
@@ -130,9 +118,8 @@ function StatusRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-/** The backups in the destination's folder, newest first, as the worker last listed them. */
 function BucketList({ timeZone, listedAt }: { timeZone: string; listedAt: string | null }) {
-  // The worker lists the folder again after each run and Test connection: a new time, a new list.
+  // A new listing time means the worker refreshed the bucket contents.
   const list = useQuery({
     queryKey: [...backupListQuery().queryKey, listedAt ?? ""],
     queryFn: backupListQuery().queryFn,
@@ -215,7 +202,6 @@ function BucketList({ timeZone, listedAt }: { timeZone: string; listedAt: string
   );
 }
 
-/** The last backup, the next one, the actions, and what the bucket holds. */
 function StatusSection({ data, timeZone }: { data: Backups; timeZone: string }) {
   const queryClient = useQueryClient();
   const { settings, status, key } = data;
@@ -438,10 +424,6 @@ const DESTINATION_ROWS: [keyof DestinationConfig, string][] = [
   ["accessKeyId", "Access key ID"],
 ];
 
-/**
- * Where backups go, read only: the worker's BACKUP_S3_* as it last
- * reported them, or what is missing or wrong, with Test connection.
- */
 function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string }) {
   const queryClient = useQueryClient();
   const { destination, connectionTest } = data;
@@ -491,7 +473,7 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
           </AlertDescription>
         </Alert>
       ) : on ? (
-        // On, and the worker lost its variables (restarted without them): the next backup fails.
+        // Enabled backups fail if the worker restarts without destination variables.
         <Alert variant="destructive">
           <OctagonAlertIcon />
           <AlertTitle>Backups have no destination</AlertTitle>
@@ -551,7 +533,6 @@ function DestinationBlock({ data, timeZone }: { data: Backups; timeZone: string 
   );
 }
 
-/** The schedule: one form, with its Save bar; and the destination the worker reported. */
 function SettingsForm({
   data,
   timeZone,
@@ -566,7 +547,7 @@ function SettingsForm({
     normalize: { keepDays: (days) => Number(days) },
   });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
-  // Not a field of the form: typed to confirm turning off, never saved, and emptied after.
+  // Confirmation text is never saved; clear it after disabling.
   const [password, setPassword] = React.useState("");
   const turningOff = form.initial.enabled && !form.values.enabled;
   const save = useMutation({
@@ -592,7 +573,7 @@ function SettingsForm({
     password: React.useId(),
   };
   const { values } = form;
-  // Off, backups turn on only with a destination the worker reported.
+  // Enabling requires a destination reported by the worker.
   const destinationReady = data.destination.config !== null && data.destination.problem === null;
 
   return (
@@ -668,13 +649,12 @@ function SettingsForm({
   );
 }
 
-/** The key, the reminder, and what losing it means. */
 function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
   const queryClient = useQueryClient();
   const { key } = data;
-  // Fetched only when asked, and kept here while shown: never in the query cache.
+  // Fetch the key on demand and keep it out of the query cache.
   const [shown, setShown] = React.useState<BackupKey | null>(null);
-  // Showing or downloading the key needs the current password, typed here and emptied after.
+  // Clear the password after showing or downloading the key.
   const [password, setPassword] = React.useState("");
   const passwordId = React.useId();
   const setData = (updated: Backups) => queryClient.setQueryData(backupsQuery().queryKey, updated);
@@ -824,14 +804,10 @@ function KeySection({ data, timeZone }: { data: Backups; timeZone: string }) {
   );
 }
 
-/**
- * The Backups tab, for the owner. `onDirty` reports unsaved changes to the
- * schedule: the tab's "Unsaved" mark and the leave guard follow it.
- */
+/** `onDirty` drives the Unsaved mark and leave guard for the schedule. */
 export function BackupsTab({ timeZone, onDirty }: InstanceTabProps) {
   const backups = useQuery({
     ...backupsQuery(),
-    // While the worker has work under way or asked for (Test connection too), the status follows it.
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status !== undefined &&

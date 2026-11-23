@@ -16,12 +16,10 @@ import type {
 /** Unmapped frames in a row, from this many, fold behind a button: often a library's tail. */
 const FOLD_FROM = 3;
 
-/** "https://example.com/assets/app.js:1:2345", with whichever position is known. */
 function minifiedLocation(frame: ResolvedFrame): string {
   return [frame.file, frame.line, frame.column].filter((part) => part !== null).join(":");
 }
 
-/** The frame as the browser reported it: its function, if any, and where. */
 function MinifiedFrame({ frame, className }: { frame: ResolvedFrame; className: string }) {
   return (
     <p className={`font-mono break-all ${className}`}>
@@ -31,10 +29,6 @@ function MinifiedFrame({ frame, className }: { frame: ResolvedFrame; className: 
   );
 }
 
-/**
- * The original source around a mapped frame's line, numbered. The frame's
- * line is marked three ways: a marker, a background, and words for screen readers.
- */
 function ContextLines({
   original,
   context,
@@ -84,11 +78,7 @@ function ContextLines({
   );
 }
 
-/**
- * A frame a source map covers: the original file and line first, the
- * minified one after. The map's name at that position is not shown: it is
- * often not the enclosing function's, and the line itself is shown.
- */
+/** Omit the mapped name; it often names something other than the enclosing function. */
 function MappedFrame({ frame, original }: { frame: ResolvedFrame; original: OriginalPosition }) {
   return (
     <div className="flex min-w-0 flex-col gap-2">
@@ -106,7 +96,6 @@ function MappedFrame({ frame, original }: { frame: ResolvedFrame; original: Orig
   );
 }
 
-/** Several unmapped frames in a row, folded until asked for. */
 function FoldedFrames({ frames }: { frames: ResolvedFrame[] }) {
   const [open, setOpen] = React.useState(false);
   const listId = React.useId();
@@ -141,7 +130,6 @@ type Run =
   | { kind: "mapped"; frame: ResolvedFrame; original: OriginalPosition }
   | { kind: "unmapped"; frames: ResolvedFrame[] };
 
-/** The frames in order, with unmapped ones in a row grouped together. */
 function runsOf(frames: ResolvedFrame[]): Run[] {
   const runs: Run[] = [];
   for (const frame of frames) {
@@ -157,7 +145,6 @@ function runsOf(frames: ResolvedFrame[]): Run[] {
   return runs;
 }
 
-/** The stack's frames, top first, the mapped ones with their original source. */
 function FrameList({ frames }: { frames: ResolvedFrame[] }) {
   return (
     <ol aria-label="Frames, top first" className="flex flex-col gap-4">
@@ -184,7 +171,6 @@ function FrameList({ frames }: { frames: ResolvedFrame[] }) {
 
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
-/** One line on how the stack was mapped, or why it was not. */
 function SourceMapNote({
   projectId,
   sourceMaps,
@@ -261,7 +247,6 @@ function SourceMapNote({
         </p>
       );
   }
-  // What is left: "unavailable".
   return (
     <p className="text-sm text-ink-muted">
       The source maps could not be read. The stack appears as the browser reported it. Reload the
@@ -270,7 +255,6 @@ function SourceMapNote({
   );
 }
 
-/** The raw stack, scrollable both ways. */
 function RawStack({ stack, id, hidden }: { stack: string; id?: string; hidden?: boolean }) {
   return (
     <pre
@@ -283,7 +267,6 @@ function RawStack({ stack, id, hidden }: { stack: string; id?: string; hidden?: 
   );
 }
 
-/** The raw stack behind a button, under the mapped frames. */
 function RawStackToggle({ stack }: { stack: string }) {
   const [open, setOpen] = React.useState(false);
   const id = React.useId();
@@ -307,12 +290,7 @@ function RawStackToggle({ stack }: { stack: string }) {
   );
 }
 
-/**
- * The latest occurrence's stack: a browser's mapped to the original source
- * where the release's source maps allow (docs/errors.md, "Source maps"),
- * else as the browser reported it, with a note on why; a server's as it was
- * sent.
- */
+/** Map browser stacks where source maps allow; show server stacks as sent (docs/errors.md, "Source maps"). */
 export function StackCard({
   projectId,
   source,
@@ -326,7 +304,6 @@ export function StackCard({
   stack: string | null;
   frames: ResolvedFrame[] | null;
   sourceMaps: StackSourceMaps | null;
-  /** Such as a flat section's look inside a workbench. */
   className?: string;
 }) {
   const mapped = frames?.some((frame) => frame.original !== null) === true ? frames : null;

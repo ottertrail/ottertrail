@@ -15,14 +15,8 @@ export const PRESET_LABEL: Record<Preset, { name: string; about: string }> = {
   custom: { name: "Custom", about: "Choose each area below." },
 };
 
-/** A new member's access before anything is chosen: the Viewer preset, on every project. */
 export const DEFAULT_ACCESS: MemberAccess = { projects: "all", areas: { ...PRESETS.viewer } };
 
-/**
- * A member's access in a few words: the preset's name, or with a custom set
- * the areas they have, then where. "Viewer · All projects",
- * "Web analytics, Errors · 2 projects".
- */
 export function accessSummary(access: MemberAccess): string {
   const preset = presetOf(access.areas);
   const areas = AREAS.filter((area) => access.areas[area] !== "none").map(
@@ -44,10 +38,8 @@ export function accessSummary(access: MemberAccess): string {
   return `${what} · ${where}`;
 }
 
-/** Why a link can't be shown twice, and what to do when it is lost. */
 export const LINK_ONCE =
   "Only a fingerprint is saved, so this link can't be shown again. Copy it now.";
 
-/** What to say beside an emailed link: what to do if the email goes missing. */
 export const emailedAbout = (who: string) =>
   `If it doesn't arrive in a few minutes, ask ${who} to check spam or send them the link yourself. ${LINK_ONCE}`;

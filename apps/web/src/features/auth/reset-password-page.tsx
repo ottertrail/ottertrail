@@ -18,17 +18,13 @@ import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 
 const LINK_GONE = "This reset link no longer works. Ask for a new one.";
 
-/**
- * Setting a password from a reset link (/reset-password#token=…). Using it
- * signs the account out everywhere, then signs it in here; the old password
- * works until then.
- */
+/** Reset signs out all sessions, then signs in here. The old password works until submission. */
 export function ResetPasswordPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const token = useLinkToken();
   const preview = useQuery({
-    // The token stays out of the key; the answer is not kept once the page is gone.
+    // Keep the token out of cache keys and discard the response on unmount.
     queryKey: ["reset-link-preview"],
     queryFn: ({ signal }) => previewReset(token ?? "", signal),
     enabled: token !== null,
@@ -36,7 +32,7 @@ export function ResetPasswordPage() {
     staleTime: Infinity,
     gcTime: 0,
   });
-  // Asked afresh each time the page opens: a session cached since may have ended.
+  // Refetch on open because a cached session may have ended.
   const session = useQuery({
     queryKey: ["link-page-session"],
     queryFn: async () => (await authClient.getSession()).data,
@@ -112,7 +108,6 @@ export function ResetPasswordPage() {
               className="mt-2"
               onClick={() =>
                 void authClient.signOut().then(() => {
-                  // The router's cached "signed in" goes too.
                   queryClient.removeQueries({ queryKey: sessionQuery().queryKey });
                   return session.refetch();
                 })

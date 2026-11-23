@@ -5,7 +5,6 @@ import { isSeverity, isTraceId, type LogFilters } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { MIN_DURATIONS, type TraceFilters } from "@/lib/traces-api";
 
-/** The days in an address: left out for the default period. */
 export const rangeSearch = (range: PageRange) =>
   "period" in range
     ? range.period === DEFAULT_PERIOD
@@ -16,7 +15,7 @@ export const rangeSearch = (range: PageRange) =>
 export const environmentSearch = (environment: string) =>
   environment === DEFAULT_ENVIRONMENT ? {} : { env: environment };
 
-/** Text a filter takes from an address: up to 200 characters, none for empty. */
+/** Match the API's 200-character filter limit. */
 export function filterText(value: unknown): string | undefined {
   if (typeof value === "number") return String(value);
   if (typeof value !== "string") return undefined;
@@ -24,23 +23,16 @@ export function filterText(value: unknown): string | undefined {
   return text === "" || text.length > 200 ? undefined : text;
 }
 
-/**
- * A value an address names, such as a route, a host, or an attribute's
- * value: up to `max` characters (4 KB, as the API takes them); a number
- * the address parsed comes back as text.
- */
+/** Match the API's 4 KB limit; convert router-parsed numbers back to text. */
 export function searchValue(value: unknown, max = 4096): string | undefined {
   const found = typeof value === "number" ? String(value) : value;
   return typeof found === "string" && found !== "" && found.length <= max ? found : undefined;
 }
 
-/** The Services page's address: besides the days and environment, a service and route to show. */
 export interface ServicesSearch {
   range: PageRange;
   environment: string;
-  /** Only this service's card. */
   service?: string | undefined;
-  /** Its route, marked. */
   route?: string | undefined;
 }
 
@@ -51,7 +43,6 @@ export const servicesSearchOf = ({ range, environment, service, route }: Service
   ...(service === undefined || route === undefined ? {} : { route }),
 });
 
-/** The service and route an address names. */
 export function serviceChoiceFrom(search: { service?: unknown; route?: unknown }): {
   service: string | undefined;
   route: string | undefined;
@@ -60,11 +51,9 @@ export function serviceChoiceFrom(search: { service?: unknown; route?: unknown }
   return { service, route: service === undefined ? undefined : searchValue(search.route) };
 }
 
-/** A service's page's address, besides its name: the days, environment, and a route of it. */
 export interface ServiceSearch {
   range: PageRange;
   environment: string;
-  /** Only this route's requests. */
   route?: string | undefined;
 }
 
@@ -74,7 +63,6 @@ export const serviceSearchOf = ({ range, environment, route }: ServiceSearch) =>
   ...(route === undefined ? {} : { route }),
 });
 
-/** The Databases page's address: the days, environment, and what the shapes are sorted by. */
 export interface DatabasesSearch {
   range: PageRange;
   environment: string;
@@ -87,7 +75,6 @@ export const databasesSearchOf = ({ range, environment, sort }: DatabasesSearch)
   ...(sort === undefined || sort === DEFAULT_DATABASE_SORT ? {} : { sort }),
 });
 
-/** A query shape's page's address, besides its ID: the days and environment. */
 export const shapeSearchOf = ({
   range,
   environment,
@@ -99,10 +86,8 @@ export const shapeSearchOf = ({
   ...environmentSearch(environment),
 });
 
-/** The longest name the Traces page's filter takes. */
 const MAX_NAME_FILTER = 200;
 
-/** The Traces page's filters for a service's requests, or a route's (as part of the name). */
 export const routeTraceFilters = (service: string, route?: string) => ({
   service,
   name:
@@ -111,19 +96,12 @@ export const routeTraceFilters = (service: string, route?: string) => ({
       : route.trim(),
 });
 
-/**
- * Whether a route has a name to address it by: one of only spaces has
- * none, so it gets no page and no alert rule, as an empty one.
- */
+/** Routes containing only spaces cannot be addressed or used in alert rules. */
 export const isNamedRoute = (route: string) => route.trim() !== "";
 
-/**
- * Whether a service's name can be a path segment: a browser drops "." and
- * "..", so their page could not be reached.
- */
+/** Browsers remove . and .. path segments, making their service pages unreachable. */
 export const isLinkableService = (service: string) => service !== "." && service !== "..";
 
-/** The Alerts page's address that opens the form for a route rule, filled in. */
 export const addRuleSearch = (environment: string, service: string, route?: string) => ({
   add: "route_latency" as const,
   service,
@@ -131,7 +109,6 @@ export const addRuleSearch = (environment: string, service: string, route?: stri
   ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
 });
 
-/** The Traces page's address: what it shows, the defaults left out. */
 export interface TracesSearch {
   range: PageRange;
   environment: string;
@@ -147,7 +124,7 @@ export const tracesSearchOf = ({ range, environment, filters }: TracesSearch) =>
   ...(filters.minDuration === undefined ? {} : { min: filters.minDuration }),
 });
 
-/** The trace filters from an address; anything the page does not offer is dropped. */
+/** Discard filters the page does not offer. */
 export function traceFiltersFrom(search: {
   service?: unknown;
   name?: unknown;
@@ -163,12 +140,11 @@ export function traceFiltersFrom(search: {
   };
 }
 
-/** The Logs page's address. */
 export interface LogsSearch {
   range: PageRange;
   environment: string;
   filters: LogFilters;
-  /** The live view instead of the period's records; the period stays for when it is off. */
+  /** Preserve the period while Live is on so switching back restores it. */
   live?: boolean | undefined;
 }
 
@@ -196,7 +172,6 @@ export function logFiltersFrom(search: {
   };
 }
 
-/** What a metric's chart shows of each line when it is split: one measure. */
 export const METRIC_STATS = {
   gauge: ["avg", "min", "max"],
   updown: ["sum"],
@@ -205,7 +180,6 @@ export const METRIC_STATS = {
 } as const satisfies Record<MetricKind, readonly string[]>;
 export type MetricStat = (typeof METRIC_STATS)[MetricKind][number];
 
-/** The measure a split chart shows first: a gauge's average, a histogram's 95th percentile. */
 export const DEFAULT_STAT: Record<MetricKind, MetricStat> = {
   gauge: "avg",
   updown: "sum",
@@ -213,10 +187,6 @@ export const DEFAULT_STAT: Record<MetricKind, MetricStat> = {
   histogram: "p95",
 };
 
-/**
- * A metric's page's address, besides its name: its kind, the split and
- * measure shown, and what it reads only (one host, one attribute value).
- */
 export interface MetricSearch {
   range: PageRange;
   environment: string;
@@ -245,7 +215,6 @@ export const metricSearchOf = ({
   ...(attr === undefined ? {} : { attr: attr.key, attrValue: attr.value }),
 });
 
-/** The host and attribute value a metric's address narrows it to. */
 export function metricFiltersFrom(search: {
   host?: unknown;
   attr?: unknown;
@@ -262,14 +231,13 @@ export function metricFiltersFrom(search: {
   };
 }
 
-/** The kind, split, and measure from an address; a kind that is not one leaves undefined. */
 export function metricChoicesFrom(search: { kind?: unknown; split?: unknown; stat?: unknown }): {
   kind: MetricKind | undefined;
   split: string | undefined;
   stat: MetricStat | undefined;
 } {
   const kind = isMetricKind(search.kind) ? search.kind : undefined;
-  // A key such as "2024" comes back from the address as a number.
+  // The router parses numeric attribute names such as 2024 as numbers.
   const key = typeof search.split === "number" ? String(search.split) : search.split;
   const split = typeof key === "string" && key !== "" && key.length <= 256 ? key : undefined;
   const stats: readonly MetricStat[] = kind === undefined ? [] : METRIC_STATS[kind];
@@ -277,7 +245,6 @@ export function metricChoicesFrom(search: { kind?: unknown; split?: unknown; sta
   return { kind, split, stat };
 }
 
-/** The AI page's address: the days, environment, and its filters. */
 export interface AiSearch {
   range: PageRange;
   environment: string;
@@ -293,7 +260,7 @@ export const aiSearchOf = ({ range, environment, filters }: AiSearch) => ({
   ...(filters.feature === undefined ? {} : { feature: filters.feature }),
 });
 
-/** A label the AI page filters by: as stored, up to 100 characters; a number comes back as text. */
+/** Preserve stored labels up to 100 characters; convert parsed numbers back to text. */
 function aiLabel(value: unknown, { empty = false } = {}): string | undefined {
   const found = typeof value === "number" ? String(value) : value;
   if (typeof found !== "string" || found.length > MAX_AI_LABEL) return undefined;
@@ -302,7 +269,7 @@ function aiLabel(value: unknown, { empty = false } = {}): string | undefined {
   return found === "" && !empty ? undefined : found;
 }
 
-/** The AI page's filters from an address. `feature=` (empty) is the calls with no feature. */
+/** An empty feature filter selects calls without a feature. */
 export function aiFiltersFrom(search: {
   service?: unknown;
   provider?: unknown;

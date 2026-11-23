@@ -32,13 +32,12 @@ import {
 
 import { timeAgo } from "./format";
 
-/** The upload command of the CLI in this repository (packages/sourcemaps). */
+/** Match the CLI in packages/sourcemaps. */
 function cliExample(origin: string): string {
   return `OTTERTRAIL_SECRET_KEY=sk_… npx @ottertrail/sourcemaps upload dist \\
   --release 1.4.2 --url-prefix / --host ${origin}`;
 }
 
-/** One file's map, as the build tool wrote it. */
 function curlExample(origin: string): string {
   return `curl -X PUT "${origin}/api/source-maps?release=1.4.2&path=/assets/index-4f3a.js" \\
   -H "Authorization: Bearer $OTTERTRAIL_SECRET_KEY" \\
@@ -48,7 +47,7 @@ function curlExample(origin: string): string {
 
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
-/** How a build uploads its maps. The secret key stays a placeholder: never the real one. */
+/** Keep the secret key as a placeholder in upload examples. */
 function UploadHelp() {
   const origin = window.location.origin;
   return (
@@ -81,7 +80,6 @@ function UploadHelp() {
   );
 }
 
-/** One release's files and their sizes, in a dialog. Focus goes back to its button, which stays. */
 function FilesDialog({ projectId, release }: { projectId: string; release: SourceMapRelease }) {
   const [open, setOpen] = React.useState(false);
   const files = useQuery({ ...sourceMapFilesQuery(projectId, release.release), enabled: open });
@@ -151,7 +149,7 @@ function FilesDialog({ projectId, release }: { projectId: string; release: Sourc
   );
 }
 
-/** Asks before deleting a release's maps; its errors stay. */
+/** Delete maps only; errors stay. */
 function DeleteReleaseDialog({
   projectId,
   release,
@@ -159,11 +157,9 @@ function DeleteReleaseDialog({
 }: {
   projectId: string;
   release: SourceMapRelease;
-  /** Where focus goes once deleted: this button leaves with its row. */
   returnFocus: React.RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = React.useState(false);
-  // Once deleted, the row and its buttons go: focus goes to the heading. On Cancel, back to the button.
   const deleted = React.useRef(false);
   const queryClient = useQueryClient();
   const remove = useMutation({
@@ -171,14 +167,14 @@ function DeleteReleaseDialog({
       try {
         await deleteSourceMaps(projectId, release.release);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
+        // Treat deletion in another tab as success.
         if (!(error instanceof ApiError && error.code === "no_source_maps")) throw error;
       }
     },
     onSuccess: () => {
       deleted.current = true;
       setOpen(false);
-      // Gone from the list at once, even should fetching it again fail.
+      // Remove the row even if refetching fails.
       queryClient.setQueriesData<SourceMapOverview>(
         { queryKey: [...sourceMapsKey(projectId), "list"] },
         (overview) =>
@@ -199,7 +195,6 @@ function DeleteReleaseDialog({
               },
       );
       void queryClient.invalidateQueries({ queryKey: sourceMapsKey(projectId) });
-      // Error pages of the release show its stacks minified again.
       void queryClient.invalidateQueries({ queryKey: ["error", projectId] });
     },
   });
@@ -249,7 +244,6 @@ function DeleteReleaseDialog({
   );
 }
 
-/** The releases with maps, by their latest upload, in `order`. */
 function ReleaseTable({
   projectId,
   releases,
@@ -320,7 +314,6 @@ function ReleaseTable({
   );
 }
 
-/** The upload instructions behind a button, once there are releases. */
 function UploadHelpToggle() {
   const [open, setOpen] = React.useState(false);
   const id = React.useId();
@@ -344,7 +337,6 @@ function UploadHelpToggle() {
   );
 }
 
-/** Newest or oldest releases first: the oldest are the ones to delete for room. */
 function OrderChoice({
   order,
   onOrder,
@@ -356,7 +348,6 @@ function OrderChoice({
     <ToggleGroup
       value={[order]}
       onValueChange={(value) => {
-        // Pressing the shown order again keeps it; one is always shown.
         const [next] = value;
         if (next === "newest" || next === "oldest") onOrder(next);
       }}
@@ -432,18 +423,13 @@ function Overview({
   );
 }
 
-/**
- * The project's source maps (docs/errors.md, "Source maps"): what each
- * release has, how much all projects store together, and how a build uploads
- * them. Deleting a release's maps keeps its errors.
- */
+/** Deleting source maps keeps their errors (docs/errors.md, "Source maps"). */
 export function SourceMapsCard({ projectId }: { projectId: string }) {
   const [order, setOrder] = React.useState<ReleaseOrder>("newest");
   const query = useQuery({
     ...sourceMapsQuery(projectId, order),
     placeholderData: keepPreviousData,
   });
-  // Where focus goes when a delete dialog closes: the deleted row's buttons are gone.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   return (
     <SettingsSection title="Source maps" headingRef={headingRef}>

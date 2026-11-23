@@ -23,7 +23,6 @@ import { formatMoment } from "../uptime/format";
 
 const HEAD = "h-9 text-xs font-normal text-ink-subtle";
 
-/** A section of the Alerts workbench's panes: a hairline, its heading, a line under it. */
 export function PaneSection({
   title,
   description,
@@ -49,10 +48,6 @@ export function PaneSection({
   );
 }
 
-/**
- * The alerts firing now, longest first: the project's, or one rule's
- * (`ruleId`), whose list then leaves out the rule's name.
- */
 export function FiringSection({ projectId, ruleId }: { projectId: string; ruleId?: string }) {
   const firing = useQuery({ ...firingQuery(projectId), ...usePanePolling() });
   const data = firing.data;
@@ -98,10 +93,7 @@ export function FiringSection({ projectId, ruleId }: { projectId: string; ruleId
   );
 }
 
-/**
- * Alerts, newest first, with whether each went out: the project's, or one
- * rule's (`ruleId`, without the rule's column), 20 at a time.
- */
+/** Fetch 20 alerts at a time. Omit the rule column when scoped to one rule. */
 export function HistorySection({ projectId, ruleId }: { projectId: string; ruleId?: string }) {
   const polling = usePanePolling();
   const history = useInfiniteQuery({
@@ -137,7 +129,6 @@ export function HistorySection({ projectId, ruleId }: { projectId: string; ruleI
       ) : (
         <div className="flex flex-col gap-3">
           <ScrollHint>
-            {/* On a phone each alert stacks: when and its rule, then what happened, full width. */}
             <Table className="table-fixed max-sm:block sm:min-w-[32rem]">
               <caption className="sr-only">{caption}</caption>
               <colgroup>
@@ -195,7 +186,7 @@ export function HistorySection({ projectId, ruleId }: { projectId: string; ruleI
                         </StatusBadge>
                       )}
                     </TableCell>
-                    {/* The head is hidden on a phone: the cell names itself, from data-label. */}
+                    {/* On phones, data-label supplies the hidden column heading. */}
                     <TableCell
                       data-label="Resolved"
                       className="pr-0 align-top whitespace-normal max-sm:col-span-2 max-sm:p-0 max-sm:pt-1 max-sm:text-xs max-sm:text-ink-subtle max-sm:before:mr-1 max-sm:before:content-[attr(data-label)]"

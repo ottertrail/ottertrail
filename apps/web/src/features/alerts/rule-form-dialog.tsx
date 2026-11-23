@@ -81,27 +81,22 @@ import type { Check } from "@/lib/uptime-api";
 
 import { KIND_LABELS } from "../telemetry/metric-format";
 
-/** What a new rule starts with: a kind, and what the page it came from knows. */
 export interface RulePrefill {
   add?: RuleKind | undefined;
   check?: string | undefined;
   fingerprint?: string | undefined;
   env?: string | undefined;
-  /** From the Services page: a service, and one of its routes. */
   service?: string | undefined;
   route?: string | undefined;
-  /** From a metric's page: the metric, its kind, and its filters. */
   metric?: string | undefined;
   metricKind?: MetricKind | undefined;
   host?: string | undefined;
   attr?: string | undefined;
   attrValue?: string | undefined;
-  /** From the AI page: a model and a feature. */
   model?: string | undefined;
   feature?: string | undefined;
 }
 
-/** The form's fields, as typed. */
 interface Draft {
   kind: RuleKind;
   name: string;
@@ -120,7 +115,6 @@ interface Draft {
   thresholdPercent: string;
   minRequests: string;
   metric: string;
-  /** "" until chosen. */
   metricKind: MetricKind | "";
   aggregate: Aggregate;
   direction: Direction;
@@ -178,7 +172,6 @@ const MAX_KEY_CHARS = 256;
 const MAX_METRIC_NAME = 1024;
 /** What the metric pickers suggest from: the project's last 7 days. */
 const PICKER_RANGE: PageRange = { period: "7d" };
-/** Characters, as the form counts them: the API's limit. */
 const chars = MAX_FILTER_CHARS.toLocaleString("en");
 
 const isTelemetry = (kind: RuleKind) => TELEMETRY_KINDS.includes(kind);
@@ -221,8 +214,7 @@ function draftOf(
     model: settings.model ?? prefill.model ?? "",
     feature: settings.feature ?? prefill.feature ?? "",
     minCalls: String(settings.minCalls ?? DEFAULT_MIN_CALLS),
-    // A channel deleted meanwhile is dropped, so the rule can be saved; a
-    // new rule sends to the only channel there is, if there is one.
+    // Drop deleted channels. Default new rules to the sole channel, if present.
     channelIds:
       rule?.channelIds.filter((id) => channels.some((channel) => channel.id === id)) ??
       (channels.length === 1 && channels[0] !== undefined ? [channels[0].id] : []),
@@ -232,13 +224,11 @@ function draftOf(
 const wholeIn = (value: string, min: number, max: number) =>
   /^\d+$/.test(value.trim()) && Number(value) >= min && Number(value) <= max;
 
-/** A decimal number, such as 250, 0.5, or -3; null when it is not one. */
 function numberOf(value: string): number | null {
   const trimmed = value.trim();
   return /^-?\d+(\.\d+)?$/.test(trimmed) ? Number(trimmed) : null;
 }
 
-/** The problems the form finds before sending, as the API would. */
 function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   const problems: Partial<Record<FieldName, string>> = {};
   if (draft.name.trim().length > MAX_RULE_NAME) {
@@ -344,7 +334,6 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   return problems;
 }
 
-/** Which field an API refusal belongs to, by its code and the rule's kind. */
 function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
   if (code === "invalid_threshold") {
     if (kind === "route_latency") return "thresholdMs";
@@ -467,7 +456,6 @@ const fieldsOf = (draft: Draft): RuleFields => ({
   channelIds: draft.channelIds,
 });
 
-/** What each kind does, under its choice. */
 const KIND_HELP: Record<RuleKind, string> = {
   check_down: "Notifies when a check goes down and when it recovers.",
   certificate_expiring: "Notifies once per expiring certificate, then again when renewed.",
@@ -494,7 +482,6 @@ const COST_WINDOW_ITEMS: { value: CostWindow; label: string }[] = [
   { value: "month", label: "The month to date" },
 ];
 
-/** What a metric rule can read of each measure, as the metric's page calls it. */
 const AGGREGATE_LABEL: Record<Aggregate, string> = {
   avg: "Average",
   min: "Minimum",
@@ -519,7 +506,6 @@ const METRIC_KIND_ITEMS = [
   ...METRIC_KINDS.map((kind) => ({ value: kind, label: KIND_LABELS[kind] })),
 ];
 
-/** A select with its label, as the form's other fields are. */
 function SelectField({
   label,
   value,
@@ -568,19 +554,12 @@ function SelectField({
 
 const KIND_ITEMS = RULE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
 
-/** The environment the pickers read: the one typed, when it is one, else production. */
 const pickerEnvironment = (draft: Draft) => {
   const typed = draft.environment.trim().toLowerCase();
   return ENVIRONMENT.test(typed) ? typed : DEFAULT_ENVIRONMENT;
 };
 
-/**
- * What the pickers suggest: services and their routes of the last day (a
- * light list of up to 200, not the Services page's counts); metrics with
- * their kinds and hosts of the last 7 days; and the chosen metric's
- * attribute keys and values (its chart's). Each list is read only while
- * its kind of rule is chosen.
- */
+/** Fetch suggestions only for the selected rule kind: up to 200 services from the last day, and metrics and hosts from the last 7 days. */
 function useSuggestions(projectId: string, draft: Draft) {
   const environment = pickerEnvironment(draft);
   const recent = useQuery({
@@ -639,12 +618,12 @@ function useSuggestions(projectId: string, draft: Draft) {
         )
       : [],
     aiModels: ai.data?.filterOptions.models ?? [],
-    // Calls without a feature cannot be named in a rule: it watches all or one.
+    // Rules cannot target calls with no feature.
     aiFeatures: (ai.data?.filterOptions.features ?? []).filter((feature) => feature !== ""),
   };
 }
 
-/** The form, mounted while the dialog is open, so each opening starts afresh. */
+/** Remount on open to reset the form. */
 function RuleForm({
   projectId,
   rule,
@@ -695,7 +674,6 @@ function RuleForm({
       placeholder?: string;
       description?: string;
       numeric?: "numeric" | "decimal";
-      /** Suggestions, offered as the field is typed in. */
       options?: readonly string[];
       onChange?: (value: string) => void;
     } = {},
@@ -741,7 +719,7 @@ function RuleForm({
   const checkItems = [
     { value: ALL_CHECKS, label: "All the project's checks" },
     ...checks.map((check) => ({ value: check.id, label: check.name })),
-    // A check the rule names that the project no longer has, so the select still shows it.
+    // Keep a deleted check visible in the select.
     ...(draft.checkId !== ALL_CHECKS && !checks.some((check) => check.id === draft.checkId)
       ? [{ value: draft.checkId, label: "A deleted check" }]
       : []),
@@ -749,7 +727,7 @@ function RuleForm({
   const channelsError = errorOf("channels");
   const { can, canUse } = useAccess();
   const canAddChannels = can("channels");
-  // Only the kinds whose area the user has: the API refuses the others.
+  // Only offer rule kinds the API permits for this user.
   const kindItems = KIND_ITEMS.filter((item) => {
     const area = kindArea(item.value);
     return area === null || canUse(area);
@@ -1076,7 +1054,6 @@ function RuleForm({
   );
 }
 
-/** Adds a rule or edits one, with the API's own messages beside the fields they are about. */
 export function RuleFormDialog({
   open,
   onOpenChange,
@@ -1090,12 +1067,11 @@ export function RuleFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  /** The rule to edit; none to add one. */
   rule?: Rule | undefined;
   prefill?: RulePrefill;
   checks: readonly Pick<Check, "id" | "name">[];
   channels: readonly ChannelName[];
-  /** Why the rule just saved may not fire yet, for the page to show; null when nothing is wrong. */
+  /** Report why the saved rule may not fire yet; null means no warning. */
   onWarning?: ((saved: { ruleName: string; warning: SaveWarning | null }) => void) | undefined;
 }) {
   return (

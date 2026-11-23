@@ -5,19 +5,11 @@ import { MISSING } from "@/lib/missing";
 
 import { bucketLabel, tickLabel, ticksFor } from "./chart-time";
 
-/**
- * Lines over time buckets, for the Metrics page: one y-axis, each line in
- * its own color, a legend from two lines, a crosshair that snaps to the
- * nearest bucket with every line's value in its readout, and a hidden
- * range input that moves between buckets with the keyboard and reads each
- * out. Nulls break a line (nothing arrived then); a value alone between
- * gaps is a dot. The table view is the caller's ("Show the numbers").
- */
+/** Nulls break lines; isolated values draw as dots. A hidden range input provides keyboard navigation. The caller supplies the table view. */
 
 export interface ChartLine {
   key: string;
   label: string;
-  /** A CSS color: a chart slot, or the de-emphasis gray for "other". */
   color: string;
   values: (number | null)[];
 }
@@ -26,7 +18,7 @@ const DEFAULT_PLOT_HEIGHT = 220;
 const AXIS_BAND = 28;
 const MARGIN = { top: 12, right: 16, left: 64 };
 
-/** Each run of buckets with a value, as indexes: a null breaks the line. */
+/** Split runs at nulls to leave gaps in the line. */
 function runsOf(values: (number | null)[]): number[][] {
   const runs: number[][] = [];
   let run: number[] = [];
@@ -54,24 +46,17 @@ export function TimeChart({
   plotHeight = DEFAULT_PLOT_HEIGHT,
   starts,
 }: {
-  /** The first bucket's start, ISO. */
   start: string;
-  /**
-   * Each bucket's start, ISO, when the buckets follow a clock with daylight
-   * saving changes (the lists' charts); without it, a bucket starts `stepSeconds` after the one before.
-   */
+  /** Use explicit ISO starts for daylight saving changes; otherwise advance by stepSeconds. */
   starts?: string[] | undefined;
   stepSeconds: number;
   buckets: number;
   timeZone: string;
-  /** In the legend's order; the first is drawn on top. */
   lines: ChartLine[];
-  /** What the chart shows: its accessible name. */
   label: string;
   formatValue: (value: number) => string;
-  /** A fixed y-axis range, such as 0 to 100 for percentages; values past it widen it. */
+  /** Expand the requested axis range to include outlying values. */
   domain?: { min: number; max: number } | undefined;
-  /** The plot's height in pixels, without the axis labels: lower for a report's short chart. */
   plotHeight?: number;
 }) {
   const chartHeight = 12 + plotHeight + AXIS_BAND;
@@ -95,11 +80,7 @@ export function TimeChart({
     const known = starts?.[index];
     return known === undefined ? new Date(startMs + index * stepSeconds * 1000) : new Date(known);
   };
-  /**
-   * A bucket's span for its label: to the next bucket's start when `starts`
-   * gives one, so a bucket across a daylight saving change says how long it
-   * is; a bucket of days keeps its day.
-   */
+  /** End labels at the next explicit start to reflect daylight saving changes. Daily buckets keep their day. */
   const labelOf = (index: number) => {
     const next = starts?.[index + 1];
     const seconds =
@@ -136,7 +117,6 @@ export function TimeChart({
 
   const valueText = (value: number | null | undefined) =>
     value === null || value === undefined ? "no data" : formatValue(value);
-  // The keyboard position starts on the latest bucket with a value.
   const latest = Math.max(
     0,
     ...lines.map((line) => line.values.findLastIndex((value) => value !== null)),

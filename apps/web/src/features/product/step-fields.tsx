@@ -22,7 +22,6 @@ const STEP_TYPES = [
 const isStepType = (value: unknown): value is DraftStep["type"] =>
   value === "event" || value === "page";
 
-/** One input with its label, and its problem once the form was checked. */
 function Field({
   label,
   problem,
@@ -57,10 +56,6 @@ function Field({
   );
 }
 
-/**
- * One step's fields: its type, then an event name with an optional property
- * filter, or a page path. A funnel's steps and a goal use them.
- */
 export function StepFields({
   step,
   problems,
@@ -69,11 +64,9 @@ export function StepFields({
   onChange,
 }: {
   step: DraftStep;
-  /** The problems to show: none until the form was checked. */
+  /** Hide validation problems until the form has been checked. */
   problems: StepProblems;
-  /** A datalist of event names, offered as suggestions. */
   eventListId: string;
-  /** The type picker's accessible name, such as "Step 1 type". */
   typeLabel: string;
   onChange: (step: DraftStep) => void;
 }) {

@@ -42,7 +42,6 @@ import {
 
 import { intervalText } from "./format";
 
-/** The form's fields, as typed. */
 interface Draft {
   name: string;
   url: string;
@@ -69,7 +68,6 @@ const draftOf = (check: Check | undefined): Draft => ({
   failures: String(check?.failuresBeforeDown ?? DEFAULT_FAILURES_BEFORE_DOWN),
 });
 
-/** The problems the form finds before sending, as the API would. */
 function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   const problems: Partial<Record<FieldName, string>> = {};
   if (draft.name.trim().length > MAX_CHECK_NAME) {
@@ -93,7 +91,6 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   return problems;
 }
 
-/** Which field an API refusal belongs to, by its code. */
 const FIELD_OF_ERROR: Record<string, FieldName> = {
   invalid_name: "name",
   invalid_url: "url",
@@ -132,7 +129,6 @@ const WORD_MODES = [
   { value: "absent", label: "must not be in the body" },
 ];
 
-/** A select with its label, as the form's other fields are. */
 function SelectField({
   label,
   value,
@@ -173,7 +169,7 @@ function SelectField({
   );
 }
 
-/** The form, mounted while the dialog is open, so each opening starts from the check. */
+/** Remount on open to reset to the check. */
 function CheckForm({
   projectId,
   check,
@@ -216,7 +212,6 @@ function CheckForm({
     setDraft((previous) => ({ ...previous, ...next }));
     if (save.isError) save.reset();
   };
-  /** An input's props for a text field, with its error. */
   const textProps = (field: FieldName) => {
     const error = errorOf(field);
     return {
@@ -359,7 +354,6 @@ function CheckForm({
   );
 }
 
-/** Adds a check, or edits one, with the API's own messages beside the fields they are about. */
 export function CheckFormDialog({
   open,
   onOpenChange,
@@ -370,7 +364,6 @@ export function CheckFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  /** The check to edit; none to add one. */
   check?: Check | undefined;
   onSaved?: (check: Check) => void;
 }) {

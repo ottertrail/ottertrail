@@ -40,10 +40,8 @@ import { LogList } from "./log-list";
 import { SpanDetailCard } from "./span-detail";
 import { type WaterfallRow, waterfallRows } from "./waterfall";
 
-/** Indentation steps shown: deeper spans line up with the last, and say their level. */
 const MAX_INDENT = 12;
 
-/** Where a bar sits and how wide it is, as shares of the trace's whole span. */
 function barPlace(span: WaterfallSpan, totalUs: number) {
   if (totalUs <= 0) return { left: 0, width: 100 };
   const left = Math.min(100, (span.offsetUs / totalUs) * 100);
@@ -51,14 +49,7 @@ function barPlace(span: WaterfallSpan, totalUs: number) {
   return { left, width };
 }
 
-/**
- * The spans as a table: each row a span, indented under its parent, with
- * its start (from the trace's), its duration, and a bar placed and sized
- * on the trace's time. The bar repeats the numbers beside it, so screen
- * readers skip it. A span's name is a button that shows its detail.
- * Where there is no room for its columns (a phone), it scrolls sideways
- * inside itself, the span's name pinned.
- */
+/** Hide decorative bars from screen readers because adjacent text gives the same values. */
 function Waterfall({
   trace,
   rows,
@@ -156,7 +147,6 @@ function Waterfall({
   );
 }
 
-/** Nothing of the trace is kept: too old, or never received. */
 function NoSpans({ trace, at }: { trace: TraceDetail; at: string | undefined }) {
   return (
     <Empty className="border border-dashed p-10">
@@ -208,7 +198,6 @@ function Detail({
     <>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-col gap-2">
-          {/* On its own page, the page header names the trace, so it is not repeated here. */}
           {!inWorkbench && <PageTitle title={traceName} />}
           {inWorkbench && (
             <h2 className="text-xl font-semibold break-words text-ink">{traceName}</h2>
@@ -310,7 +299,6 @@ function Detail({
               label="The trace's log records, oldest first"
               spanNames={names}
               onSpan={(id) =>
-                // Once the span shows, move to its detail, as a link to it would.
                 void onSpan(id).then(() =>
                   window.requestAnimationFrame(() => {
                     detailRef.current?.scrollIntoView({ block: "start" });
@@ -326,15 +314,7 @@ function Detail({
   );
 }
 
-/**
- * One trace's detail with its loading, failed, and invalid states: its
- * spans as a waterfall, the selected span's detail, and the trace's log
- * records, laid out by the width of its own container. On the trace's page,
- * and in the Traces workbench beside the list, where `actions` links to the
- * page and a linked trace opens in the workbench. `at`, when known (an
- * error's time, a list's start), narrows where the trace is looked for to a
- * day either side.
- */
+/** `at` narrows the trace lookup to a day on either side of the known time. Embedded trace links stay in the workbench. */
 export function TraceView({
   projectId,
   traceId,
@@ -348,9 +328,7 @@ export function TraceView({
   traceId: string;
   at: string | undefined;
   spanId: string | undefined;
-  /** Shows a span: resolves once it is shown. */
   onSpan: (spanId: string) => Promise<void>;
-  /** Beside the trace's name, such as a link to its own page. */
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
@@ -406,7 +384,6 @@ export function TraceView({
   );
 }
 
-/** One trace on its own page, for deep links and narrow screens. */
 export function TracePage({
   projectId,
   traceId,

@@ -1,20 +1,8 @@
-/** The design system's chart colors, assigned in order, never cycled (8 at most). */
+/** Assign the 8 chart colors in order without cycling. */
 export const SLOTS = Array.from({ length: 8 }, (_, index) => `var(--chart-${index + 1})`);
-/** "Other": the de-emphasis gray, so folded values recede. */
 export const OTHER_COLOR = "var(--ink-tertiary)";
 
-/**
- * Chart color slots for a split chart's lines, kept while the page is
- * open: a value keeps the slot it first got when the set of values shown
- * changes (another period, another measure), so a color always means the
- * same value (design system, "Color follows the entity, not its rank").
- *
- * `memory` maps each line's key to its slot and lives as long as the page;
- * `keys` are the lines shown now. A key seen before keeps its slot unless a
- * line shown before it in `keys` already holds it; a new key takes the
- * lowest slot no line shown holds, one never given out first, so it does
- * not take a color a value seen earlier may come back to.
- */
+/** Keep slots by value for the page lifetime (docs/design-system.md). Prefer unused slots so returning values keep their colors. Earlier visible keys win collisions. */
 export function assignSlots(
   memory: Map<string, number>,
   keys: readonly string[],

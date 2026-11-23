@@ -1,10 +1,6 @@
 import { DOCS_URL } from "@/lib/docs";
 
-/**
- * The script tag a site adds to its pages. The instance's own origin serves
- * the tracker (/t.js) and receives the events (data-host). With the
- * project's heatmaps on, it asks the tracker for clicks and scroll depth.
- */
+/** Use this instance's origin for both the tracker and data-host. */
 export function installSnippet(
   instanceOrigin: string,
   publicKey: string,
@@ -13,17 +9,11 @@ export function installSnippet(
   return `<script defer src="${instanceOrigin}/t.js" data-key="${publicKey}" data-host="${instanceOrigin}"${heatmaps ? ' data-heatmaps="on"' : ""}></script>`;
 }
 
-/** Where coding agents read how to add Ottertrail to an app. */
 export const AGENT_DOCS_URL = `${DOCS_URL}/llms.txt`;
 
-/** Session replay's consent section, for sites that ask visitors before recording. */
 export const REPLAY_CONSENT_DOCS_URL = `${DOCS_URL}/session-replay/turning-it-on/#consent`;
 
-/**
- * What "Copy setup prompt" copies, for a coding agent: the instance's
- * address and the project's public key. Never the secret key: the agent is
- * told to read it from the environment.
- */
+/** Copy only the public key. Tell the agent to read the secret key from the environment. */
 export function setupPrompt(
   instanceOrigin: string,
   publicKey: string,
@@ -36,11 +26,7 @@ export function setupPrompt(
   }`;
 }
 
-/**
- * The allowed-sites box as a list: one hostname per line, or separated by
- * commas. A pasted address (https://example.com/pricing) keeps only its
- * hostname. The API checks every entry and says which one is wrong.
- */
+/** Accept newlines or commas and strip pasted URLs to hostnames. The API validates entries. */
 export function hostnamesFromText(text: string): string[] {
   return text
     .split(/[\n,]/)
@@ -58,7 +44,6 @@ const units: [Intl.RelativeTimeFormatUnit, number][] = [
   ["minute", 60_000],
 ];
 
-/** "just now", "5 minutes ago", "yesterday", … */
 export function timeAgo(date: Date, now = new Date()): string {
   const elapsed = now.getTime() - date.getTime();
   if (elapsed < 60_000) {
@@ -73,7 +58,6 @@ export function timeAgo(date: Date, now = new Date()): string {
   return "just now";
 }
 
-/** How long a project keeps its events, as its settings name the choice: "Forever", "1 year", "90 days". */
 export function keepText(retentionDays: number | null): string {
   if (retentionDays === null) return "Forever";
   const named: Record<number, string> = {

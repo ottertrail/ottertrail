@@ -21,11 +21,7 @@ const FILTERS: { value: InboxFilter; label: string }[] = [
   { value: "unread", label: "Unread" },
 ];
 
-/**
- * The signed-in user's notifications (docs/dashboard.md, "Notifications"):
- * every item of the last 90 days they may see, or the unread ones, newest
- * first, 30 at a time.
- */
+/** Fetch accessible notifications from the last 90 days, 30 at a time (docs/dashboard.md, "Notifications"). */
 export function NotificationsPage({ filter }: { filter: InboxFilter }) {
   const navigate = useNavigate();
   const list = useInfiniteQuery(inboxQuery(filter, PAGE_SIZE));

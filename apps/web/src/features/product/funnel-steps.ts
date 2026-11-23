@@ -1,21 +1,15 @@
 import type { FunnelStep } from "@/lib/product-api";
 import { characters } from "@/lib/text";
 
-/**
- * A step while it is edited: both a name and a path, so switching the
- * type back keeps what was typed, and a filter that may still be empty.
- */
+/** Keep both name and path so switching step types preserves input. */
 export interface DraftStep {
-  /** For React's keys, so a moved step keeps its inputs. */
   id: number;
   type: FunnelStep["type"];
   name: string;
   path: string;
-  /** null: no property filter. */
   filter: { key: string; value: string } | null;
 }
 
-/** What is wrong with a draft step's fields, as the API checks them. */
 export interface StepProblems {
   name?: string;
   path?: string;
@@ -44,7 +38,7 @@ export const draftOf = (step: FunnelStep): DraftStep =>
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001F\u007F]/u;
 
-/** A page step's longest path: five of them still fit in an address. */
+/** Limit paths so five steps fit in an address. */
 const MAX_PATH = 500;
 
 /** The tracker's own events, which a step can never be (apps/api/src/product/steps.ts). */
@@ -63,7 +57,7 @@ export function stepProblems(step: DraftStep): StepProblems {
       problems.path = `A path here has at most ${MAX_PATH} characters.`;
     return problems;
   }
-  // Names as the site sent them: "signup " is another event than "signup".
+  // Preserve whitespace: "signup " and "signup" are different events.
   const name = step.name;
   if (name === "") problems.name = "Name the event.";
   else if (TRACKER_EVENTS.includes(name)) {
@@ -87,12 +81,7 @@ export function stepProblems(step: DraftStep): StepProblems {
 
 export const hasProblems = (problems: StepProblems) => Object.keys(problems).length > 0;
 
-/**
- * Whether one event could be both steps, as the API checks
- * (apps/api/src/product/steps.ts): it would count for both and always
- * convert. Steps of one event name are apart only when both filter one
- * property by different values.
- */
+/** Overlapping steps always convert. Match apps/api/src/product/steps.ts; same-event steps need different values of the same property to be distinct. */
 export function stepsOverlap(first: FunnelStep, second: FunnelStep): boolean {
   if (first.type === "page" && second.type === "page") return first.path === second.path;
   if (first.type === "page" || second.type === "page") return false;
@@ -104,7 +93,6 @@ export function stepsOverlap(first: FunnelStep, second: FunnelStep): boolean {
 const OVERLAP =
   "One event could count for both this step and the previous one. Insert a step between them, or filter them by different values of the same property.";
 
-/** Each step's problems, and, for a step one event could share with the step before, that. */
 export function allStepProblems(drafts: readonly DraftStep[]): StepProblems[] {
   const problems = drafts.map(stepProblems);
   drafts.forEach((step, index) => {
@@ -123,7 +111,6 @@ export function allStepProblems(drafts: readonly DraftStep[]): StepProblems[] {
   return problems;
 }
 
-/** The step as the API takes it; call only when it has no problems. */
 export const stepOf = (step: DraftStep): FunnelStep =>
   step.type === "page"
     ? { type: "page", path: step.path.trim() }
@@ -131,7 +118,6 @@ export const stepOf = (step: DraftStep): FunnelStep =>
       ? { type: "event", name: step.name }
       : { type: "event", name: step.name, filter: { ...step.filter } };
 
-/** "signup", "signup where plan = team", "/pricing". */
 export function stepText(step: FunnelStep): string {
   if (step.type === "page") return step.path;
   return step.filter === undefined

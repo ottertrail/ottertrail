@@ -1,12 +1,7 @@
 import type { HeatmapDevice } from "@/lib/heatmaps-api";
 
-/**
- * Opening a page of the site with its heatmap drawn over it
- * (docs/web-analytics.md, "The overlay on your site"): where, and in a
- * window of what width.
- */
+/** Overlay windows for docs/web-analytics.md, "The overlay on your site". */
 
-/** The window widths offered, one per device class, in CSS pixels. */
 export const OVERLAY_WIDTHS = [
   { value: "mobile", label: "Phone", width: 390, height: 844 },
   { value: "tablet", label: "Tablet", width: 820, height: 1180 },
@@ -18,11 +13,7 @@ export const OVERLAY_WIDTHS = [
   height: number;
 }[];
 
-/**
- * Sites served on the owner's own computer: plain http, and any port. The same
- * names the overlay's routes accept over http (localhost, names under
- * .localhost, 127.0.0.1), which browsers treat as secure contexts.
- */
+/** Match overlay routes: local hosts allow HTTP and any port because browsers treat them as secure contexts. */
 export const isLocalHostname = (hostname: string) =>
   hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
 
@@ -30,19 +21,12 @@ export const isLocalHostname = (hostname: string) =>
 export const isPort = (text: string) =>
   text === "" || (/^\d{1,5}$/.test(text) && Number(text) >= 1 && Number(text) <= 65_535);
 
-/** The site's origin: https, except http on local names (above), where a port may be given. */
 export function siteOrigin(hostname: string, port = ""): string {
   if (!isLocalHostname(hostname)) return `https://${hostname}`;
   return `http://${hostname}${port === "" ? "" : `:${port}`}`;
 }
 
-/**
- * The page's address with the link token in its fragment, which the
- * browser never sends to the site's server: the tracker on the page takes
- * it out of the address at once and loads the overlay. The path is set as
- * a path only: a stored path such as "//other.example/" (any page can send
- * one) never takes the link to another site.
- */
+/** Keep the token in the fragment so it is not sent to the site server. Set untrusted paths as paths so //other.example/ cannot change the origin. */
 export function overlayUrl(origin: string, path: string, token: string): string {
   const url = new URL(origin);
   url.pathname = path;
@@ -51,7 +35,6 @@ export function overlayUrl(origin: string, path: string, token: string): string 
   return url.href;
 }
 
-/** window.open's features for a window this size, within the screen. */
 export function popupFeatures(
   size: { width: number; height: number },
   screen: { availWidth: number; availHeight: number },

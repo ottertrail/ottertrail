@@ -3,10 +3,8 @@ import { MIN_REPLAY_DURATIONS, type ReplayFilters } from "@/lib/replays-api";
 
 import { environmentSearch, filterText, rangeSearch, searchValue } from "../telemetry/search";
 
-/** An error group's fingerprint, as the API takes it. */
 const FINGERPRINT = /^[0-9]{1,3}-[0-9a-f]{20}$/;
 
-/** The Replays page's address. */
 export interface ReplaysSearch {
   range: PageRange;
   environment: string;
@@ -22,7 +20,6 @@ export const replaysSearchOf = ({ range, environment, filters }: ReplaysSearch) 
   ...(filters.minDuration === undefined ? {} : { min: filters.minDuration }),
 });
 
-/** The replay filters from an address; anything the page does not offer is dropped. */
 export function replayFiltersFrom(search: {
   path?: unknown;
   user?: unknown;

@@ -33,16 +33,10 @@ import { formatBytes } from "@/lib/source-maps-api";
 
 import { REPLAY_CONSENT_DOCS_URL } from "./format";
 
-/** The attribute that makes the tracker record, on the site's script tag. */
 export const REPLAY_ATTRIBUTE = 'data-replay="errors"';
-/** Beside it: the tracker loads the recorder only once the page says the visitor agreed. */
 export const CONSENT_ATTRIBUTE = 'data-replay-consent="wait"';
-/** What the page calls once the visitor agrees, on every page load. */
 export const CONSENT_CALL = "window.ottertrail.replay(true);";
-/**
- * For a call that may come before the deferred tracker runs: a stand-in
- * that queues it (packages/tracker/src/script.ts, docs/session-replay.md).
- */
+/** Queue calls made before the deferred tracker loads (packages/tracker/src/script.ts, docs/session-replay.md). */
 export const EARLY_CALLS = `<script>
   window.ottertrail = window.ottertrail || (function () {
     var q = [];
@@ -69,7 +63,6 @@ const MODES: { value: ReplayMode; label: string; hint: string }[] = [
   },
 ];
 
-/** The Session replay tab's form: off, or recorded around errors. */
 interface ReplayValues {
   mode: ReplayMode;
 }
@@ -77,7 +70,6 @@ interface ReplayValues {
 const isMode = (value: unknown): value is ReplayMode =>
   MODES.some((choice) => choice.value === value);
 
-/** Off or around errors, a field of the tab's form: saved with its Save. */
 function ModeChoice({ form, disabled }: { form: DirtyForm<ReplayValues>; disabled: boolean }) {
   const name = React.useId();
   const legendId = React.useId();
@@ -115,10 +107,7 @@ function ModeChoice({ form, disabled }: { form: DirtyForm<ReplayValues>; disable
   );
 }
 
-/**
- * Waiting for consent, a copy helper as the privacy options are: it changes
- * the code shown to copy, and is never saved (it is the site's snippet).
- */
+/** Change only the example snippet; consent is configured on the site. */
 function ConsentChoice({
   checked,
   onCheckedChange,
@@ -146,7 +135,6 @@ function ConsentChoice({
   );
 }
 
-/** What a site adds to its tag, and what stays private. */
 function SiteHelp() {
   const [consent, setConsent] = React.useState(false);
   return (
@@ -209,7 +197,7 @@ function SiteHelp() {
   );
 }
 
-/** Asks before deleting every replay of the project; its errors stay. */
+/** Delete replays only; errors stay. */
 function DeleteAllDialog({
   projectId,
   count,
@@ -217,7 +205,6 @@ function DeleteAllDialog({
 }: {
   projectId: string;
   count: number;
-  /** Where focus goes once deleted: this button leaves with the replays. */
   returnFocus: React.RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -228,7 +215,7 @@ function DeleteAllDialog({
     onSuccess: () => {
       deleted.current = true;
       setOpen(false);
-      // None left at once, even should fetching the overview again fail.
+      // Clear the count even if refetching fails.
       queryClient.setQueryData<ReplayOverview>(replaysKey(projectId), (overview) =>
         overview === undefined
           ? undefined
@@ -249,7 +236,6 @@ function DeleteAllDialog({
             },
       );
       void queryClient.invalidateQueries({ queryKey: replaysKey(projectId) });
-      // Error pages show which occurrences still have a replay.
       void queryClient.invalidateQueries({ queryKey: ["error", projectId] });
     },
   });
@@ -338,25 +324,19 @@ function Usage({
   );
 }
 
-/**
- * The project's session replays (docs/session-replay.md): off or around
- * errors (a form, saved with its Save), what the site adds to its tag, what
- * stays private, and what is stored. On an install without an object store,
- * only that they are off.
- */
+/** Replay settings require an object store (docs/session-replay.md). */
 export function ReplaysSettings({
   projectId,
   onDirty,
 }: {
   projectId: string;
-  /** Says whether the form holds unsaved changes, for the tab's mark. */
   onDirty: (dirty: boolean) => void;
 }) {
   const query = useQuery(replaysQuery(projectId));
   const form = useDirtyForm<ReplayValues>({ mode: query.data?.mode ?? "off" }, { key: projectId });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const queryClient = useQueryClient();
-  // Where focus goes when the delete dialog closes: its button is gone.
+  // Return focus here if deletion removes the trigger.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   const save = useMutation({
     mutationFn: (values: ReplayValues) => setReplayMode(projectId, values.mode),

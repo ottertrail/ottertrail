@@ -26,7 +26,6 @@ const KIND_LABELS: Record<SpanKind, string> = {
 
 const STATUS_LABELS = { unset: "Unset", ok: "OK", error: "Error" } as const;
 
-/** "3 more were dropped", when the sender or Ottertrail dropped some. */
 function Dropped({ count, noun }: { count: number; noun: string }) {
   if (count === 0) return null;
   return (
@@ -92,11 +91,7 @@ function Facts({
   );
 }
 
-/**
- * The selected span: what it is, its attributes, events (with theirs),
- * links, and its resource's attributes. Read when selected: a trace's
- * page lists only what the waterfall needs.
- */
+/** Fetch span details on selection; the trace response contains only waterfall data. */
 export function SpanDetailCard({
   projectId,
   traceId,
@@ -110,7 +105,6 @@ export function SpanDetailCard({
   span: WaterfallSpan;
   parentName: string | undefined;
   ref?: React.Ref<HTMLElement>;
-  /** Beside the traces list: a linked trace opens there, not on its own page. */
   inWorkbench?: boolean;
 }) {
   const query = useQuery(spanQuery(projectId, traceId, span));
@@ -205,7 +199,6 @@ export function SpanDetailCard({
                   <ul aria-label="Linked spans" className="flex flex-col gap-3">
                     {query.data.span.links.map((link, index) => (
                       <li
-                        // A span may link one span twice; links keep the order sent.
                         key={`${index}-${link.traceId}-${link.spanId}`}
                         className="flex flex-col gap-2 rounded-lg p-3 ring-1 ring-border"
                       >

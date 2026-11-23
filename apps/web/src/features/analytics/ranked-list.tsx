@@ -8,22 +8,13 @@ import { formatWhole } from "./format";
 export interface RankedRow {
   key: string;
   label: React.ReactNode;
-  /**
-   * The whole text, for the tooltip while the label is cut off (a long
-   * path); needed when the label is not plain text (a filter link).
-   */
+  /** Full tooltip text when a truncated label contains markup. */
   title?: string;
-  /** Sets the bar's length. */
   primary: number;
-  /** The second figure; left out when the list has one. */
   secondary?: number;
 }
 
-/**
- * Ranked rows with a bar each: one hue, bars from one baseline, largest
- * first (the API sorts them). The figures are text, so the list doubles as
- * its own table view; the bars only show the ranking at a glance.
- */
+/** The API sorts rows largest first; text values also serve as the table view. */
 export function RankedList({
   rows,
   caption,
@@ -36,7 +27,6 @@ export function RankedList({
   caption: string;
   nameHeading: string;
   primaryHeading: string;
-  /** Left out for a list with one figure. */
   secondaryHeading?: string;
   empty: string;
 }) {

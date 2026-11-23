@@ -47,16 +47,12 @@ import { AppearanceTab } from "./appearance-tab";
 
 const PASSWORDS_DIFFER = "The passwords do not match. Enter the same password in both fields.";
 
-/** One line said after a change, until the next: a polite live region, always mounted. */
+/** Keep the live region mounted so changes are announced. */
 function Notice({ children }: { children: React.ReactNode }) {
   return <output className="block text-sm text-success empty:hidden">{children}</output>;
 }
 
-/**
- * After the account changed: the session (the sidebar's name and email)
- * and everything that names the user (GET /api/me, the Members page) are
- * read again.
- */
+/** Refresh the session and cached pages that name the user. */
 function useAccountChanged() {
   const queryClient = useQueryClient();
   return React.useCallback(() => queryClient.invalidateQueries(), [queryClient]);
@@ -68,11 +64,7 @@ interface ProfileValues {
   avatar: string | null;
 }
 
-/**
- * The user's avatar and name: one form. Save sends a changed avatar first,
- * then the name; if the name fails, the avatar stays saved and the name's
- * edit stays.
- */
+/** Save the avatar first. If saving the name fails, keep the saved avatar and name edits. */
 function NameForm({
   name,
   email,
@@ -144,7 +136,6 @@ interface EmailValues {
   password: string;
 }
 
-/** Which field an email change's refusal is about. */
 function emailErrorField(error: Error | null): "email" | "password" | null {
   if (!(error instanceof ApiError)) return null;
   if (error.code === "wrong_password") return "password";
@@ -156,7 +147,7 @@ function emailErrorField(error: Error | null): "email" | "password" | null {
 function EmailForm({ email, onDirty }: { email: string; onDirty: (dirty: boolean) => void }) {
   const changed = useAccountChanged();
   const [notice, setNotice] = React.useState("");
-  // The password is asked for each change; typing it alone changes nothing to save.
+  // Typing only a password must not mark the form dirty.
   const form = useDirtyForm<EmailValues>(
     { email, password: "" },
     { normalize: { email: (value) => value.trim().toLowerCase(), password: () => "" } },
@@ -263,7 +254,7 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   const queryClient = useQueryClient();
   const [notice, setNotice] = React.useState("");
   const [differ, setDiffer] = React.useState(false);
-  // The checkbox alone is nothing to save.
+  // Toggling session revocation alone must not mark the form dirty.
   const form = useDirtyForm(NO_PASSWORDS, { normalize: { revokeOtherSessions: () => true } });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const save = useMutation({
@@ -370,7 +361,6 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   );
 }
 
-/** Asks before signing out one session, or all the others. */
 function SignOutDialog({
   trigger,
   title,
@@ -379,7 +369,6 @@ function SignOutDialog({
   action,
   onDone,
 }: {
-  /** The button that opens it: its text, and its accessible name when the text is not enough. */
   trigger: { text: string; label?: string; size?: "sm" | "default" };
   title: string;
   description: string;
@@ -547,7 +536,6 @@ function SessionsTab() {
   );
 }
 
-/** The tab row and a section, while the session loads. */
 function PageSkeleton() {
   return (
     <div className="flex flex-col" aria-busy="true" aria-label="Loading your account">
@@ -565,10 +553,7 @@ function PageSkeleton() {
 
 type DirtyPart = "name" | "email" | "password";
 
-/**
- * /account: the signed-in user's own name, email, password, and sessions,
- * and this device's theme, for every user (docs/dashboard.md, "Account settings").
- */
+/** Account settings for every signed-in user (docs/dashboard.md, "Account settings"). */
 export function AccountPage() {
   const me = useQuery(meQuery());
   const [dirty, setDirty] = React.useState<Record<DirtyPart, boolean>>({
@@ -576,7 +561,7 @@ export function AccountPage() {
     email: false,
     password: false,
   });
-  // One stable callback per form, so a form's effect does not run on every render.
+  // Stable callbacks keep form effects from running on every render.
   const mark = React.useMemo(() => {
     const of = (part: DirtyPart) => (next: boolean) =>
       setDirty((previous) => (previous[part] === next ? previous : { ...previous, [part]: next }));
@@ -600,7 +585,6 @@ export function AccountPage() {
     {
       value: "profile",
       label: "Profile",
-      // Two forms: either one's edits mark the tab.
       dirty: dirty.name || dirty.email,
       content: (
         <>

@@ -1,10 +1,6 @@
 import * as React from "react";
 
-/**
- * Reads a one-time link's token from its fragment (#token=…) once, then
- * removes it from the address bar, so it does not stay on screen or in the
- * browser's history. Setup, invitation, and reset links carry one.
- */
+/** Remove the one-time token from the address bar and browser history after reading it. */
 export function useLinkToken(): string | null {
   const [token] = React.useState(() => {
     const value = new URLSearchParams(window.location.hash.slice(1)).get("token");

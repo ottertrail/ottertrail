@@ -18,11 +18,7 @@ import { reloadPage } from "@/lib/reload";
 
 import { PanelHead, type PanelKind } from "./panel-title";
 
-/**
- * The panel's code, loaded the first time the bell opens, so a first visit
- * does not download it. When its file cannot be downloaded (a tab left
- * open across a deploy), the panel says so, with Reload.
- */
+/** Load on first open. A stale tab may need Reload after a deploy removes the chunk. */
 const BellPanel = React.lazy(async () => {
   try {
     const loaded = await loadChunk(() => import("./notification-panel"));
@@ -33,7 +29,6 @@ const BellPanel = React.lazy(async () => {
   }
 });
 
-/** In place of the panel when its code could not be downloaded. */
 function PanelUnavailable({ kind }: { kind: PanelKind }) {
   return (
     <div className="flex flex-col">
@@ -48,7 +43,6 @@ function PanelUnavailable({ kind }: { kind: PanelKind }) {
   );
 }
 
-/** The panel's shape while its code downloads. */
 function PanelLoading({ kind }: { kind: PanelKind }) {
   return (
     <div className="flex flex-col">
@@ -62,7 +56,6 @@ function PanelLoading({ kind }: { kind: PanelKind }) {
   );
 }
 
-/** The panel, once its code is here. */
 function Panel({ unread, close, kind }: { unread: number; close: () => void; kind: PanelKind }) {
   return (
     <React.Suspense fallback={<PanelLoading kind={kind} />}>
@@ -71,7 +64,6 @@ function Panel({ unread, close, kind }: { unread: number; close: () => void; kin
   );
 }
 
-/** The unread count at the item's end: a small orchid pill, "9+" past nine. */
 function UnreadPill({ unread }: { unread: number }) {
   return (
     <span
@@ -84,7 +76,6 @@ function UnreadPill({ unread }: { unread: number }) {
   );
 }
 
-/** Collapsed to icons: a dot on the bell's corner says something is unread. */
 function UnreadDot() {
   return (
     <span
@@ -95,7 +86,6 @@ function UnreadDot() {
   );
 }
 
-/** The item's face: the bell, the label, and the unread count. */
 function ItemFace({ unread }: { unread: number }) {
   return (
     <>
@@ -107,12 +97,7 @@ function ItemFace({ unread }: { unread: number }) {
   );
 }
 
-/**
- * The sidebar foot's Notifications item, above the user (docs/dashboard.md,
- * "Notifications"): the unread count, polled every minute while the tab is
- * shown and on focus, and a panel of the newest items, a popover to the
- * right of the sidebar, or a sheet over the menu on a phone.
- */
+/** Poll unread counts every minute while visible and on focus (docs/dashboard.md, "Notifications"). */
 export function SidebarNotifications() {
   const [open, setOpen] = React.useState(false);
   const { isMobile } = useSidebar();

@@ -71,7 +71,6 @@ const WIDGET_COMPONENTS: Record<WidgetId, (props: WidgetProps) => React.ReactNod
   sources: SourcesWidget,
 };
 
-/** Nothing on the overview: none of its areas. Points to the pages the user can open. */
 function NothingHere({ projectId }: { projectId: string }) {
   const me = useQuery(meQuery()).data;
   const pages = AREA_PAGES.filter(([area]) => canUse(me, area));
@@ -101,12 +100,7 @@ function NothingHere({ projectId }: { projectId: string }) {
   );
 }
 
-/**
- * The project overview (docs/dashboard.md, "Overview"): the widgets the
- * user may see, in their own order, each loading and failing on its own.
- * "Edit overview" moves, hides, and shows them; every change is saved at
- * once, for this user and project only, and announced.
- */
+/** Save layout changes immediately per user and project (docs/dashboard.md, "Overview"). */
 export function OverviewPage({
   projectId,
   period = DEFAULT_OVERVIEW_PERIOD,
@@ -122,17 +116,12 @@ export function OverviewPage({
   const layout = useQuery(layoutQuery(projectId));
   const [editing, setEditing] = React.useState(false);
   const [announcement, setAnnouncement] = React.useState("");
-  /** After a move, the button to keep focus on: the widget and the direction. */
   const focusAfter = React.useRef<{ id: WidgetId; move: "up" | "down" } | null>(null);
   const editButton = React.useRef<HTMLButtonElement>(null);
   const widgetsRef = React.useRef<HTMLDivElement>(null);
 
   const layoutKey = layoutQuery(projectId).queryKey;
-  /**
-   * The latest change asked for. Saves and resets of one project run one
-   * after another (one mutation scope), and only the latest one's answer is
-   * shown: an earlier answer arriving after a newer change would undo it.
-   */
+  /** Serialize saves and resets; ignore older responses so they cannot undo newer changes. */
   const latest = React.useRef(0);
   const scope = { id: `overview-layout-${projectId}` };
   const save = useMutation({
@@ -160,7 +149,6 @@ export function OverviewPage({
     },
   });
 
-  /** Shows a new layout at once, and saves it after any save still running. */
   function applyLayout(next: Layout) {
     latest.current += 1;
     void queryClient.cancelQueries({ queryKey: layoutKey });
@@ -174,7 +162,7 @@ export function OverviewPage({
     focusAfter.current = null;
     const section = widgetsRef.current?.querySelector(`[data-widget="${target.id}"]`);
     const wanted = section?.querySelector<HTMLButtonElement>(`[data-move="${target.move}"]`);
-    // At the top or bottom, that button is disabled: focus the other one.
+    // At either end, focus the other button because this one becomes disabled.
     (wanted?.disabled === false
       ? wanted
       : section?.querySelector<HTMLButtonElement>("[data-move]:not(:disabled)")
@@ -189,8 +177,7 @@ export function OverviewPage({
     }
   }
 
-  // The days as the API counts them, from the first widget shown (the same
-  // request the widget makes); until it answers, as this browser works them out.
+  // Use the API dates when available; calculate locally while loading.
   const firstShown = layout.data?.widgets.find((widget) => !widget.hidden)?.id ?? "traffic";
   const first = useQuery({
     ...widgetQuery(projectId, firstShown, period, environment),
@@ -247,7 +234,6 @@ export function OverviewPage({
       range={<FilterBarRange firstDay={days.firstDay} lastDay={days.lastDay} timeZone={timeZone} />}
     />
   );
-  // The page's action, in its header.
   const editAction = hasArea && (
     <PageActions>
       <Button
@@ -267,7 +253,7 @@ export function OverviewPage({
     return (
       <>
         {filterBar}
-        {/* Two columns by the content's width, not the window's: the sidebar takes 16rem. */}
+        {/* Use content width; the sidebar takes 16rem. */}
         <div className="@container">
           <div aria-busy="true" className="grid gap-x-10 gap-y-8 px-gutter py-6 @5xl:grid-cols-2">
             {Array.from({ length: 4 }, (_, index) => (
@@ -305,7 +291,7 @@ export function OverviewPage({
   const { widgets } = layout.data;
   const shown = editing ? widgets : widgets.filter((widget) => !widget.hidden);
 
-  /** The layout as last changed: the cache, which a quick second click may be ahead of the page in. */
+  /** Read the cache because a quick second click may precede the next render. */
   const current = () => queryClient.getQueryData<Layout>(layoutKey)?.widgets ?? widgets;
 
   function move(id: WidgetId, by: -1 | 1) {
@@ -383,8 +369,7 @@ export function OverviewPage({
         <div className="@container">
           <div
             ref={widgetsRef}
-            // Each widget draws a line above it, except the first row: the filter bar's
-            // (or the edit bar's) line is already there.
+            // The filter or edit bar already supplies the first row's top border.
             className="grid grid-cols-1 gap-x-10 gap-y-8 px-gutter pt-2 pb-8 @5xl:grid-cols-2 [&>*:first-child]:border-t-0 @5xl:[&>*:nth-child(2)]:border-t-0"
           >
             {shown.map((widget) => {

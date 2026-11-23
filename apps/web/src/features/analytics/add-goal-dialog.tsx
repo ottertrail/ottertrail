@@ -25,7 +25,7 @@ const STEP_HELP = {
   page: "Matches the exact path, without query or fragment.",
 } as const;
 
-/** The form, mounted while the dialog is open, so each opening starts empty. */
+/** Remount on open to reset the form. */
 function AddGoalForm({
   projectId,
   eventNames,
@@ -44,7 +44,6 @@ function AddGoalForm({
   const add = useMutation({
     mutationFn: () => createGoal(projectId, name, stepOf(step)),
     onSuccess: () => {
-      // Its counts come with the next analytics answer.
       void queryClient.invalidateQueries({ queryKey: ["analytics", projectId] });
       onAdded();
     },
@@ -128,7 +127,6 @@ function AddGoalForm({
   );
 }
 
-/** Adds a goal: a name, and the page or event that reaches it, checked as the API checks them. */
 export function AddGoalDialog({
   open,
   onOpenChange,
@@ -139,9 +137,8 @@ export function AddGoalDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  /** The page's custom events, offered as suggestions. */
   eventNames: readonly string[];
-  /** Where focus goes on closing: the button that opened it may be gone after the refetch. */
+  /** Focus here on close because refetching may remove the trigger. */
   returnFocus: React.RefObject<HTMLElement | null>;
 }) {
   return (

@@ -13,30 +13,23 @@ import {
 
 import { errorsSearchOf } from "../errors/search";
 
-/** What every product analytics address holds. */
 export interface ProductSearch {
   range: PageRange;
   environment: string;
 }
 
-/** The address query for the period and environment: the defaults are left out. */
 export const productSearchOf = ({ range, environment }: ProductSearch) =>
   errorsSearchOf({ range, environment });
 
-/** "p.plan": a property filter's name in the address, as in the API's query. */
+/** Use the API's "p.<key>" names for property filters. */
 export const FILTER_PREFIX = "p.";
 
 export type FilterSearch = Record<`p.${string}`, string>;
 
-/** The filters as address parameters, "p.<key>": value. */
 export const filterSearchOf = (filters: readonly PropertyFilter[]): FilterSearch =>
   Object.fromEntries(filters.map(({ key, value }) => [`${FILTER_PREFIX}${key}`, value]));
 
-/**
- * The property filters of an address, at most MAX_FILTERS. The router
- * reads "p.seats=3" as the number 3; the API compares values as text, as
- * JSON writes them, so a number, true, false, or null goes back to that.
- */
+/** The router parses JSON primitives. Convert them back to JSON text for API comparisons. Keep at most MAX_FILTERS. */
 export function propertyFiltersFrom(search: Record<string, unknown>): PropertyFilter[] {
   return Object.entries(search)
     .flatMap(([name, value]): PropertyFilter[] => {
@@ -51,20 +44,14 @@ export function propertyFiltersFrom(search: Record<string, unknown>): PropertyFi
     .slice(0, MAX_FILTERS);
 }
 
-/** What the funnel's address holds besides the period and environment. */
 export interface FunnelSearch extends ProductSearch {
-  /** The saved funnel last opened or saved, by ID; the steps below may have changed since. */
+  /** Last saved or opened funnel; its steps may have unsaved changes. */
   funnel?: string | undefined;
-  /** Complete steps as the API takes them; none until the first funnel is shown. */
   steps: FunnelStep[];
   count: FunnelCount;
   window: FunnelWindow;
 }
 
-/**
- * The funnel's address query: no saved funnel, no steps, visitors, and the
- * one-day window are left out.
- */
 export const funnelSearchOf = ({
   range,
   environment,
@@ -80,12 +67,7 @@ export const funnelSearchOf = ({
   ...(window === DEFAULT_FUNNEL_WINDOW ? {} : { window }),
 });
 
-/**
- * The steps from the address: the JSON array the API takes. The router
- * reads it as an array when it is written as JSON.stringify writes it; a
- * hand-written one, with spaces, stays text and is read here. Anything
- * that is not a list of steps is no steps.
- */
+/** The router parses compact JSON arrays; parse spaced JSON here. Invalid step lists become empty. */
 export function stepsFrom(value: unknown): FunnelStep[] {
   let parsed = value;
   if (typeof value === "string") {
@@ -114,14 +96,10 @@ export function stepsFrom(value: unknown): FunnelStep[] {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A saved funnel's ID from the address, in lower case; anything but a UUID is none. */
 export const savedFunnelIdFrom = (value: unknown): string | undefined =>
   typeof value === "string" && UUID.test(value) ? value.toLowerCase() : undefined;
 
-/**
- * Whether a saved funnel is the funnel shown. Its steps are compared as the
- * address holds them, so the order of the API's keys does not matter.
- */
+/** Compare steps as serialized in the address so API object key order does not matter. */
 export const isShownFunnel = (
   saved: { steps: unknown; count: FunnelCount; window: number },
   shown: { steps: readonly FunnelStep[]; count: FunnelCount; window: FunnelWindow },

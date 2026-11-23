@@ -26,7 +26,6 @@ import { AddGoalDialog } from "./add-goal-dialog";
 import { DeleteGoalDialog } from "./delete-goal-dialog";
 import { formatConversion, formatWhole } from "./format";
 
-/** "Add goal", or, at the limit, the same button disabled with the reason beside it. */
 function AddGoalButton({ atLimit, onClick }: { atLimit: boolean; onClick: () => void }) {
   const reasonId = React.useId();
   return (
@@ -51,19 +50,10 @@ function AddGoalButton({ atLimit, onClick }: { atLimit: boolean; onClick: () => 
 }
 
 const headClass = "h-8 text-xs font-normal text-ink-subtle";
-/**
- * On a phone each goal stacks into a block: its name, then each figure after
- * its column's name, which CSS draws from `data-label` so the cell's text
- * stays the figure.
- */
+/** On phones, CSS uses data-label for column names. */
 const stackCell =
   "max-sm:flex max-sm:justify-between max-sm:px-0 max-sm:py-0.5 max-sm:before:text-ink-subtle max-sm:before:content-[attr(data-label)]";
 
-/**
- * The goals in the order added: name, what reaches it, visitors who did, their
- * share of the page's visitors, and how often it happened. The bar shows the
- * share, from 0 to 100%.
- */
 function GoalTable({
   goals,
   projectId,
@@ -73,7 +63,6 @@ function GoalTable({
   goals: GoalResult[];
   projectId: string;
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
-  /** Whether the user may delete goals (product analytics, manage). */
   canManage: boolean;
 }) {
   return (
@@ -157,11 +146,7 @@ function GoalTable({
   );
 }
 
-/**
- * The project's saved goals, counted in the page's period, environment, and
- * filters, as the rest of the page. Adding and deleting one refetches the
- * page; both need product analytics at manage (docs/access.md).
- */
+/** Adding and deleting require product analytics manage access (docs/access.md). */
 export function GoalsCard({
   goals,
   projectId,
@@ -169,13 +154,11 @@ export function GoalsCard({
 }: {
   goals: GoalResult[];
   projectId: string;
-  /** The page's custom events, offered when an event goal is added. */
   eventNames: readonly string[];
 }) {
   const canManage = useAccess().canUse("product_analytics", "manage");
   const [adding, setAdding] = React.useState(false);
-  // Where focus goes when a dialog closes: the button that opened it may be
-  // gone once the list refetches (the empty state's, or a deleted row's).
+  // Refetching may remove the trigger, so return focus to the heading.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   const atLimit = goals.length >= MAX_GOALS;
   const add = () => setAdding(true);

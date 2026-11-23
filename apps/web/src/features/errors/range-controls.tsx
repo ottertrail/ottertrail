@@ -21,11 +21,7 @@ import { DEFAULT_ENVIRONMENT, isPeriod, PERIODS, type PageRange } from "@/lib/an
 import { loadChunk, PageLoadError } from "@/lib/lazy-page";
 import { reloadPage } from "@/lib/reload";
 
-/**
- * Loaded when "Custom range…" is first chosen, as on the analytics page:
- * its calendar is large. When its file cannot be downloaded (a tab left
- * open across a deploy), the dialog says so instead, and the page stays.
- */
+/** Load the large calendar on demand. Handle missing chunks after a deploy without losing the page. */
 const CustomRangeDialog = React.lazy(async () => {
   try {
     const loaded = await loadChunk(() => import("../analytics/custom-range-dialog"));
@@ -38,7 +34,6 @@ const CustomRangeDialog = React.lazy(async () => {
   }
 });
 
-/** In place of the custom range dialog when its code could not be downloaded. */
 function CalendarUnavailable({
   open,
   onOpenChange,
@@ -63,24 +58,17 @@ function CalendarUnavailable({
   );
 }
 
-/** The period picker's choice for chosen days. */
 const CUSTOM = "custom";
 const PERIOD_ITEMS = [...PERIODS, { value: CUSTOM, label: "Custom range" }];
 
-/** What the API said about the days and environments it answered for. */
 export interface Answered {
   timeZone: string;
   firstDay: string;
   lastDay: string;
-  /** The environments with data, when the response lists them. */
   environments?: string[];
 }
 
-/**
- * The period picker: a period that ends today, or "Custom range…", which
- * opens a dialog to choose the days. `answered` gives the dialog the days
- * shown now.
- */
+/** `answered` supplies the displayed days as the custom range default. */
 export function PeriodSelect({
   range,
   answered,
@@ -116,7 +104,6 @@ export function PeriodSelect({
         </SelectContent>
       </Select>
       {choosingDays && (
-        // Nothing while its code loads: a moment, from the same server.
         <React.Suspense fallback={null}>
           <CustomRangeDialog
             open
@@ -135,11 +122,7 @@ export function PeriodSelect({
   );
 }
 
-/**
- * The environment picker, shown once there is a choice, and always while
- * another environment than the default is shown, so there is a way back.
- * Renders nothing otherwise.
- */
+/** Keep the picker visible for a selected environment so the user can switch back. */
 export function EnvironmentSelect({
   environment,
   answered,
@@ -175,11 +158,6 @@ export function EnvironmentSelect({
   );
 }
 
-/**
- * A report's pinned filter bar (`FilterBar`): the period, the environment
- * once there is a choice, the report's own filters, and the days shown
- * with their timezone once the API has answered.
- */
 export function ReportFilterBar({
   label = "Period and environment",
   range,
@@ -191,17 +169,15 @@ export function ReportFilterBar({
   actions,
   period,
 }: {
-  /** Names the bar for screen readers. */
   label?: string;
   range: PageRange;
   environment: string;
   answered: Answered | undefined;
   onRange: (range: PageRange) => void;
   onEnvironment: (environment: string) => void;
-  /** The report's own controls, such as a device picker. */
   filters?: React.ReactNode;
   actions?: React.ReactNode;
-  /** In place of the period picker and the days shown, such as the Logs page's "Live". */
+  /** Replaces both the period picker and dates, as in the Logs live view. */
   period?: React.ReactNode;
 }) {
   return (
@@ -231,10 +207,6 @@ export function ReportFilterBar({
   );
 }
 
-/**
- * The period (or chosen days) and the environment, as on the analytics
- * page, in one row.
- */
 export function RangeControls({
   range,
   environment,
@@ -248,7 +220,6 @@ export function RangeControls({
   answered: Answered | undefined;
   onRange: (range: PageRange) => void;
   onEnvironment: (environment: string) => void;
-  /** More controls in the same row, after these. */
   children?: React.ReactNode;
 }) {
   return (

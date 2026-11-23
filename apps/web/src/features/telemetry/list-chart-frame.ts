@@ -2,13 +2,10 @@ import type { PageRange } from "@/lib/analytics-api";
 
 import { bucketLabel } from "./chart-time";
 
-/** The Logs and Traces charts' time buckets, and the days a bucket narrows the period to. */
-
-/** The time buckets a list's chart has, as the API gives them. */
 export interface ListChartFrame {
-  /** Each bucket's start, ISO, on the clock of the instance's timezone. */
+  /** ISO starts follow the instance timezone. */
   bucketStarts: string[];
-  /** The buckets' length on the clock; one across a daylight saving change is an hour longer or shorter. */
+  /** Clock-based bucket length; daylight saving changes can add or remove an hour. */
   stepSeconds: number;
   timeZone: string;
   firstDay: string;
@@ -19,7 +16,6 @@ const DAY_SECONDS = 86_400;
 
 const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>();
 
-/** "YYYY-MM-DD": a moment's day in the timezone set in Settings. */
 function dayIn(date: Date, timeZone: string): string {
   let format = DAY_FORMATS.get(timeZone);
   if (format === undefined) {
@@ -34,19 +30,13 @@ function dayIn(date: Date, timeZone: string): string {
   return format.format(date);
 }
 
-/** "YYYY-MM-DD" plus `days`, on the calendar. */
 const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
-/** A bucket's start, as a Date. */
 export const bucketStart = (frame: ListChartFrame, index: number) =>
   new Date(frame.bucketStarts[index] ?? frame.bucketStarts[0] ?? 0);
 
-/**
- * "Tue 17 Nov 2026, 10:00 to 12:00", or the day for a bucket of days: a
- * bucket's span on the clock, its end the next bucket's start, so a
- * bucket across a daylight saving change says how long it really is.
- */
+/** End at the next bucket's start so daylight saving changes show the actual span. */
 export function listBucketLabel(frame: ListChartFrame, index: number): string {
   const start = bucketStart(frame, index);
   if (frame.stepSeconds >= DAY_SECONDS)
@@ -57,14 +47,7 @@ export function listBucketLabel(frame: ListChartFrame, index: number): string {
   return bucketLabel(start, seconds, frame.timeZone);
 }
 
-/**
- * The days a bucket covers, as a custom range: the day its start falls on,
- * plus its step in days for a bucket of days, never past the period's.
- * Calendar days, not the bucket's end less a moment, so a bucket an hour
- * longer or shorter across a daylight saving change still gives one day.
- * Undefined when the period is one day already, so there is nothing to
- * narrow.
- */
+/** Use calendar days so daylight saving changes still select one day. Clamp to the period; return undefined if it is already one day. */
 export function bucketRange(frame: ListChartFrame, index: number): PageRange | undefined {
   if (frame.firstDay === frame.lastDay) return undefined;
   const first = dayIn(bucketStart(frame, index), frame.timeZone);
@@ -75,6 +58,5 @@ export function bucketRange(frame: ListChartFrame, index: number): PageRange | u
   return { from, to };
 }
 
-/** What choosing a bar does, for its readout. */
 export const selectHint = (frame: ListChartFrame) =>
   frame.stepSeconds > DAY_SECONDS ? "Click to show these days" : "Click to show this day";

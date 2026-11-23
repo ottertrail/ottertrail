@@ -15,7 +15,6 @@ import { createOwner, fetchSetupStatus } from "@/lib/setup-api";
 import { AuthLayout } from "./auth-layout";
 import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 
-/** The browser's own timezone, chosen until another is picked. */
 const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export function SetupPage() {

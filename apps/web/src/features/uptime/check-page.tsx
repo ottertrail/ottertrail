@@ -57,7 +57,6 @@ import {
 } from "./format";
 import { CheckStateBadge } from "./state-badge";
 
-/** One figure with its label. */
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-card p-4 ring-1 ring-border">
@@ -68,7 +67,6 @@ function Stat({ label, value, note }: { label: string; value: string; note?: str
   );
 }
 
-/** What the check is doing now, in words. */
 function StateLine({ check, timeZone }: { check: Check; timeZone: string }) {
   if (check.paused) return <span>Paused: it does not run until it is resumed.</span>;
   if (check.state === "pending") {
@@ -95,7 +93,6 @@ function StateLine({ check, timeZone }: { check: Check; timeZone: string }) {
   return <span>Up.</span>;
 }
 
-/** The period's figures, and the check's uptime over fixed windows. */
 function Stats({
   check,
   results,
@@ -197,7 +194,7 @@ function IncidentsCard({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatSpan(
-                      // An ongoing one: until the list was read.
+                      // Measure ongoing incidents through the response time.
                       (incident.endedAt === null
                         ? incidents.dataUpdatedAt
                         : Date.parse(incident.endedAt)) - Date.parse(incident.startedAt),
@@ -280,14 +277,7 @@ function FailuresCard({ results }: { results: CheckResults }) {
   );
 }
 
-/**
- * One check with its loading, missing, and failed states: what it does and
- * its state, its uptime, its response time over the period, its incidents,
- * and its latest failures, laid out by the width of its own container. On
- * the check's page, and in the Uptime workbench beside the list, where
- * `actions` links to the page and a missing check's link clears the
- * selection instead.
- */
+/** Shared by the check page and workbench. A missing check clears the workbench selection. */
 export function CheckView({
   projectId,
   checkId,
@@ -302,7 +292,6 @@ export function CheckView({
   range: PageRange;
   onRange: (range: PageRange) => void;
   onDeleted: () => void;
-  /** Beside the check's name, such as a link to its own page. */
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
@@ -364,7 +353,6 @@ export function CheckView({
       ) : (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
-            {/* On its own page, the page header names it, so it is not repeated here. */}
             {!inWorkbench && <PageTitle title={answer.check.name} />}
             {inWorkbench && (
               <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
@@ -470,7 +458,6 @@ export function CheckView({
   );
 }
 
-/** One check on its own page, for deep links and narrow screens. */
 export function CheckPage({
   projectId,
   checkId,

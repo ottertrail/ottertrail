@@ -1,19 +1,12 @@
-/**
- * The rules of a project's blocked addresses and blocked referrers, as the
- * API checks them (apps/api/src/projects/blocked-addresses.ts and
- * blocked-referrers.ts), so the Spam and bots tab can say what is wrong
- * before saving. The API checks again and stores the normal forms.
- */
+/** Match API validation in apps/api/src/projects/blocked-addresses.ts and blocked-referrers.ts. The API validates again and normalizes. */
 
 export const MAX_BLOCKED_ADDRESSES = 100;
 export const MAX_BLOCKED_REFERRERS = 100;
-/** The widest range an entry may be, as the API allows. */
 export const MIN_PREFIX = { ipv4: 8, ipv6: 16 } as const;
 
 const WIDTH = { ipv4: 32, ipv6: 128 } as const;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}$/;
 
-/** The non-empty lines of a text box, trimmed. */
 export function linesOf(text: string): string[] {
   return text
     .split("\n")
@@ -29,7 +22,7 @@ function ipv4Text(value: bigint): string {
   return [24n, 16n, 8n, 0n].map((shift) => String((value >> shift) & 0xffn)).join(".");
 }
 
-/** An IPv6 address's value, or null when it is not one. The URL parser checks and expands it. */
+/** Use the URL parser to validate and expand IPv6. */
 function ipv6Value(address: string): bigint | null {
   if (!address.includes(":") || /[%[\]/]/.test(address)) return null;
   const url = URL.parse(`http://[${address}]/`);
@@ -49,11 +42,7 @@ function ipv6Text(value: bigint): string {
   return new URL(`http://[${groups.join(":")}]/`).hostname.slice(1, -1);
 }
 
-/**
- * One blocked address or range in the form the API stores it, or null when
- * the API would refuse it: IPv4-mapped IPv6 as IPv4, a range as its
- * network address, one address without its /32 or /128.
- */
+/** Match API normalization: mapped IPv6 becomes IPv4, ranges use network addresses, and /32 or /128 is omitted for single addresses. */
 export function normalAddress(raw: string): string | null {
   const text = raw.trim();
   const slash = text.indexOf("/");
@@ -85,11 +74,7 @@ export function normalAddress(raw: string): string | null {
   return prefix === WIDTH[family] ? address : `${address}/${prefix}`;
 }
 
-/**
- * One blocked referrer domain in the form the API stores it, or null: a
- * pasted address keeps only its hostname, lower case, internationalized
- * names in their ASCII form, at least two labels, no IP address.
- */
+/** Match API rules: extract hostnames, lowercase, convert to ASCII, require two labels, and reject IPs. */
 export function normalDomain(raw: string): string | null {
   const text = raw.trim();
   let host: string;
@@ -172,7 +157,6 @@ const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
   "com.pe",
 ]);
 
-/** What a text box holds, as the API will store it, or why it would refuse it. */
 export type ListCheck = { ok: true; entries: string[] } | { ok: false; message: string };
 
 function checkList(
@@ -205,7 +189,7 @@ export function checkAddresses(text: string): ListCheck {
   );
 }
 
-/** `allowedHostnames`: the project's sites, which a blocked referrer must not be, nor a parent of. */
+/** Reject project hostnames and their parent domains. */
 export function checkReferrers(text: string, allowedHostnames: readonly string[] = []): ListCheck {
   return checkList(
     text,

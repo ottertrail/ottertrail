@@ -14,10 +14,10 @@ import { fetchSetupStatus } from "@/lib/setup-api";
 
 import { AuthLayout } from "./auth-layout";
 
-/** The API's answer for every address, kept here in case it is not read. */
+/** Fallback response, identical for every address. */
 const REQUESTED =
   "If an account uses that email, we'll send a reset link. Check your inbox and spam folder.";
-/** Both limits answer this, for every address; the API names no wait time in it. */
+/** Both rate limits use this response without a wait time. */
 const LIMITED = "Too many reset requests. Wait a little, then try again.";
 const NO_EMAIL =
   "Email isn't set up on this instance. Ask the person who runs it for a reset link.";
@@ -31,20 +31,15 @@ const backToSignIn = (
   </Link>
 );
 
-/**
- * "Forgot password?" (/forgot-password): asks for an emailed reset link,
- * when the instance has email set up. The answer is the same for every
- * address, so the page never says whether an account exists.
- */
+/** Use the same response for every address to avoid revealing accounts. */
 export function ForgotPasswordPage() {
-  // Whether email is set up: without it, the page says whom to ask instead of offering the form.
   const [emailConfigured, setEmailConfigured] = React.useState<boolean | null>(null);
   React.useEffect(() => {
     const controller = new AbortController();
     fetchSetupStatus(controller.signal).then(
       (status) => setEmailConfigured(status.emailConfigured),
       () => {
-        // Unknown: the form shows, and the API's own answer says if email is missing.
+        // If setup status fails, let the API report missing email configuration.
         if (!controller.signal.aborted) setEmailConfigured(true);
       },
     );

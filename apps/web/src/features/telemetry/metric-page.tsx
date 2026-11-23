@@ -55,7 +55,6 @@ import {
 import { assignSlots, OTHER_COLOR, SLOTS } from "./split-colors";
 import type { ChartLine } from "./time-chart";
 
-/** What each measure is called, in the legend, the tooltip, and the measure picker. */
 const MEASURE_LABELS: Record<string, string> = {
   avg: "Average",
   min: "Minimum",
@@ -67,21 +66,14 @@ const MEASURE_LABELS: Record<string, string> = {
   p99: "99th percentile",
 };
 
-/** A line's name: the split attribute's value, "(not set)" for points without it, or "Other". */
 const valueLabel = (value: string | null, other: boolean) =>
   other ? "Other values" : value === null ? "(not set)" : value === "" ? "(empty)" : value;
 
-/** A split line's key: its value, never its label, so no value can pass for another line. */
+/** Identify split lines by value so matching labels cannot merge them. */
 const keyOf = (series: MetricSeries) =>
   series.other ? "\u0000other" : `v${JSON.stringify(series.value)}`;
 
-/**
- * The chart's lines for some measures. Without a split, one line per
- * measure (a gauge's average, minimum, and maximum). With one, a line per
- * value of the measure shown, each value in the slot it got first while
- * the page is open (`colors`, assignSlots), found by its key, never its
- * label; "other" in gray.
- */
+/** Keep each split value's color stable across period and measure changes (assignSlots). Other uses gray. */
 function linesOf(
   chart: MetricChart,
   measures: readonly string[],
@@ -115,7 +107,6 @@ function linesOf(
   });
 }
 
-/** The cards a kind of metric shows, each with its lines and the way its values read. */
 function chartCards(chart: MetricChart, stat: MetricStat, colors: Map<string, number>) {
   const step = stepText(chart.stepSeconds);
   const split = chart.split !== null;
@@ -173,12 +164,6 @@ function chartCards(chart: MetricChart, stat: MetricStat, colors: Map<string, nu
   ];
 }
 
-/**
- * One metric over a period: charts of it, optionally split by one of its
- * attributes, and narrowed to one host or one attribute value when the
- * address says so (as an alert's link does). It links to a new alert rule
- * on it, with its kind and filters filled in.
- */
 export function MetricPage({
   projectId,
   name,
@@ -192,21 +177,18 @@ export function MetricPage({
 }: {
   projectId: string;
   name: string;
-  /** undefined: the address names no kind, and the page says so. */
   kind: MetricKind | undefined;
   range: PageRange;
   environment?: string;
   split: string | undefined;
   stat: MetricStat | undefined;
-  /** Only this host's series (its resource's host.name). */
+  /** Filter series by resource host.name. */
   host?: string | undefined;
-  /** Only the points with this attribute value. */
   attr?: { key: string; value: string } | undefined;
 }) {
   const navigate = useNavigate();
   const chosenKind: MetricKind = kind ?? "gauge";
   const shownStat = stat ?? DEFAULT_STAT[chosenKind];
-  // Each split's values keep their colors while the page is open (assignSlots).
   const [colors] = React.useState(() => new Map<string, Map<string, number>>());
   const colorsOf = (key: string | null) => {
     const known = colors.get(key ?? "");
@@ -288,7 +270,6 @@ export function MetricPage({
           anyLabel="No split"
           choices={data.keys.map((key) => ({ value: key, label: `Split by ${key}` }))}
           value={split}
-          // Without a split, every measure shows: the one chosen goes.
           onChange={(next) =>
             show({
               split: next,
@@ -349,7 +330,6 @@ export function MetricPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All metrics
           </Link>
-          {/* The page header names it, so it is not repeated here. */}
           <PageTitle title={name} />
           {kind !== undefined && (
             <div className="flex flex-wrap items-center justify-between gap-2">

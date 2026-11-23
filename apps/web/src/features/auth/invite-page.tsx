@@ -19,17 +19,12 @@ import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
 /** Every link that no longer works gets this, whatever the reason (docs/access.md). */
 export const LINK_GONE = "This invitation link no longer works. Ask for a new one.";
 
-/**
- * Accepting an invitation (/invite#token=…). The page shows who invited
- * whom, and to which instance; not the role or access. Accept reveals the name and
- * password fields; nothing is saved until they are submitted, so closing
- * the page leaves the invitation pending. A signed-in visitor signs out first.
- */
+/** Keep the invitation pending until name and password are submitted. Signed-in visitors must sign out first. */
 export function InvitePage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const token = useLinkToken();
-  // Asked afresh each time the page opens: a session cached since may have ended.
+  // Refetch on open because a cached session may have ended.
   const session = useQuery({
     queryKey: ["link-page-session"],
     queryFn: async () => (await authClient.getSession()).data,
@@ -38,8 +33,7 @@ export function InvitePage() {
     retry: false,
   });
   const preview = useQuery({
-    // The token stays out of the key, which tools and caches may show; the
-    // answer is not kept once the page is gone.
+    // Keep the token out of visible cache keys and discard the response on unmount.
     queryKey: ["invitation-preview"],
     queryFn: ({ signal }) => previewInvitation(token ?? "", signal),
     enabled: token !== null,
@@ -128,7 +122,6 @@ export function InvitePage() {
                 className="mt-2"
                 onClick={() =>
                   void authClient.signOut().then(() => {
-                    // The router's cached "signed in" goes too.
                     queryClient.removeQueries({ queryKey: sessionQuery().queryKey });
                     return session.refetch();
                   })

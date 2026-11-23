@@ -54,14 +54,9 @@ import { SendTelemetry } from "./send-telemetry";
 import { StatusBar, StatusLegend } from "./status-classes";
 import { STATUS_LABELS } from "./status-format";
 
-/** A pinned cell of the marked row keeps the row's highlight, over its own opaque surface. */
+/** Pinned cells need an opaque surface that preserves the row highlight. */
 const MARKED = "max-sm:group-aria-[current=true]/row:bg-muted";
 
-/**
- * Requests, the share failed, the durations, and the requests by status
- * class, as cells of a row: a bar, or each class's count when the numbers
- * are shown.
- */
 function StatCells({
   stats,
   label,
@@ -95,7 +90,6 @@ function StatCells({
   );
 }
 
-/** One service's card: its numbers, and a table of its routes. */
 function ServiceCard({
   projectId,
   range,
@@ -129,7 +123,7 @@ function ServiceCard({
                 {service.service}
               </Link>
             ) : (
-              // A browser drops "." and ".." from a path: no page can be addressed for them.
+              // Browsers remove . and .. path segments, making their service pages unreachable.
               service.service
             )}
           </h3>
@@ -199,7 +193,7 @@ function ServiceCard({
               >
                 <TableCell className={`max-w-md pl-0 ${PINNED} ${MARKED}`}>
                   {!isNamedRoute(route.route) || !isLinkableService(service.service) ? (
-                    // A route without a name (or only spaces) has no page: its address could not name it.
+                    // Unnamed and whitespace-only routes cannot be addressed.
                     <TruncatedText
                       text={isNamedRoute(route.route) ? route.route : "(no name)"}
                       className="font-mono text-xs text-ink-subtle"
@@ -240,7 +234,7 @@ function ServiceCard({
                     >
                       <WaypointsIcon aria-hidden="true" className="size-4" />
                     </Link>
-                    {/* A route without a name cannot be named in a rule. */}
+                    {/* Unnamed routes cannot be targeted by a rule. */}
                     {isNamedRoute(route.route) && (
                       <WhenAllowed area="uptime_alerts" level="manage">
                         <Link
@@ -293,15 +287,6 @@ function ServiceCard({
   );
 }
 
-/**
- * Each service of the project, busiest first, with its server spans'
- * routes: requests, the share that failed, the median, 95th, and 99th
- * percentile duration, and the requests by status class. A service or
- * route opens its page of charts; each route links to its traces, and
- * each service and route to a new alert rule on it. An address
- * that names a service (as an alert's link does) shows only it, its
- * route marked.
- */
 export function ServicesPage({
   projectId,
   range,

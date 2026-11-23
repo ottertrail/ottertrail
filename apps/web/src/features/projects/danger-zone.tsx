@@ -27,7 +27,6 @@ import {
   replaceSecretKey,
 } from "@/lib/projects-api";
 
-/** What replacing each key means, for its dialog. */
 const KEYS = {
   public: {
     button: "Replace public key",
@@ -45,7 +44,7 @@ const KEYS = {
   },
 } as const;
 
-/** Asks before giving the project a new key, which stops the current one at once. */
+/** Replacing a key invalidates the current key immediately. */
 function ReplaceKeyDialog({ project, which }: { project: Project; which: keyof typeof KEYS }) {
   const texts = KEYS[which];
   const [open, setOpen] = React.useState(false);
@@ -53,7 +52,6 @@ function ReplaceKeyDialog({ project, which }: { project: Project; which: keyof t
   const replace = useMutation({
     mutationFn: () => texts.replace(project.id),
     onSuccess: (updated) => {
-      // The Install card shows the new snippet at once.
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
       setOpen(false);
@@ -93,7 +91,6 @@ function ReplaceKeyDialog({ project, which }: { project: Project; which: keyof t
   );
 }
 
-/** Deletes the project once its name is typed, as the API also requires. */
 function DeleteProjectDialog({ project }: { project: Project }) {
   const [open, setOpen] = React.useState(false);
   const [typed, setTyped] = React.useState("");
@@ -105,8 +102,7 @@ function DeleteProjectDialog({ project }: { project: Project }) {
       forgetProject(project.id);
       setOpen(false);
       try {
-        // The project is gone: unsaved edits in another tab have nothing to be saved to,
-        // so leaving does not ask (the leave guard).
+        // Bypass the leave guard because a deleted project cannot save edits.
         await navigate({ to: "/projects", ignoreBlocker: true });
       } finally {
         queryClient.removeQueries({ queryKey: projectQuery(project.id).queryKey });
@@ -177,7 +173,6 @@ function DeleteProjectDialog({ project }: { project: Project }) {
   );
 }
 
-/** Changes that cannot be undone, each behind its own confirmation. */
 export function DangerZone({ project }: { project: Project }) {
   return (
     <SettingsSection title="Danger zone">

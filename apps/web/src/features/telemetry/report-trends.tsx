@@ -18,14 +18,8 @@ import { SLOTS } from "./split-colors";
 import { STATUS_COLORS, STATUS_LABELS } from "./status-format";
 import type { ChartLine } from "./time-chart";
 
-/**
- * The charts above the Services and Databases lists: one short, full-width
- * chart with a toggle for what it draws, one y-axis each, over the period
- * and environment the list shows. The chart loads, fails, and retries on
- * its own, so a failed chart never holds back the list under it.
- */
+/** Load trend charts independently so failures cannot block the lists. */
 
-/** What a toggle chooses: its label, and the chart it draws. */
 interface View {
   value: string;
   label: string;
@@ -36,7 +30,6 @@ interface View {
   domain?: { min: number; max: number };
 }
 
-/** The toggle, beside the chart's title: buttons with aria-pressed, one always chosen. */
 function ViewToggle({
   views,
   chosen,
@@ -69,7 +62,6 @@ function ViewToggle({
   );
 }
 
-/** A trend chart's four states around its views: loading, failed, empty (`empty`), drawn. */
 function TrendSection({
   title,
   query,
@@ -78,7 +70,6 @@ function TrendSection({
   subject,
   toggleLabel,
 }: {
-  /** The chart's title while nothing is drawn yet. */
   title: string;
   query: {
     data: { start: string; stepSeconds: number; buckets: number; timeZone: string } | undefined;
@@ -87,7 +78,6 @@ function TrendSection({
     isPlaceholderData: boolean;
     refetch: () => unknown;
   };
-  /** Why there is nothing to draw, when the period had nothing. */
   empty: string | undefined;
   views: View[];
   subject: string;
@@ -162,12 +152,6 @@ function TrendSection({
 
 const formatShare = (percent: number) => `${formatNumber(percent)}%`;
 
-/**
- * Every service's requests together over the period: requests per second
- * by status class (the classes' colors, as on every Services page), the
- * failed share (chart-5), or the 95th percentile (chart-7, the slot a
- * service's page gives it), chosen by a toggle.
- */
 export function ServicesTrend({
   projectId,
   range,
@@ -250,11 +234,6 @@ export function ServicesTrend({
   );
 }
 
-/**
- * Every database call together over the period: calls per second
- * (chart-1, as a query shape's page), or the time the calls took per
- * bucket, added up (chart-2), chosen by a toggle.
- */
 export function DatabasesTrend({
   projectId,
   range,

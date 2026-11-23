@@ -88,7 +88,6 @@ function StepEditor({
   );
 }
 
-/** The drafts a funnel's steps start the editor with: at least two. */
 function draftsOf(steps: readonly FunnelStep[]): DraftStep[] {
   const drafts = steps.map(draftOf);
   while (drafts.length < MIN_STEPS) drafts.push(emptyStep());
@@ -97,12 +96,7 @@ function draftsOf(steps: readonly FunnelStep[]): DraftStep[] {
 
 const keyOf = (steps: readonly FunnelStep[]) => JSON.stringify(steps);
 
-/**
- * The funnel's steps, edited here and shown with "Show funnel": 2 to 5,
- * each an event (with an optional property filter) or a page. The shown
- * steps live in the address; a change there (Back, a link) replaces the
- * draft.
- */
+/** Keep 2 to 5 steps. Address changes replace the draft. */
 export function FunnelEditor({
   applied,
   eventNames,
@@ -110,10 +104,8 @@ export function FunnelEditor({
   children,
 }: {
   applied: readonly FunnelStep[];
-  /** The project's event names, offered as suggestions. */
   eventNames: readonly string[];
   onApply: (steps: FunnelStep[]) => void;
-  /** More settings, such as the count and the window, before the button. */
   children?: React.ReactNode;
 }) {
   const eventListId = React.useId();
@@ -124,8 +116,7 @@ export function FunnelEditor({
     checked: false,
   }));
   if (state.key !== appliedKey) {
-    // The address changed. When it now holds this draft (just shown), keep
-    // the draft, so focus and the inputs stay; otherwise start from it.
+    // Keep matching drafts to preserve focus; reset for other address changes.
     const same =
       allStepProblems(state.drafts).every((problem) => !hasProblems(problem)) &&
       keyOf(state.drafts.map(stepOf)) === appliedKey;

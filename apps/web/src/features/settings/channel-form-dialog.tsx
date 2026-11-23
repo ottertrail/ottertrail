@@ -38,7 +38,6 @@ import { storageQuery } from "@/lib/storage-api";
 
 type FieldName = "name" | "addresses" | "url";
 
-/** Which field an API refusal belongs to, by its code. */
 const FIELD_OF_ERROR: Record<string, FieldName> = {
   invalid_name: "name",
   invalid_address: "addresses",
@@ -65,7 +64,6 @@ const draftOf = (channel: Channel | undefined): Draft => ({
   url: channel?.url ?? "",
 });
 
-/** The problems the form finds before sending; the API checks the rest. */
 function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
   const problems: Partial<Record<FieldName, string>> = {};
   if (draft.name.trim().length > MAX_CHANNEL_NAME) {
@@ -92,7 +90,7 @@ const fieldsOf = (draft: Draft, adding: boolean): ChannelFields => ({
     : { url: draft.url.trim() }),
 });
 
-/** The form, mounted while the dialog is open, so each opening starts from the channel. */
+/** Mount only while open so each opening resets the form. */
 function ChannelForm({
   channel,
   emailConfigured,
@@ -118,7 +116,7 @@ function ChannelForm({
         : updateChannel(channel.id, fieldsOf(draft, false)),
     onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: channelsQuery().queryKey, exact: true });
-      // The Storage tab lists the channels' names too (storage-tab.tsx).
+      // Storage also lists channel names (storage-tab.tsx).
       void queryClient.invalidateQueries({ queryKey: storageQuery().queryKey, exact: true });
       onSaved(saved);
     },
@@ -262,7 +260,6 @@ function ChannelForm({
   );
 }
 
-/** Adds a channel, or edits one, with the API's own messages beside the fields they are about. */
 export function ChannelFormDialog({
   open,
   onOpenChange,
@@ -271,7 +268,6 @@ export function ChannelFormDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The channel to edit; none to add one. */
   channel?: Channel | undefined;
   emailConfigured: boolean;
 }) {

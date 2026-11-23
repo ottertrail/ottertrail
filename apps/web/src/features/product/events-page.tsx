@@ -22,10 +22,8 @@ import { NoSuchProject } from "../projects/no-such-project";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { type ProductSearch, productSearchOf } from "./search";
 
-/** How a page sends a product event. */
 const TRACK_EXAMPLE = `window.ottertrail?.track("signup", { plan: "team" });`;
 
-/** What the Visitors and Users columns count, for the notes under a report. */
 export function WhoNote() {
   return (
     <>
@@ -101,7 +99,6 @@ function EventTable({
   );
 }
 
-/** The project's product events in a period: how often each happened, and by how many. */
 export function EventsPage({
   projectId,
   range,

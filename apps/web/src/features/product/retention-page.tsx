@@ -24,17 +24,14 @@ import { formatShare } from "./format";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { type ProductSearch, productSearchOf } from "./search";
 
-/** How a site names its signed-in user. */
 const IDENTIFY_EXAMPLE = `<script defer src="…/tracker.js" data-key="pk_…" data-user-id="42"></script>
 
 // A single-page app, when someone signs in without a page load:
 window.ottertrail?.identify("42");`;
 
-/** The sequential scale's steps, lowest first: one per fifth of the cohort. */
 const SHADES = ["bg-seq-1", "bg-seq-2", "bg-seq-3", "bg-seq-4", "bg-seq-5"] as const;
 const LEGEND = ["1–20%", "21–40%", "41–60%", "61–80%", "81–100%"] as const;
 
-/** The shade of a share from 0 to 1; none at 0. */
 function shadeOf(share: number): string {
   if (!(share > 0)) return "";
   return SHADES[Math.min(SHADES.length, Math.ceil(share * SHADES.length)) - 1] ?? "";
@@ -43,7 +40,6 @@ function shadeOf(share: number): string {
 const addWeeks = (monday: string, weeks: number) =>
   new Date(Date.parse(`${monday}T00:00:00Z`) + weeks * 7 * 86_400_000).toISOString().slice(0, 10);
 
-/** Whether the cohort's last column is the current week, which is not over. */
 const endsThisWeek = (cohort: Cohort, currentWeek: string) =>
   cohort.retained.length > 0 && addWeeks(cohort.week, cohort.retained.length - 1) === currentWeek;
 
@@ -220,10 +216,6 @@ function NoCohorts({ environment }: { environment: string }) {
   );
 }
 
-/**
- * Weekly retention of signed-in users: cohorts by the week of their first
- * event, and the share who did something in each week after.
- */
 export function RetentionPage({
   projectId,
   range,

@@ -5,23 +5,16 @@ import { fetchLiveLogs, type LiveLogs, type LogFilters, type LogSummary } from "
 
 import { formatWhole } from "../analytics/format";
 
-/**
- * The Logs page's live view (docs/dashboard.md, "Live"): it polls for
- * records that arrived after the last poll, while the tab shows, puts each
- * new one at the top, or holds them while the reader is busy with the
- * list, says where records were left out, and stops by itself after a
- * while.
- */
+/** Poll by arrival time while visible (docs/dashboard.md, "Live"). Hold arrivals while the reader uses the list. */
 
-/** The live view's pace and limits. Tests make them shorter. */
+/** Tests override these timing limits. */
 export const LIVE_TIMING = {
-  /** Between polls. */
   pollMs: 2000,
-  /** The least time between two polls, whatever pollMs says. */
+  /** Minimum delay applies even when pollMs is shorter. */
   minGapMs: 250,
-  /** Live stops by itself this long after it started or resumed. */
+  /** Stop after this duration from start or resume. */
   stopAfterMs: 15 * 60_000,
-  /** Records the list keeps, and, apart, records held under "N new records"; the oldest go first. */
+  /** Cap shown and held records separately; discard the oldest first. */
   maxRecords: 1000,
 };
 
@@ -30,7 +23,6 @@ function subscribeVisibility(onChange: () => void) {
   return () => document.removeEventListener("visibilitychange", onChange);
 }
 
-/** Whether the tab shows: a hidden tab polls nothing. */
 export function useDocumentVisible(): boolean {
   return React.useSyncExternalStore(
     subscribeVisibility,
@@ -39,7 +31,7 @@ export function useDocumentVisible(): boolean {
   );
 }
 
-/** A line in the list where records were left out, before the record `before` ("" at the end). */
+/** Insert before `before`; an empty ID places the gap at the end. */
 export interface LiveNote {
   id: string;
   before: string;
@@ -47,11 +39,11 @@ export interface LiveNote {
 }
 
 interface Records {
-  /** Newest arrival first. */
+  /** Newest arrivals first. */
   shown: LogSummary[];
-  /** Arrived while held, newest first. */
+  /** Held arrivals, newest first. */
   held: LogSummary[];
-  /** More arrived while held than `held` keeps. */
+  /** True when arrivals exceeded the held-record cap. */
   heldOverflow: boolean;
   notes: LiveNote[];
 }
@@ -61,10 +53,7 @@ type Change =
   | { type: "show"; keep: string | undefined }
   | { type: "note"; text: string };
 
-/**
- * The list cut to LIVE_TIMING.maxRecords, the oldest first, but never the
- * record `keep` (the one selected), and the notes whose place is gone.
- */
+/** Trim oldest records to LIVE_TIMING.maxRecords while keeping the selection. Remove notes whose anchors were trimmed. */
 function trimmed(records: Records, keep: string | undefined): Records {
   const max = LIVE_TIMING.maxRecords;
   let shown = records.shown.slice(0, max);
@@ -80,7 +69,7 @@ function trimmed(records: Records, keep: string | undefined): Records {
 
 function change(records: Records, next: Change): Records {
   if (next.type === "note") {
-    // Before the newest record so far: the records left out are newer than it.
+    // Place the gap before the newest known record; skipped records are newer.
     const before = records.held[0]?.id ?? records.shown[0]?.id ?? "";
     const id = `note-${records.notes.length}-${before}-${next.text}`;
     return { ...records, notes: [...records.notes, { id, before, text: next.text }] };
@@ -97,7 +86,7 @@ function change(records: Records, next: Change): Records {
       next.keep,
     );
   }
-  // A record ID already here is a retried copy, or a record read again: dropped.
+  // Deduplicate retried or reread records by ID.
   const ids = new Set([...records.shown, ...records.held].map((log) => log.id));
   const fresh = next.logs.filter((log) => {
     if (ids.has(log.id)) return false;
@@ -106,7 +95,7 @@ function change(records: Records, next: Change): Records {
   });
   if (fresh.length === 0) return records;
   if (next.hold) {
-    // Held records never push the list out; past the limit, the oldest held go.
+    // Cap held records separately so they cannot displace displayed records.
     const held = [...fresh, ...records.held];
     return {
       ...records,
@@ -119,7 +108,6 @@ function change(records: Records, next: Change): Records {
 
 const TIME_FORMATS = new Map<string, Intl.DateTimeFormat>();
 
-/** "12:01", or "12:01:05" with `seconds`, in the timezone set in Settings, for a gap's line. */
 function clockTime(iso: string, timeZone: string, seconds: boolean): string {
   const name = `${timeZone} ${seconds}`;
   let format = TIME_FORMATS.get(name);
@@ -136,12 +124,11 @@ function clockTime(iso: string, timeZone: string, seconds: boolean): string {
   return format.format(new Date(iso));
 }
 
-/** The lines a poll adds where records were left out. */
 function notesOf(answer: LiveLogs): string[] {
   const notes: string[] = [];
   if (answer.gap !== null) {
     const { from, to } = answer.gap;
-    // Under a minute apart, minutes alone could read "12:01 and 12:01".
+    // Include seconds for gaps under a minute to avoid identical endpoint labels.
     const seconds =
       clockTime(from, answer.timeZone, false) === clockTime(to, answer.timeZone, false) ||
       Date.parse(to) - Date.parse(from) < 60_000;
@@ -158,34 +145,16 @@ function notesOf(answer: LiveLogs): string[] {
 }
 
 export interface LiveState extends Records {
-  /** The instance's timezone, from the first answer. */
   timeZone: string | undefined;
-  /** The services of the records seen, for the service filter. */
   services: string[];
-  /** Live stopped by itself after LIVE_TIMING.stopAfterMs. */
   stopped: boolean;
-  /** The last poll failed: live waits for Retry. */
   error: Error | null;
-  /** The first poll has answered. */
   started: boolean;
-  /** Puts the held records at the top. */
   showHeld: () => void;
-  /** Starts again after it stopped or failed, from the last poll's cursor. */
   resume: () => void;
 }
 
-/**
- * Polls the live view from its first render, while the tab shows, at most
- * one poll a LIVE_TIMING.minGapMs. New records join the top of `shown`, or
- * `held` while the reader is busy: paused, scrolled away from the top
- * (`away`), or with a listed record selected (`selected`, which trimming
- * always keeps). They join the top once nothing holds them, or on
- * showHeld. A poll that skipped records, or found a gap since the last
- * (after a stop, or a tab hidden past the API's window), adds a line
- * where they would have been. A busy API (503) is asked again at the next
- * poll, quietly; any other failure stops it until resume. Render it again
- * (a new key) for other filters.
- */
+/** Keep selected records when trimming. Retry 503 on the next poll; other failures wait for resume. Remount for new filters. */
 export function useLiveLogs({
   projectId,
   environment,
@@ -213,31 +182,29 @@ export function useLiveLogs({
   const [started, setStarted] = React.useState(false);
   const [timeZone, setTimeZone] = React.useState<string | undefined>(undefined);
   const [services, setServices] = React.useState<string[]>([]);
-  /** When live stops by itself: set at the start, and again on each resume. */
+  /** Reset the automatic stop deadline on resume. */
   const [deadline, setDeadline] = React.useState(() => Date.now() + LIVE_TIMING.stopAfterMs);
   const cursor = React.useRef<string | null>(null);
   const request = React.useRef({ projectId, environment, filters });
-  /** When the last poll started: the floor between polls holds across restarts too. */
+  /** Preserve the minimum poll delay across restarts. */
   const lastPoll = React.useRef(Number.NEGATIVE_INFINITY);
-  // Held only for a record the list shows: one that left it holds nothing.
+  // Only a selection still in the list holds arrivals.
   const selectedListed = selected !== undefined && records.shown.some((log) => log.id === selected);
   const hold = paused || away || selectedListed;
   const holdRef = React.useRef({ hold, selected });
 
   React.useEffect(() => {
     holdRef.current = { hold, selected };
-    // Held records join the list once nothing holds them.
     if (!hold) dispatch({ type: "show", keep: selected });
   }, [hold, selected]);
 
-  // The stop: LIVE_TIMING.stopAfterMs after the start or a resume, shown or hidden.
+  // The stop deadline applies even while the tab is hidden.
   React.useEffect(() => {
     if (stopped) return undefined;
     const timer = setTimeout(() => setStopped(true), Math.max(0, deadline - Date.now()));
     return () => clearTimeout(timer);
   }, [stopped, deadline]);
 
-  // The polls, one after another, while live runs and the tab shows.
   React.useEffect(() => {
     if (stopped || error !== null || !visible) return undefined;
     const controller = new AbortController();
@@ -275,7 +242,7 @@ export function useLiveLogs({
         next();
       } catch (failure) {
         if (controller.signal.aborted) return;
-        // Busy: the API's places are taken. Quietly, at the next poll.
+        // Retry a busy API quietly on the next poll.
         if (failure instanceof ApiError && failure.status === 503) {
           next();
           return;
@@ -283,8 +250,7 @@ export function useLiveLogs({
         setError(failure instanceof Error ? failure : new Error(String(failure)));
       }
     };
-    // At once, unless the last poll (before Show, Resume, Retry, or a tab hidden a moment)
-    // was less than LIVE_TIMING.minGapMs ago.
+    // Keep LIVE_TIMING.minGapMs between polls, including after Show, Resume, Retry, or a brief tab hide.
     timer = setTimeout(
       () => void poll(),
       Math.max(0, lastPoll.current + LIVE_TIMING.minGapMs - Date.now()),
@@ -308,10 +274,7 @@ export function useLiveLogs({
   return { ...records, timeZone, services, stopped, error, started, showHeld, resume };
 }
 
-/**
- * Whether the element's scroller is at its top: the nearest ancestor that
- * scrolls (the list's pane from 64rem), else the window.
- */
+/** Use the nearest scrolling ancestor (the list pane from 64rem), or the window. */
 export function useAtTop(element: HTMLElement | null): boolean {
   const [atTop, setAtTop] = React.useState(true);
   React.useEffect(() => {

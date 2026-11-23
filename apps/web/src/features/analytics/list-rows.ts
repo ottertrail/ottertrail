@@ -21,7 +21,6 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** How a list row or filter names a value: a country's name, "Desktop", "Unknown" … */
 export function valueText(name: FilterName, value: string): string {
   if (value === "") {
     return name === "utmCampaign" ? "No campaign" : "Unknown";
@@ -32,19 +31,16 @@ export function valueText(name: FilterName, value: string): string {
   return name === "deviceType" ? capitalize(value) : value;
 }
 
-/** "Country: Germany" */
 export const filterText = (name: FilterName, value: string) =>
   `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
 
-/** What the page's address holds: its days, its environment, and its filters. */
 export interface PageSearch {
   range: PageRange;
   filters: Filters;
-  /** "production", "staging" …: the one environment the page counts. */
   environment: string;
 }
 
-/** The address query for a page search; the default period and environment are left out. */
+/** Omit the default period and environment from the query. */
 export const searchOf = ({ range, filters, environment }: PageSearch) => ({
   ...("period" in range
     ? range.period === DEFAULT_PERIOD
@@ -55,7 +51,7 @@ export const searchOf = ({ range, filters, environment }: PageSearch) => ({
   ...filters,
 });
 
-/** The filter each list's rows set; custom events set none yet. */
+/** Custom event rows do not set a filter. */
 export const LIST_FILTERS: Record<ListReport, FilterName | undefined> = {
   pages: "page",
   customEvents: undefined,
@@ -72,10 +68,8 @@ export const LIST_FILTERS: Record<ListReport, FilterName | undefined> = {
   release: "release",
 };
 
-/** Makes a row's name into a link that filters by it. */
 export type FilterLinkFor = (name: FilterName, value: string) => React.ReactNode;
 
-/** A list's rows for the ranked list: visitors set the bar, the second number follows. */
 export function rankedRows(report: ListReport, rows: ListRow[], link: FilterLinkFor): RankedRow[] {
   const filter = LIST_FILTERS[report];
   return rows.map((row) => {
@@ -90,7 +84,6 @@ export function rankedRows(report: ListReport, rows: ListRow[], link: FilterLink
   });
 }
 
-/** The analytics response's rows, in the shape every list uses. */
 export const fromPages = (rows: readonly PageRow[]): ListRow[] =>
   rows.map((row) => ({ name: row.path, visitors: row.visitors, second: row.pageviews }));
 export const fromBreakdown = (rows: readonly BreakdownRow[]): ListRow[] =>

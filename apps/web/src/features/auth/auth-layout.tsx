@@ -3,14 +3,7 @@ import type * as React from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { documentTitle, useDocumentTitle, useStatusTitle } from "@/lib/document-title";
 
-/**
- * The pages before signing in (sign-in, owner setup, an invitation, a reset
- * link): the canvas the app sits on, and one panel on it, as the app's own
- * content panel is, holding the page's title, one line on what it does,
- * and its form. On a phone the panel gives its frame to the form's width.
- * Without a title the panel holds only its children: a 404 or an error
- * before the shell (route-states.tsx), which lays out its own heading.
- */
+/** Without a title, children supply the heading (404 and error pages). */
 export function AuthLayout({
   title,
   description,

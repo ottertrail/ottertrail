@@ -37,7 +37,6 @@ import { MetricSparkline, SPARKLINE_MAX_DAYS } from "./metric-sparkline";
 import { DEFAULT_STAT, environmentSearch, metricSearchOf, rangeSearch } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 
-/** The project's metrics in a period and environment, by name; each opens its chart. */
 export function MetricsPage({
   projectId,
   range,
@@ -63,7 +62,6 @@ export function MetricsPage({
     return <NoSuchProject />;
   }
   const data = list.data;
-  // The period's days, both included.
   const days =
     data === undefined
       ? 0

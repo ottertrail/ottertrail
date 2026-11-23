@@ -40,16 +40,11 @@ import { DEFAULT_ACCESS, emailedAbout, LINK_ONCE } from "./access-text";
 
 export type Actor = { id: string; role: Role };
 
-/** Where focus goes when a dialog or the sheet closes: the element, or the default. */
 export type FinalFocus = () => HTMLElement | true;
 
-/** What a dialog's action may return: a link to show, and whether Ottertrail is emailing it. */
 export type MadeLink = { url: string; emailed?: boolean };
 
-/**
- * A link to copy and send, shown once: the API keeps only its hash. When
- * Ottertrail is emailing it, `emailedTo` says so first, as a status.
- */
+/** Show the link once; the API stores only its hash. `emailedTo` indicates a copy sent by email. */
 function LinkToSend({
   url,
   about,
@@ -75,11 +70,6 @@ function LinkToSend({
   );
 }
 
-/**
- * An action behind a confirmation, opened from a row's menu: the action runs
- * on confirming, and a link it returns (an invitation's, a reset link) is
- * shown to copy, once.
- */
 export function ActionDialog({
   open,
   onOpenChange,
@@ -106,17 +96,14 @@ export function ActionDialog({
   confirmLabel: string;
   destructive?: boolean;
   run: () => Promise<MadeLink | undefined>;
-  /** A second way to confirm beside the main one, as an outline button before it. */
   alternative?: { label: string; run: () => Promise<MadeLink | undefined> };
   linkAbout?: string;
-  /** Whom an emailed link goes to, and what to say beside it, when the action emails it. */
   emailedTo?: string;
   emailedAbout?: string;
   children?: React.ReactNode;
   canConfirm?: boolean;
-  /** Clears what the form holds, such as a password: on closing, and after a failure. */
+  /** Clear sensitive form values on close and after failure. */
   onClear?: () => void;
-  /** After an action that returns no link, as the dialog closes. */
   onDone?: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -126,10 +113,10 @@ export function ActionDialog({
     onError: () => onClear?.(),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: membersKey });
-      // Handing over ownership changes what the signed-in user may do.
+      // Ownership transfer changes the current user's permissions.
       void queryClient.invalidateQueries({ queryKey: meQuery().queryKey });
       if (result === undefined) {
-        // Nothing the form held, such as a password, stays once the action is done.
+        // Clear sensitive form values after the action.
         onClear?.();
         onDone?.();
         onOpenChange(false);
@@ -214,13 +201,12 @@ export function ActionDialog({
   );
 }
 
-/** Whether a member's access can be saved: a chosen list needs a project. */
+/** A restricted project list needs at least one project. */
 const choiceReady = (choice: AccessChoice) =>
   choice.role === "admin" || choice.access.projects === "all" || choice.access.projects.length > 0;
 
 const NOT_READY = "Choose at least one project, or choose all projects.";
 
-/** Invite: the button at the top of the page, and its dialog. */
 export function InviteDialog({
   actor,
   projects,
@@ -230,7 +216,6 @@ export function InviteDialog({
   actor: Actor;
   projects: readonly ProjectSummary[];
   days: number;
-  /** Whether the instance has email set up: the invitation is then emailed as well. */
   emailConfigured: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -340,7 +325,7 @@ export function InviteDialog({
   );
 }
 
-/** A choice compared by what it gives: the chosen projects in any order are the same. */
+/** Compare project grants as sets so order does not mark edits dirty. */
 function comparable(choice: AccessChoice) {
   if (choice.role === "admin") return choice;
   const { projects } = choice.access;
@@ -350,12 +335,7 @@ function comparable(choice: AccessChoice) {
   };
 }
 
-/**
- * Change access: a member's role and access in a sheet, under the save rule
- * (docs/design-system.md). Save waits for a change and closes the sheet once
- * saved; closing with unsaved changes (Cancel, Escape, the close button, a
- * click outside) asks first, and so does leaving the page.
- */
+/** Confirm before discarding unsaved grants (docs/design-system.md). */
 export function AccessSheet({
   member,
   actor,
@@ -386,7 +366,6 @@ export function AccessSheet({
     mutationFn: (values: { choice: AccessChoice }) => changeMember(member.id, values.choice),
     onSuccess: (_, values) => {
       form.saved(values);
-      // The sheet closes: anything typed while the request ran goes with it.
       form.discard();
       void queryClient.invalidateQueries({ queryKey: membersKey });
       onSaved();

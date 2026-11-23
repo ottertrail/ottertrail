@@ -8,36 +8,26 @@ import { MISSING } from "@/lib/missing";
 import { bucketLabel, stepText } from "./chart-time";
 import { type ChartLine, TimeChart } from "./time-chart";
 
-/** The time buckets a chart is drawn over, as the API gives them. */
 export interface ChartFrame {
-  /** The first bucket's start, ISO. */
   start: string;
   stepSeconds: number;
   buckets: number;
   timeZone: string;
-  /**
-   * Each bucket's start, ISO, when the buckets follow a clock with daylight
-   * saving changes (the AI page's chart, as the lists' charts).
-   */
+  /** Use explicit ISO starts across daylight saving changes. */
   starts?: string[] | undefined;
 }
 
-/** What a chart over time buckets is given, in a card or in a report. */
 interface ChartProps {
   title: string;
   description: React.ReactNode;
   frame: ChartFrame;
   lines: ChartLine[];
   formatValue: (value: number) => string;
-  /** Why this chart cannot be drawn, shown in its place. */
   missing?: string | undefined;
-  /** What the chart is of, after its title in the chart's accessible name, such as the metric. */
   subject: string;
-  /** A fixed y-axis range, such as 0 to 100 for percentages. */
   domain?: { min: number; max: number } | undefined;
 }
 
-/** Every bucket with a value, as a table: the chart's numbers. */
 function ChartTable({ title, frame, lines, formatValue }: ChartProps) {
   const startMs = Date.parse(frame.start);
   const rows = Array.from({ length: frame.buckets }, (_, index) => index).filter((index) =>
@@ -103,18 +93,12 @@ function Chart({ plotHeight, ...props }: ChartProps & { plotHeight?: number }) {
   );
 }
 
-/**
- * One chart of a report (the Services, Databases, Hosts, and Metrics
- * pages): full width and short, without a card, with its numbers as a
- * table on demand ("Show the numbers").
- */
 export function ChartSection({
   headingLevel = 3,
   actions,
   ...props
 }: ChartProps & {
   headingLevel?: 2 | 3;
-  /** Controls beside the title, such as a toggle for what the chart draws. */
   actions?: React.ReactNode;
 }) {
   const { title, description, missing } = props;
@@ -135,10 +119,6 @@ export function ChartSection({
   );
 }
 
-/**
- * One chart in a card (an uptime check's page), with its numbers as a
- * table on demand ("Show the numbers").
- */
 export function ChartCard(props: ChartProps) {
   const { title, description, missing } = props;
   const [showTable, setShowTable] = React.useState(false);

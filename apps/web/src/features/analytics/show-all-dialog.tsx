@@ -14,11 +14,6 @@ import { FilterLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
 import { RankedList } from "./ranked-list";
 
-/**
- * A list in full, for "Show all": the page's period and filters, a search
- * by name, and more rows on request. A row's link filters the page by it
- * and closes the dialog.
- */
 export function ShowAllDialog({
   open,
   onOpenChange,

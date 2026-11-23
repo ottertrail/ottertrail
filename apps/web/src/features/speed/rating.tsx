@@ -14,7 +14,6 @@ const ICONS: Record<Rating, { icon: typeof CircleCheckIcon; className: string }>
 
 const labelOf = (rating: Rating) => RATINGS.find((item) => item.value === rating)?.label ?? "";
 
-/** A rating as a badge: icon, color, and its name. */
 export function RatingBadge({ rating }: { rating: Rating | null }) {
   if (rating === null) {
     return <StatusBadge tone="neutral">Not measured</StatusBadge>;
@@ -23,12 +22,7 @@ export function RatingBadge({ rating }: { rating: Rating | null }) {
   return <StatusBadge tone={tone}>{labelOf(rating)}</StatusBadge>;
 }
 
-/**
- * A rating as an icon only, for dense tables: its name is read out and
- * shown on hover, and the icon's shape differs per rating, so it never
- * depends on color. `named={false}` when the rating's name is already
- * written beside it.
- */
+/** Set named=false when the rating name is already visible. */
 export function RatingIcon({ rating, named = true }: { rating: Rating; named?: boolean }) {
   const { icon: Icon, className } = ICONS[rating];
   const label = labelOf(rating);

@@ -21,11 +21,7 @@ import { cn } from "@/lib/utils";
 
 import { currentIndex, describeItem, formatClock, timelineItems } from "./format";
 
-/**
- * What the visitor did, each with its time: a button moves the player there.
- * Every text here is derived from the masked recording (docs/session-replay.md):
- * paths and tags, never what was typed or shown.
- */
+/** Use only masked recording data (docs/session-replay.md), never typed or displayed content. */
 function TimelineList({
   query,
   currentMs,
@@ -127,18 +123,7 @@ function TimelineList({
   );
 }
 
-/**
- * A replay: the player beside its timeline. The player is a page of the
- * API's (docs/session-replay.md, "Playback"), served with its own Content
- * Security Policy, so this frame needs no sandbox of its own and loosens
- * nothing: nothing from the recording comes into the dashboard's page.
- * The timeline moves the player with a message to its frame, and hears
- * where it is from the same frame: both on this origin, and checked
- * (lib/replay-messages.ts). The timeline sits beside the player where the
- * nearest `@container` is 56rem wide or more, and under it otherwise (the
- * pane beside the replays list), where the player scales the recorded
- * page down to its width.
- */
+/** The API player page has its own CSP (docs/session-replay.md, "Playback"). Frame messages must match this origin and frame (lib/replay-messages.ts). */
 export function ReplayViewer({
   projectId,
   replayId,
@@ -154,26 +139,16 @@ export function ReplayViewer({
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const { theme } = useTheme();
-  /**
-   * The frame opens in the theme of the moment its replay was chosen, for
-   * its first paint; later changes go to it as a message, so switching the
-   * theme does not load the replay again.
-   */
+  /** Capture the initial theme in the URL; send later changes as messages to avoid reloading the replay. */
   const [opened, setOpened] = React.useState({ playerSrc, theme });
   if (opened.playerSrc !== playerSrc) setOpened({ playerSrc, theme });
   const frameSrc = playerUrlInTheme(opened.playerSrc, opened.theme);
   const timeline = useQuery(replayTimelineQuery(projectId, replayId));
   const [currentMs, setCurrentMs] = React.useState<number | null>(null);
-  /**
-   * The last moment asked for, until the player has surely heard it: one
-   * asked for before its script listened would be lost, so it is sent again
-   * when the frame (re)loads, and kept until the loaded player speaks.
-   */
+  /** Resend pending seeks after frame load until the player acknowledges them. */
   const asked = React.useRef<number | null>(null);
-  /** The frame address that last loaded: a new one has not loaded yet. */
   const loadedSrc = React.useRef<string | null>(null);
 
-  /** Only to the player's frame, and only on this origin. */
   const post = (offsetMs: number) =>
     frameRef.current?.contentWindow?.postMessage(seekMessage(offsetMs), window.location.origin);
 
@@ -182,7 +157,6 @@ export function ReplayViewer({
       const time = readTimeMessage(event, frameRef.current?.contentWindow, window.location.origin);
       if (time === null) return;
       setCurrentMs(time.offsetMs);
-      // The loaded player listens: what was asked has reached it.
       const src = frameRef.current?.getAttribute("src");
       if (loadedSrc.current !== null && loadedSrc.current === src) asked.current = null;
     };
@@ -190,7 +164,7 @@ export function ReplayViewer({
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  // Beside the replays list, a pane that CSS hides (the window narrowed) pauses the player.
+  // Pause playback when CSS hides the workbench pane.
   const { shown } = useWorkbenchPane();
   React.useEffect(() => {
     if (!shown) {
@@ -225,9 +199,7 @@ export function ReplayViewer({
         className,
       )}
     >
-      {/* No sandbox: the player must run its script and read the replay as the
-          signed-in user, and the page's own Content Security Policy keeps the
-          recording from running anything (its frame inside is rrweb's sandbox). */}
+      {/* The player needs scripts and authenticated replay access. Its CSP and rrweb's inner sandbox isolate the recording. */}
       {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
       <iframe
         ref={frameRef}

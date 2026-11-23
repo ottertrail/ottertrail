@@ -1,6 +1,4 @@
-/** Time buckets on the Metrics page's charts: axis ticks, and buckets' labels in the timezone set in Settings. */
-
-/** About `count` ticks covering lo..hi (always 0), on steps of 1, 2, or 5 times a power of ten. */
+/** Use steps of 1, 2, or 5 times a power of ten. */
 export function ticksFor(lo: number, hi: number, count = 4): number[] {
   const low = Math.min(0, lo);
   let high = Math.max(0, hi);
@@ -27,7 +25,6 @@ function parts(date: Date, timeZone: string, options: Intl.DateTimeFormatOptions
     list.find((item) => item.type === type)?.value ?? "";
 }
 
-/** "10:05", "17 Nov", or "17 Nov 10:05", as the buckets' length and the span need. */
 export function tickLabel(
   date: Date,
   timeZone: string,
@@ -46,11 +43,7 @@ export function tickLabel(
   return `${part("day")} ${part("month")} ${time}`;
 }
 
-/**
- * "Tue 17 Nov 2026, 10:00 to 10:05": a bucket, in the timezone set in
- * Settings; one that ends on the next day names it, "Mon 16 Nov 2026,
- * 23:00 to Tue 17 Nov 2026, 00:00".
- */
+/** Use the instance timezone and include both dates when a bucket crosses midnight. */
 export function bucketLabel(start: Date, stepSeconds: number, timeZone: string): string {
   const options: Intl.DateTimeFormatOptions = {
     weekday: "short",
@@ -70,7 +63,6 @@ export function bucketLabel(start: Date, stepSeconds: number, timeZone: string):
   return `${day}, ${from("hour")}:${from("minute")} to ${dayOf(to) === day ? end : `${dayOf(to)}, ${end}`}`;
 }
 
-/** "5 minutes", "hour", "3 hours", "day": the length of a bucket. */
 export function stepText(seconds: number): string {
   const units: [number, string][] = [
     [604_800, "week"],

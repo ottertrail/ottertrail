@@ -37,13 +37,11 @@ interface EventSearch extends ProductSearch {
   filters: PropertyFilter[];
 }
 
-/** The detail's address: period, environment, and each filter as "p.<key>". */
 const eventSearchOf = ({ filters, ...search }: EventSearch) => ({
   ...productSearchOf(search),
   ...filterSearchOf(filters),
 });
 
-/** The active filters, each removable. */
 function FilterChips({
   filters,
   onRemove,
@@ -93,7 +91,6 @@ function Stats({ detail }: { detail: ProductEventDetail }) {
   );
 }
 
-/** One property's most frequent values; each adds itself as a filter. */
 function PropertyTable({
   property,
   projectId,
@@ -166,7 +163,6 @@ function NoMatch({ name, filtered }: { name: string; filtered: boolean }) {
   );
 }
 
-/** Events per day, short and full width, with every day's number on demand. */
 function EventsPerDay({ days }: { days: ProductEventDetail["days"] }) {
   return (
     <ReportChart
@@ -271,11 +267,6 @@ function Detail({
   );
 }
 
-/**
- * One product event: its counts and trend in a period, and its properties
- * with their most frequent values, narrowed by property filters that live
- * in the address.
- */
 export function EventPage({
   projectId,
   name,
@@ -333,7 +324,6 @@ export function EventPage({
             <ArrowLeftIcon aria-hidden="true" className="size-4" />
             All events
           </Link>
-          {/* The page header names the event, so it is not repeated here. */}
           <PageTitle title={name} />
         </div>
         {query.isError && (

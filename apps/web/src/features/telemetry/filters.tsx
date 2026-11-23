@@ -9,14 +9,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-/** The select's value for "no filter": Base UI's select needs a value for each item. */
+/** Base UI requires a value for the no-filter item. */
 const ANY = "\u0000any";
 
-/**
- * A select with "Any …" first, then the choices; `value` undefined is any.
- * The value shown stays a choice even when the API no longer lists it, so
- * the filter can be seen and undone.
- */
+/** Keep a selected value available even if the API stops listing it, so the filter can be removed. */
 export function ChoiceFilter({
   label,
   anyLabel,
@@ -61,11 +57,7 @@ export function ChoiceFilter({
   );
 }
 
-/**
- * Text that filters when Enter is pressed or the field is left, and at
- * once when it is emptied: not on every key, which would send a request
- * per letter.
- */
+/** Apply on Enter, blur, or clear to avoid a request per keystroke. */
 export function TextFilter({
   label,
   placeholder,
@@ -81,14 +73,12 @@ export function TextFilter({
   value: string | undefined;
   onChange: (value: string | undefined) => void;
   maxLength?: number;
-  /** What the text must match, whole; anything else is not applied, and the field says why. */
   pattern?: RegExp;
   invalidMessage?: string;
   className?: string;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [text, setText] = React.useState(value ?? "");
-  // A new address (Back, a link) shows its own filter.
   const [shown, setShown] = React.useState(value);
   if (shown !== value) {
     setShown(value);

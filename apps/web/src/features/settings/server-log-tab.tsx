@@ -45,7 +45,6 @@ import {
 } from "./server-log-lines";
 import { type Connection, useServerLog } from "./server-log-stream";
 
-/** The tab's value in the address: the stream runs only while it is the tab shown. */
 export const SERVER_LOG_TAB = "server-log";
 
 const TONES: Record<LevelName, StatusTone> = {
@@ -56,7 +55,6 @@ const TONES: Record<LevelName, StatusTone> = {
   fatal: "critical",
 };
 
-/** A line's level as an icon and its name, never color alone. */
 function LevelBadge({ level }: { level: LevelName }) {
   const icon =
     level === "info" ? (
@@ -83,7 +81,6 @@ function clockTime(time: number, timeZone: string, withDay: boolean): string {
   }).format(time);
 }
 
-/** A line's time, in the instance's timezone; the whole moment on hover. */
 function LineTime({
   time,
   timeZone,
@@ -106,7 +103,6 @@ function LineTime({
   );
 }
 
-/** A request's line: its method, URL, status, and duration. */
 function requestText(request: NonNullable<ServerLine["request"]>): string {
   const parts = [request.method, request.url];
   if (request.status !== null) parts.push(String(request.status));
@@ -114,7 +110,6 @@ function requestText(request: NonNullable<ServerLine["request"]>): string {
   return parts.join(" ");
 }
 
-/** The line's whole object, as the process wrote it. */
 function LineJson({ line, id }: { line: ServerLine; id: string }) {
   return (
     <pre
@@ -141,7 +136,6 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-/** One group of repeated warnings or errors: its count and latest time, opening to its newest line. */
 function GroupRow({
   count,
   latest,
@@ -187,7 +181,6 @@ function GroupRow({
   );
 }
 
-/** One line of the full log: time, process, level, message, and a request's details. */
 const LineRow = React.memo(function LineRow({
   line,
   timeZone,
@@ -212,7 +205,7 @@ const LineRow = React.memo(function LineRow({
           <span className="w-12 shrink-0 text-xs leading-5 text-ink-subtle">
             {PROCESS_LABELS[line.process]}
           </span>
-          {/* As wide as the widest badge, so the messages line up. */}
+          {/* Reserve the widest badge's width to align messages. */}
           <span className="flex w-20 shrink-0">
             <LevelBadge level={line.level} />
           </span>
@@ -234,7 +227,6 @@ const LineRow = React.memo(function LineRow({
   );
 });
 
-/** Live, reconnecting, or closed, in one line; the lines already shown stay. */
 function ConnectionLine({
   connection,
   onReconnect,
@@ -361,14 +353,9 @@ const isProcessFilter = (value: unknown): value is ServerProcess | "all" =>
 const isLevel = (value: unknown): value is LevelName =>
   typeof value === "string" && (LEVELS as readonly string[]).includes(value);
 
-/** Distance from the bottom, in pixels, that still counts as at the bottom. */
 const AT_BOTTOM_PX = 8;
 
-/**
- * Every line, newest at the bottom, following new lines while scrolled to
- * the bottom; scrolling up stops it, and Jump to latest goes back. Pause
- * holds the lines shown while new ones keep arriving.
- */
+/** Follow arrivals only at the bottom. Pause freezes displayed lines while the stream continues. */
 function AllLines({
   lines,
   timeZone,
@@ -389,7 +376,6 @@ function AllLines({
   const newSincePause =
     held === null ? 0 : lines.filter((line) => line.n > (held.at(-1)?.n ?? 0)).length;
   const boxRef = React.useRef<HTMLDivElement>(null);
-  /** Whether the box follows new lines: while it is scrolled to the bottom. */
   const following = React.useRef(true);
   const [atBottom, setAtBottom] = React.useState(true);
 
@@ -401,7 +387,6 @@ function AllLines({
     setAtBottom(true);
   };
 
-  // After every render: new lines while following keep the newest in view.
   React.useLayoutEffect(() => {
     const box = boxRef.current;
     if (following.current && box !== null) box.scrollTop = box.scrollHeight;
@@ -515,7 +500,6 @@ function AllLines({
   );
 }
 
-/** The lines in this browser as a .jsonl file, made here: nothing is stored on the server. */
 function downloadLines(lines: readonly ServerLine[], timeZone: string) {
   const stamp = new Intl.DateTimeFormat("sv-SE", {
     timeZone,
@@ -540,12 +524,7 @@ function downloadLines(lines: readonly ServerLine[], timeZone: string) {
 type View = "problems" | "all";
 const isView = (value: unknown): value is View => value === "problems" || value === "all";
 
-/**
- * The Server log tab (docs/dashboard.md, "Server log"), for the owner: the
- * API's and the worker's lines since they started, streamed from the
- * API's memory while the tab is shown. By default, warnings and errors
- * grouped by message; Show all streams every line.
- */
+/** Stream only while this tab is visible (docs/dashboard.md, "Server log"). */
 export function ServerLogTab({ timeZone }: InstanceTabProps) {
   const [tab] = useSearchParam("tab");
   const stream = useServerLog({ enabled: tab === SERVER_LOG_TAB });

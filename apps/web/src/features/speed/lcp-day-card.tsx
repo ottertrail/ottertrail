@@ -5,7 +5,6 @@ import { DayChart } from "../analytics/day-chart";
 import { formatDay, formatWhole } from "../analytics/format";
 import { formatMs, formatVital, VITALS } from "./format";
 
-/** Every day's loads and p75s, the chart's table view. */
 function DayTable({ days }: { days: Speed["days"] }) {
   return (
     <table className="w-full max-w-2xl text-sm">
@@ -44,10 +43,7 @@ function DayTable({ days }: { days: Speed["days"] }) {
   );
 }
 
-/**
- * The p75 of LCP per day, short and full width: a line with gaps on days
- * without a measured load, and every day's numbers in a table on demand.
- */
+/** Leave gaps for days without measured loads. */
 export function LcpDayCard({ days }: { days: Speed["days"] }) {
   const measured = days.some((day) => day.lcp !== null);
   const tooltipRows = (index: number) => {

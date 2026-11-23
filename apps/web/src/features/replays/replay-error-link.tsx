@@ -7,7 +7,6 @@ import type { ReplaySummary } from "@/lib/replays-api";
 
 import { dayKey } from "../users/format";
 
-/** The error a replay shows, linked to its group's page, on days that include it. */
 export function ReplayErrorLink({
   projectId,
   replay,
@@ -44,7 +43,6 @@ export function ReplayErrorLink({
           <Link
             to="/projects/$projectId/errors/$fingerprint"
             params={{ projectId, fingerprint: error.fingerprint }}
-            // The error's own day, where it surely has an occurrence.
             search={{
               from: dayKey(error.occurredAt, timeZone),
               to: dayKey(error.occurredAt, timeZone),

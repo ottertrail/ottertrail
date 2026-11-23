@@ -7,7 +7,6 @@ const BADGES = {
   resolved: { tone: "good", label: "Resolved" },
 } as const;
 
-/** An error group's status, as an icon and a label. */
 export function ErrorStatusBadge({ status }: { status: ErrorStatus }) {
   const { tone, label } = BADGES[status];
   return <StatusBadge tone={tone}>{label}</StatusBadge>;

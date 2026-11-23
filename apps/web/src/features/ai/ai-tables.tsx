@@ -38,7 +38,6 @@ import { formatMoment } from "../users/format";
 import { aiCallsSearchOf } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, isCutOff, modelLabel } from "./format";
 
-/** Where the page is: what a filter link keeps, and adds its filter to. */
 export interface AiPlace {
   projectId: string;
   range: PageRange;
@@ -48,14 +47,8 @@ export interface AiPlace {
 
 const HEAD = "[&_th]:h-8 [&_th]:text-xs [&_th]:font-normal [&_th]:text-ink-subtle";
 
-/** A share with a dash for none: "0.5%", "12%". */
 const share = (value: number | null) => (value === null ? MISSING : formatConversion(value));
 
-/**
- * A model's or feature's name, linking to the page filtered by it, as a
- * breakdown row's name does elsewhere; the whole name in a tooltip while it
- * is cut off.
- */
 export function FilterName({
   place,
   filter,
@@ -67,7 +60,7 @@ export function FilterName({
 }) {
   const isModel = "model" in filter;
   const label = isModel ? modelLabel(filter.model) : featureLabel(filter.feature);
-  // A model the spans did not name cannot be asked for: the API takes a name.
+  // The API cannot filter by an unnamed model.
   if (isModel && filter.model === "") {
     return <span className="text-ink-subtle">{label}</span>;
   }
@@ -87,11 +80,6 @@ export function FilterName({
   );
 }
 
-/**
- * The calls by model or by feature, the costliest first: calls, tokens,
- * estimated cost, the median and 95th percentile, the median time to the
- * first chunk, and the failed and cut-off shares. A name filters the page.
- */
 export function FiguresTable({
   title,
   place,
@@ -193,11 +181,7 @@ export function FiguresTable({
   );
 }
 
-/**
- * A row's estimated cost: "No price" when none of its calls had one; the
- * cost of those that did, with how many did not, when only some had one
- * (a price that starts inside the period, a feature that uses several models).
- */
+/** Count unpriced calls separately when only part of a row has pricing. */
 function RowCost({
   figures,
 }: {
@@ -219,7 +203,6 @@ function RowCost({
   );
 }
 
-/** The users whose calls cost the most, each opening the user's page; or why they are hidden. */
 export function UsersTable({ place, report }: { place: AiPlace; report: AiReport }) {
   if (report.users === null) {
     return (
@@ -266,7 +249,6 @@ export function UsersTable({ place, report }: { place: AiPlace; report: AiReport
   );
 }
 
-/** Failed calls by error type, the most first: each type's calls, share of the failures, and latest. */
 export function FailuresTable({ report }: { report: AiReport }) {
   const headingId = React.useId();
   const failed = report.failures.reduce((total, failure) => total + failure.calls, 0);
@@ -323,11 +305,6 @@ export function FailuresTable({ report }: { report: AiReport }) {
   );
 }
 
-/**
- * A call's outcome in words, never color alone. A failed call's error
- * type is the badge's explanation (its title, and read out); the Failures
- * table lists the types.
- */
 function CallStatus({ call }: { call: AiCall }) {
   if (call.failed) {
     return (
@@ -341,11 +318,7 @@ function CallStatus({ call }: { call: AiCall }) {
   return <span className="text-sm text-ink-subtle">OK</span>;
 }
 
-/**
- * The latest 50 calls, newest first, each opening its span on its trace's
- * page for users with monitoring (traces are monitoring's, docs/access.md).
- * Its own request: it loads, fails, and retries apart from the report.
- */
+/** Fetch 50 calls separately from the report; trace links require monitoring access (docs/access.md). */
 export function RecentCalls({ place }: { place: AiPlace }) {
   const calls = useQuery(
     aiCallsQuery(place.projectId, place.range, place.environment, place.filters),

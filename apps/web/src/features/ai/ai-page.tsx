@@ -43,14 +43,12 @@ import { type AiPlace, FailuresTable, FiguresTable, RecentCalls, UsersTable } fr
 import { aiCallsSearchOf } from "./calls-search";
 import { featureLabel, formatMs, formatTokens, formatUsd, MIN_CALLS_FOR_CHANGE } from "./format";
 
-/** A filter's choices: the values the period offers, each with its label. */
 const choices = (values: readonly string[] | undefined, label = (value: string) => value) =>
   (values ?? []).map((value) => ({ value, label: label(value) }));
 
 const hasFilters = (filters: AiFilters) =>
   Object.values(filters).some((value) => value !== undefined);
 
-/** "Changes compare with 3 to 9 Nov 2026, up to 15:00 on 9 Nov." */
 function comparisonNote({ previous, timeZone }: AiReport): string {
   const days = formatDayRange(previous.firstDay, previous.lastDay);
   if (previous.totals.calls === 0) return `No calls in ${days} to compare with.`;
@@ -61,12 +59,7 @@ function comparisonNote({ previous, timeZone }: AiReport): string {
     : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}.`;
 }
 
-/**
- * The period's figures in one strip, each against the period before; a
- * change shows only once the calls it rests on reach the minimum. The
- * cost is always named an estimate, and the calls it leaves out are
- * counted under it.
- */
+/** Show changes only above the minimum call count. Label cost as an estimate and count excluded calls. */
 function Summary({ report }: { report: AiReport }) {
   const { totals } = report;
   const before = report.previous.totals;
@@ -151,12 +144,10 @@ function Summary({ report }: { report: AiReport }) {
   );
 }
 
-/** A share as a percentage, one decimal under 10%; "–" with nothing to divide. */
 function formatPercentOrDash(value: number | null): string {
   return value === null ? MISSING : formatConversion(value);
 }
 
-/** While the project has never sent an AI call: what the page needs, and where to read how. */
 function NoCallsYet({ projectId }: { projectId: string }) {
   return (
     <Empty className="border border-dashed p-10">
@@ -197,13 +188,7 @@ function NoCallsYet({ projectId }: { projectId: string }) {
   );
 }
 
-/**
- * The LLM calls in the project's traces (docs/ai-usage.md): estimated
- * cost, tokens, latency, and failures over the period, a chart split by
- * model or feature, and tables by model, feature, user, and failure, then
- * the latest calls. Every filter is in the address; a model or feature in
- * a table filters by it.
- */
+/** Filters live in the address (docs/ai-usage.md). */
 export function AiPage({
   projectId,
   range,
@@ -378,7 +363,7 @@ export function AiPage({
               rows={data.features}
               empty="No call in this period."
             />
-            {/* Side by side by the content's width, not the window's. */}
+            {/* Use content width for the columns. */}
             <div className="@container border-t pt-5">
               <div className="grid gap-8 @5xl:grid-cols-2">
                 <UsersTable place={place} report={data} />

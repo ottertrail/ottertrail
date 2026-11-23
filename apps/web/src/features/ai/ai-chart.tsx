@@ -17,7 +17,6 @@ import { assignSlots, OTHER_COLOR, SLOTS } from "../telemetry/split-colors";
 import type { ChartLine } from "../telemetry/time-chart";
 import { featureLabel, formatUsd, modelLabel } from "./format";
 
-/** What the chart draws, one at a time: one measure, one y-axis. */
 const MEASURES = [
   { value: "cost", label: "Cost" },
   { value: "tokens", label: "Tokens" },
@@ -33,23 +32,16 @@ const SPLITS = [
 
 type Line = AiChart["series"][number];
 
-/** A line's key for its color: its value, never its label, so no value passes for another. */
+/** Use values for color IDs so identical labels stay distinct. */
 const keyOf = (line: Line) => (line.other ? "\u0000other" : `v${JSON.stringify(line.key)}`);
 
-/** Adds lines' values bucket by bucket (cost, tokens, calls: they sum). */
 const sumOf = (lines: Line[], pick: (line: Line) => number[]): number[] =>
   lines.reduce<number[]>(
     (total, line) => pick(line).map((value, index) => (total[index] ?? 0) + value),
     [],
   );
 
-/**
- * The chart's lines for a measure: the lines the API split into, the first
- * eight in the slot each value got first while the page is open
- * (assignSlots), so a color stays with its model or feature; past eight,
- * the rest fold into Other, in gray. A 95th percentile cannot be added up,
- * so Other draws one only when it is the API's own Other line alone.
- */
+/** Keep eight stable color slots and fold the rest into Other. Sum Other's p95 only when it is the API's sole Other line. */
 function linesOf(chart: AiChart, measure: Measure, colors: Map<string, number>): ChartLine[] {
   const named = chart.series.filter((line) => !line.other);
   const shown = named.slice(0, SLOTS.length);
@@ -93,7 +85,6 @@ function linesOf(chart: AiChart, measure: Measure, colors: Map<string, number>):
   ];
 }
 
-/** A toggle beside the chart's title: buttons with aria-pressed, one always chosen. */
 function Toggle<T extends string>({
   label,
   items,
@@ -126,12 +117,7 @@ function Toggle<T extends string>({
   );
 }
 
-/**
- * The calls over the period, one measure at a time (estimated cost,
- * tokens, calls, or the 95th percentile), split by model or feature. It
- * loads, fails, and retries on its own, so a failed chart never holds back
- * the tables under it.
- */
+/** Load independently so chart failures do not block the tables. */
 export function AiTrend({
   projectId,
   range,

@@ -4,7 +4,6 @@ import { STATUS_CLASSES, type StatusCounts } from "@/lib/services-api";
 import { formatConversion, formatWhole } from "../analytics/format";
 import { STATUS_COLORS, STATUS_LABELS, statusText } from "./status-format";
 
-/** The classes' names and colors, once above the bars that use them. */
 export function StatusLegend() {
   return (
     <ul
@@ -25,19 +24,13 @@ export function StatusLegend() {
   );
 }
 
-/**
- * A thin segmented bar of one whole, the requests, split by class: widths
- * in proportion, a 2px gap between parts, rounded ends, no text. Hover and
- * keyboard focus show every class's count and share; its accessible name
- * says the same.
- */
+/** Keep the tooltip focusable; include counts and shares in the accessible name. */
 export function StatusBar({
   statuses,
   label,
   className,
 }: {
   statuses: StatusCounts;
-  /** What the requests are, such as the route: the start of the accessible name. */
   label: string;
   className?: string;
 }) {
@@ -48,7 +41,7 @@ export function StatusBar({
     <Tooltip>
       <TooltipTrigger
         aria-label={text}
-        // It only shows a tooltip: in a clickable row (a service's routes), a click on it is the row's.
+        // Let clicks reach the containing row; this control only shows a tooltip.
         data-row-passthrough=""
         className={`flex h-2 w-full min-w-16 cursor-default gap-0.5 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring ${className ?? ""}`}
       >

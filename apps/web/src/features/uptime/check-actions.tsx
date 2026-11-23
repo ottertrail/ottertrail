@@ -26,7 +26,6 @@ import { type Check, deleteCheck, updateCheck } from "@/lib/uptime-api";
 
 import { CheckFormDialog } from "./check-form-dialog";
 
-/** Asks before deleting a check, with its incidents and results. */
 function DeleteCheckDialog({
   projectId,
   check,
@@ -46,7 +45,7 @@ function DeleteCheckDialog({
       try {
         await deleteCheck(projectId, check.id);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
+        // Treat deletion in another tab as success.
         if (!(error instanceof ApiError && error.code === "check_not_found")) throw error;
       }
     },
@@ -95,10 +94,6 @@ function DeleteCheckDialog({
   );
 }
 
-/**
- * Edit, pause or resume, and delete, for one check: icon buttons named
- * for the check in a table row (`compact`), buttons with words on its page.
- */
 export function CheckActions({
   projectId,
   check,

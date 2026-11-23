@@ -31,7 +31,6 @@ import { type SpeedSearch, speedSearchOf } from "./search";
 import { DeviceTable, PageTable, SpeedTablesNote } from "./speed-tables";
 import { CoreVitals, SecondaryVitals } from "./vital-cards";
 
-/** The device picker's choice for every kind of device. */
 const ALL_DEVICES = "all";
 const DEVICE_ITEMS = [{ value: ALL_DEVICES, label: "All devices" }, ...DEVICES];
 
@@ -68,7 +67,6 @@ function DevicePicker({
   );
 }
 
-/** No page load had a value: how the tracker measures, so the reader knows what to expect. */
 function NoLoads({ environment, device }: { environment: string; device: Device | undefined }) {
   const where = [
     device === undefined ? "" : ` on ${device}`,
@@ -96,7 +94,6 @@ function NoLoads({ environment, device }: { environment: string; device: Device 
   );
 }
 
-/** Shaped like the report: the vitals' strip, the chart, and two tables side by side. */
 function Loading() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
@@ -121,11 +118,6 @@ function Loading() {
   );
 }
 
-/**
- * How fast the project's page loads felt: the Core Web Vitals (LCP, INP,
- * CLS) at their 75th percentile, with FCP and TTFB to explain LCP, per
- * day, device, and page, for a period, an environment, and a device.
- */
 export function SpeedPage({
   projectId,
   range,
@@ -205,7 +197,7 @@ export function SpeedPage({
                 </section>
                 <SecondaryVitals speed={data} />
                 <LcpDayCard days={data.days} />
-                {/* Side by side by the content's width, not the window's. */}
+                {/* Use content width for the columns. */}
                 <section
                   aria-label="By device and page"
                   className="@container flex flex-col gap-3 border-t pt-5"

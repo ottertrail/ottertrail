@@ -22,7 +22,6 @@ import {
   setErrorAssignee,
 } from "@/lib/errors-api";
 
-/** An option of the assignee field: a person, or nobody. */
 interface Option {
   id: string | null;
   name: string;
@@ -31,7 +30,6 @@ interface Option {
 
 const NOBODY: Option = { id: null, name: "Unassigned", avatarUrl: null };
 
-/** A list row's assignee: the initials, then the name. */
 export function AssigneeMark({ assignee }: { assignee: Assignee }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
@@ -42,11 +40,7 @@ export function AssigneeMark({ assignee }: { assignee: Assignee }) {
   );
 }
 
-/**
- * Who is on the group (docs/errors.md, "Assignment"). With errors at
- * manage, a field to choose anyone who sees the project's errors, or
- * Unassigned, and "Assign to me"; without it, the assignee's name.
- */
+/** Assignment requires errors manage access (docs/errors.md, "Assignment"). */
 export function AssigneeControl({ projectId, group }: { projectId: string; group: ErrorGroup }) {
   const canChange = useAccess().canUse("errors", "manage");
   const fieldId = React.useId();

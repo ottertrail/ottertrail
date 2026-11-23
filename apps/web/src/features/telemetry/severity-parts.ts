@@ -2,13 +2,7 @@ import type { LogVolume, SeverityLevel } from "@/lib/logs-api";
 
 import type { BarPart } from "./stacked-bar-chart";
 
-/**
- * The parts of the Logs chart, from the baseline up. Severity is a state,
- * so the two that say something is wrong take the status colors their
- * badges use (error and fatal critical, warning warning), and the rest
- * stay neutral: info the light neutral, the quieter ranges the de-emphasis
- * gray. Errors sit on the baseline, where their height reads exactly.
- */
+/** Use status colors for errors and warnings, neutrals for the rest. Put errors on the baseline so their heights can be compared. */
 export const SEVERITY_GROUPS: {
   key: string;
   label: string;
@@ -31,7 +25,6 @@ export const SEVERITY_GROUPS: {
   },
 ];
 
-/** Each group's count per bucket. */
 export function severityParts(volume: LogVolume): BarPart[] {
   return SEVERITY_GROUPS.map((group) => ({
     key: group.key,

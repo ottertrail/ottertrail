@@ -25,7 +25,6 @@ import {
   siteOrigin,
 } from "./overlay-link";
 
-/** The project has no hostname to open: what to add, and where. */
 function NoHostname({ projectId }: { projectId: string }) {
   const canManage = useAccess().can("projects");
   return (
@@ -50,12 +49,7 @@ function NoHostname({ projectId }: { projectId: string }) {
   );
 }
 
-/**
- * "Open on your site": opens the page on the project's site, in a window
- * as wide as the device the report shows (desktop for all devices), with a one-time link that makes the tracker there
- * draw this heatmap over the page for this user only (docs/web-analytics.md,
- * "The overlay on your site"). The link is made when the button is pressed.
- */
+/** Create a one-time overlay link on click (docs/web-analytics.md, "The overlay on your site"). */
 export function OpenOnSite({
   projectId,
   path,
@@ -64,7 +58,6 @@ export function OpenOnSite({
 }: {
   projectId: string;
   path: string;
-  /** The project's allowed hostnames. */
   hostnames: readonly string[];
   /** The device the report shows: the window opens at its width (desktop for all devices). */
   device: HeatmapDevice | undefined;
@@ -78,15 +71,13 @@ export function OpenOnSite({
   if (hostnames.length === 0) return <NoHostname projectId={projectId} />;
   const hostname =
     chosenHost !== undefined && hostnames.includes(chosenHost) ? chosenHost : (hostnames[0] ?? "");
-  // The device filtered on; all devices open at desktop width.
   const size = OVERLAY_WIDTHS.find((item) => item.value === device) ?? OVERLAY_WIDTHS[2];
   const local = isLocalHostname(hostname);
   const portValid = !local || isPort(port.trim());
 
   const open = async () => {
     setProblem(null);
-    // Opened now, while the click still counts: a window opened after the
-    // request would be blocked as a pop-up.
+    // Open during the click; waiting for the request would trigger popup blocking.
     const popup = window.open("", "_blank", popupFeatures(size, window.screen));
     if (popup === null) {
       setProblem(
@@ -94,7 +85,7 @@ export function OpenOnSite({
       );
       return;
     }
-    // The site's page must not reach back to the dashboard.
+    // Prevent the site from accessing the dashboard through window.opener.
     popup.opener = null;
     setOpening(true);
     try {
@@ -122,8 +113,7 @@ export function OpenOnSite({
             }}
           >
             <SelectTrigger aria-label="Site" size="sm" className="max-w-72">
-              {/* As wide as the longest hostname, whichever is chosen: hidden
-                  copies of them all share the value's grid cell. */}
+              {/* Hidden copies reserve enough width for every hostname. */}
               <span className="grid min-w-0 flex-1">
                 {hostnames.map((item) => (
                   <span

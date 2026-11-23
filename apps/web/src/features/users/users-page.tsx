@@ -68,7 +68,6 @@ import { formatMoment, timeAgo } from "./format";
 import { UnverifiedIdsNotice } from "./unverified-ids-notice";
 import { UserView } from "./user-page";
 
-/** How a site names its signed-in user, shown while it names none. */
 const IDENTIFY_EXAMPLE = `<script defer src="…/t.js" data-key="…" data-host="…" data-user-id="42"></script>
 
 window.ottertrail?.identify("42"); // signed in without a page load
@@ -76,7 +75,6 @@ window.ottertrail?.reset(); // signed out without a page load`;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The most users the summary names, by events. */
 const TOP_USERS = 5;
 
 function NoUsersYet() {
@@ -104,11 +102,6 @@ function NoUsersYet() {
   );
 }
 
-/**
- * The listed users, most recently seen first: the ID (the row's link, to
- * the user's own page; in the workbench a plain click selects the row
- * instead), when last seen, and their events.
- */
 function UserTable({
   users,
   projectId,
@@ -181,11 +174,7 @@ function UserTable({
   );
 }
 
-/**
- * How many of the loaded users were seen (or first seen) within a window:
- * exact once the list is whole or reaches past the window, which it does
- * in order of last seen; "at least" otherwise.
- */
+/** Counts are exact once the list ends or passes the window; otherwise report "at least". */
 function windowCount(
   users: readonly User[],
   more: boolean,
@@ -199,10 +188,6 @@ function windowCount(
   return atLeast(count, more && !reachesPast);
 }
 
-/**
- * With nothing selected, the detail pane sums up the users loaded: how many,
- * how many were seen lately or are new, and the most active of them.
- */
 function Summary({
   users,
   more,
@@ -295,13 +280,7 @@ function Summary({
   );
 }
 
-/**
- * The project's known users as a workbench (docs/design-system.md,
- * "Workbench"): the IDs a site sends for its signed-in users, most
- * recently seen first, in one environment, with a search by ID; beside the
- * selected user's activity or, with none selected, a summary. Under 64rem a
- * row opens the user's own page.
- */
+/** Users workbench. Below 64rem, rows open their own pages (docs/design-system.md, "Workbench"). */
 export function UsersPage({
   projectId,
   environment = DEFAULT_ENVIRONMENT,
@@ -315,15 +294,14 @@ export function UsersPage({
   const list = useInfiniteQuery(usersQuery(projectId, environment, search));
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const first = list.data?.pages[0];
-  // Pages come by offset in order of last seen: a user seen again between
-  // two pages moves up, and the next page would list them twice.
+  // Deduplicate users who move between offset pages after new activity.
   const users = [
     ...new Map(
       (list.data?.pages ?? []).flatMap((page) => page.users).map((user) => [user.userId, user]),
     ).values(),
   ];
   const userSearch = environment === DEFAULT_ENVIRONMENT ? {} : { env: environment };
-  // The Workbench keeps the latest of this, so it may be a new function each render.
+  // Workbench keeps the latest callback; it need not be stable.
   const openPage = (userId: string) =>
     void navigate({
       to: "/projects/$projectId/users/$userId",

@@ -49,12 +49,9 @@ import {
   normalDomain,
 } from "./spam-rules";
 
-/** The tab's form, as the fields hold it. */
 interface SpamValues {
   ignoreDataCenters: boolean;
-  /** Blocked addresses, one per line, as typed. */
   addresses: string;
-  /** Blocked referrer domains, one per line, as typed. */
   referrers: string;
 }
 
@@ -64,17 +61,13 @@ const spamValues = (project: Project): SpamValues => ({
   referrers: project.blockedReferrers.join("\n"),
 });
 
-/** A list compared as the API will store it, so a reordering or a repeat is no change. */
+/** Compare normalized lists so reordering or duplicates do not mark the form dirty. */
 const asStored = (check: (text: string) => ListCheck) => (text: string) => {
   const checked = check(text);
   return ignoreOrder(checked.ok ? checked.entries : linesOf(text));
 };
 
-/**
- * Data centers, blocked addresses, and blocked referrers: one form, saved
- * with its Save bar under the save rule. The lists are checked as typed,
- * by the API's rules, once a field has been left or a save tried.
- */
+/** Validate by API rules after blur or a save attempt. */
 function SpamSettings({
   project,
   onDirty,
@@ -120,7 +113,7 @@ function SpamSettings({
     setAdded(null);
     const answer = await own.mutateAsync().catch(() => null);
     if (answer === null) return;
-    // For IPv6, the /64: the same browser may use another of its addresses tomorrow.
+    // Use /64 for IPv6 because the browser may change addresses within it.
     const entry = answer.network ?? answer.address;
     const listed = linesOf(form.values.addresses).map((line) => normalAddress(line) ?? line);
     if (listed.includes(entry)) {
@@ -242,7 +235,6 @@ function SpamSettings({
   );
 }
 
-/** "YYYY-MM-DD" in a timezone. */
 function dayIn(timeZone: string, moment: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone }).format(moment);
 }
@@ -253,7 +245,6 @@ function addDays(day: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** The longest period one delete covers, as the API allows. */
 const MAX_PERIOD_DAYS = 92;
 
 interface FilterDraft {
@@ -266,7 +257,6 @@ interface FilterDraft {
 
 type FilterField = keyof FilterDraft;
 
-/** The filters as the API takes them, or what is wrong with each field. */
 function checkFilters(
   draft: FilterDraft,
   today: string,
@@ -309,7 +299,6 @@ function checkFilters(
 const plural = (count: number, one: string, many: string) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
 
-/** The events of the counted visits, by kind, in words. */
 function eventsText(counts: SpamCounts): string {
   const parts = [
     plural(counts.pageviews, "pageview", "pageviews"),
@@ -320,7 +309,6 @@ function eventsText(counts: SpamCounts): string {
   return `${plural(counts.events, "event", "events")}: ${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-/** The fields of the delete filter form, laid out two to a row from 40rem. */
 function FilterInput({
   field,
   label,
@@ -354,7 +342,6 @@ function FilterInput({
   );
 }
 
-/** A day filter: typed day first or picked on the calendar (`DateField`), with its hint or problem. */
 function FilterDay({
   field,
   label,
@@ -394,16 +381,10 @@ function FilterDay({
   );
 }
 
-/**
- * Deleting spam that got in: the filters, "Count visits" with what would
- * go, then a confirmation that asks for the number of visits typed. An
- * action, not part of the save rule. Delete waits for a count that matches
- * the filters as they are now.
- */
+/** Require a count that matches the current filters before deletion. */
 function DeleteSpam({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const timeZone = useAccess().me?.instance.timeZone ?? "UTC";
-  // When the tab opened: the period's default and its latest day.
   const [openedAt] = React.useState(() => new Date());
   const today = dayIn(timeZone, openedAt);
   const [draft, setDraft] = React.useState<FilterDraft>({
@@ -417,7 +398,7 @@ function DeleteSpam({ project }: { project: Project }) {
   const check = checkFilters(draft, today);
   const problems = checked && !check.ok ? check.problems : {};
   const key = check.ok ? JSON.stringify(check.filters) : null;
-  // Without a filter, every visit of the period would go: the API refuses it too.
+  // Require a filter to avoid deleting every visit in the period.
   const hasFilter = [draft.referrer, draft.path, draft.country].some(
     (value) => value.trim() !== "",
   );
@@ -545,7 +526,6 @@ function DeleteSpam({ project }: { project: Project }) {
             onDeleted={(counts) => {
               setDeleted(counts);
               preview.reset();
-              // The reports read the events that went.
               void queryClient.invalidateQueries({
                 predicate: (query) =>
                   query.queryKey[1] === project.id && query.queryKey[0] !== "projects",
@@ -592,7 +572,7 @@ function DeleteSpam({ project }: { project: Project }) {
   );
 }
 
-/** Deletes the counted visits once their number is typed, as the API also requires. */
+/** Require the visit count to be typed, matching the API. */
 function DeleteSpamDialog({
   project,
   filters,
@@ -602,9 +582,7 @@ function DeleteSpamDialog({
 }: {
   project: Project;
   filters: SpamFilters | null;
-  /** The current count, or null while there is nothing to delete. */
   counts: SpamCounts | null;
-  /** Why Delete is disabled, when it is. */
   hint: string | null;
   onDeleted: (counts: SpamCounts) => void;
 }) {
@@ -654,7 +632,7 @@ function DeleteSpamDialog({
             className="flex flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              // React passes events up through the portal: not to the filters' form.
+              // Stop portal events from reaching the filters form.
               event.stopPropagation();
               if (matches && !remove.isPending) remove.mutate();
             }}
@@ -702,7 +680,6 @@ function DeleteSpamDialog({
   );
 }
 
-/** The Spam and bots tab: the rules that keep spam out, and deleting what got in. */
 export function SpamTab({
   project,
   onDirty,

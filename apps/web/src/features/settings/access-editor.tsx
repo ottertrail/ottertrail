@@ -18,7 +18,6 @@ import { DEFAULT_ACCESS, PRESET_LABEL } from "./access-text";
 
 const LEVEL_LABEL: Record<AreaLevel, string> = { none: "None", view: "View", manage: "Manage" };
 
-/** A native radio with its label, as a row. */
 function Radio({
   name,
   value,
@@ -56,11 +55,7 @@ function Radio({
   );
 }
 
-/**
- * The role, and for a member a preset, each area's level, and the projects
- * (docs/access.md). An admin choice shows only when `allowAdmin`, for the
- * owner. Changing an area makes the preset Custom.
- */
+/** Only the owner may grant admin access (docs/access.md). Changing an area selects the Custom preset. */
 export function AccessEditor({
   value,
   onChange,
@@ -73,7 +68,7 @@ export function AccessEditor({
   projects: readonly ProjectSummary[];
 }) {
   const name = React.useId();
-  // What a member had, kept while Admin is chosen, so switching back loses nothing.
+  // Preserve member grants while Admin is selected so switching back keeps them.
   const [memberAccess, setMemberAccess] = React.useState<MemberAccess>(
     value.role === "member" ? value.access : DEFAULT_ACCESS,
   );

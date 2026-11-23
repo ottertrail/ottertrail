@@ -5,17 +5,13 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-/**
- * A report that failed to load or refresh, with a retry. After a refresh
- * fails, the report below is the last one that loaded, and says so.
- */
+/** Keep the last report visible after a failed refresh. */
 export function LoadFailed({
   what,
   message,
   hasData,
   onRetry,
 }: {
-  /** "The events", "The funnel" … */
   what: string;
   message: string;
   hasData: boolean;
@@ -38,7 +34,6 @@ export function LoadFailed({
   );
 }
 
-/** Skeleton rows shaped like a table or list. */
 export function LoadingRows({ rows = 3, className }: { rows?: number; className?: string }) {
   return (
     <div className={className ?? "flex flex-col gap-2"} aria-busy="true" aria-label="Loading">
@@ -49,7 +44,6 @@ export function LoadingRows({ rows = 3, className }: { rows?: number; className?
   );
 }
 
-/** The report, dimmed while another period or setting loads in its place. */
 export function Refreshing({ stale, children }: { stale: boolean; children: React.ReactNode }) {
   return (
     <div

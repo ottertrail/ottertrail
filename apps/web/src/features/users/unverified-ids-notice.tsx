@@ -4,12 +4,7 @@ import { ShieldAlertIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { WhenAllowed } from "@/components/when-allowed";
 
-/**
- * Says that the project accepts unsigned user IDs (docs/web-analytics.md,
- * "Signed user IDs"): anyone with the public key can send events as any
- * user. Those who manage projects get a link to the setting that requires
- * signatures; members cannot change it.
- */
+/** Unsigned IDs let anyone with the public key impersonate users (docs/web-analytics.md, "Signed user IDs"). Only project managers get the settings link. */
 export function UnverifiedIdsNotice({ projectId }: { projectId: string }) {
   return (
     <Alert role="note">

@@ -4,14 +4,11 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** What every tab is given: whether its form holds unsaved edits goes back to the tab row. */
 export interface InstanceTabProps {
   onDirty: (dirty: boolean) => void;
-  /** The instance's timezone, which the tabs' times are shown in. */
   timeZone: string;
 }
 
-/** A tab's section while its data loads: the heading, a line, and the fields' shape. */
 export function SectionSkeleton() {
   return (
     <div className="flex max-w-2xl flex-col gap-4 py-6" aria-busy="true">
@@ -23,7 +20,6 @@ export function SectionSkeleton() {
   );
 }
 
-/** A tab whose data failed to load: what failed, and Retry. */
 export function SectionFailed({
   title,
   message,

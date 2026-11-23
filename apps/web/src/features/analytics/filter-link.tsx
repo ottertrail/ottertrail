@@ -4,7 +4,6 @@ import type { FilterName } from "@/lib/analytics-api";
 
 import { filterText, type PageSearch, searchOf, valueText } from "./list-rows";
 
-/** A list row's name, linking to the page filtered by it. */
 export function FilterLink({
   projectId,
   search,
@@ -17,7 +16,6 @@ export function FilterLink({
   name: FilterName;
   /** "" for an unknown value. */
   value: string;
-  /** Such as closing the dialog the link is in. */
   onClick?: () => void;
 }) {
   return (

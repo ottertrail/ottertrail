@@ -6,19 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DayChart } from "./day-chart";
 import { formatDay, formatWhole } from "./format";
 
-/**
- * One count per day, such as an error's occurrences or an event's
- * occurrences: a line, and every day's number in a table on demand.
- */
 export function DayCountCard({
   days,
   noun,
   className,
 }: {
   days: { day: string; count: number }[];
-  /** What is counted, capitalized: "Occurrences", "Events". */
   noun: string;
-  /** Such as a flat section's look inside a workbench. */
   className?: string;
 }) {
   const [showTable, setShowTable] = React.useState(false);

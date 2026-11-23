@@ -14,17 +14,11 @@ import { checksQuery } from "@/lib/uptime-api";
 import { RuleStateBadge } from "./rule-state-badge";
 import { watchesText } from "./rule-text";
 
-/** What the card is on: a check's page, or an error group's in an environment. */
 export type Watched =
   | { checkId: string }
   | { fingerprint: string; environment: string; status: ErrorStatus };
 
-/**
- * The alert rules that watch a check or an error group, with a link that
- * adds one, the form filled in with it: "check down" for a check, a spike
- * of this group in this environment for an error. Shown to those with
- * uptime and alerts; the link to those who manage it (docs/access.md).
- */
+/** Viewing needs uptime and alerts access; adding needs manage access (docs/access.md). */
 export function AlertRulesCard({
   projectId,
   watched,
@@ -32,7 +26,6 @@ export function AlertRulesCard({
 }: {
   projectId: string;
   watched: Watched;
-  /** Such as a flat section's look inside a workbench. */
   className?: string;
 }) {
   const rules = useQuery(rulesQuery(projectId));

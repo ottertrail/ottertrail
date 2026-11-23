@@ -82,10 +82,8 @@ import {
 import { formatWhole } from "../analytics/format";
 import type { InstanceTabProps } from "./section-states";
 
-/** In the address: `?show=no-price` lists only the models without a price. */
 export const NO_PRICE = "no-price";
 
-/** Rows shown at first, and added by each Show more. */
 export const MODELS_PAGE = 50;
 
 const usd = new Intl.NumberFormat("en-US", {
@@ -95,7 +93,6 @@ const usd = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
 });
 
-/** "22 Nov 2026" for a calendar day ("YYYY-MM-DD"). */
 const formatCalendarDay = (day: string) =>
   new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -104,7 +101,7 @@ const formatCalendarDay = (day: string) =>
     timeZone: "UTC",
   }).format(new Date(`${day}T00:00:00Z`));
 
-/** "22 Nov 2026" for a moment, in the instance's timezone. */
+/** Use the instance timezone for moments. */
 const formatDate = (iso: string, timeZone: string) =>
   new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -113,7 +110,7 @@ const formatDate = (iso: string, timeZone: string) =>
     timeZone,
   }).format(new Date(iso));
 
-/** Today, "YYYY-MM-DD", in the instance's timezone. */
+/** Use the instance timezone for today's calendar date. */
 const todayIn = (timeZone: string) =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -122,11 +119,9 @@ const todayIn = (timeZone: string) =>
     day: "2-digit",
   }).format(new Date());
 
-/** Who changed a price and when: " by Ada Owner on 22 Nov 2026". */
 const changedText = (by: string | null, at: string, timeZone: string) =>
   `${by === null ? "" : ` by ${by}`} on ${formatDate(at, timeZone)}`;
 
-/** Where the model's price comes from, in words. */
 function sourceText(model: AiModel, timeZone: string): string {
   if (model.source === "built_in" && model.builtIn !== null) {
     return `Built-in, checked ${formatCalendarDay(model.builtIn.checked)}`;
@@ -144,14 +139,12 @@ function sourceText(model: AiModel, timeZone: string): string {
   return "None";
 }
 
-/** The table's line on what a price covers: every ID while few, else how many. */
 function coversLine(model: AiModel): string | null {
   const ids = model.covers?.ids.length ?? 0;
   if (ids <= 1) return null;
   return ids > 2 ? `Covers ${formatWhole(ids)} IDs` : `Covers ${coversText(model)}`;
 }
 
-/** "$3.00 input, $15.00 output, $0.30 cache read, cache write as input". */
 const ratesText = (rates: Rates) =>
   [
     `${usd.format(rates.input)} input`,
@@ -162,7 +155,6 @@ const ratesText = (rates: Rates) =>
       : `${usd.format(rates.cacheWrite)} cache write`,
   ].join(", ");
 
-/** A price per million tokens; a cache price that is the input's says so. */
 function PriceCell({
   value,
   cache = false,
@@ -177,10 +169,8 @@ function PriceCell({
   return <>{usd.format(value)}</>;
 }
 
-/** Whether a model has any price of the instance's own. */
 const hasCustom = (model: AiModel) => model.prices.length > 0 || model.priceAs !== null;
 
-/** Whether the search's text is in the model's ID, provider, name, or the IDs its price covers. */
 function matches(model: AiModel, search: string): boolean {
   if (search === "") return true;
   const needle = search.toLowerCase();
@@ -193,7 +183,7 @@ function matches(model: AiModel, search: string): boolean {
   ].some((text) => text.toLowerCase().includes(needle));
 }
 
-/** Everything that changes a price shows on the AI page and in AI cost alerts: read again. */
+/** Price changes affect AI reports and cost alerts; invalidate both. */
 function useAfterChange() {
   const queryClient = useQueryClient();
   return () => {
@@ -226,7 +216,7 @@ interface Draft {
 const textOf = (value: number | null | undefined) =>
   value === null || value === undefined ? "" : String(value);
 
-/** A typed price as its number, so 3 and 3.0 are no change; other text as typed. */
+/** Compare numeric prices so 3 and 3.0 are equal; preserve invalid input as text. */
 function priceValue(text: string): unknown {
   const value = text.trim();
   return /^\d+(\.\d+)?$/.test(value) ? Number(value) : value;
@@ -239,10 +229,7 @@ const PRICE_NORMALIZERS: Normalizers<Draft> = {
   cacheWrite: priceValue,
 };
 
-/**
- * The form's start: the model's price now, else its built-in one; a model
- * with a price changes it from `today` on, one without takes it for all calls.
- */
+/** Default existing prices to a change from today; unpriced models default to all calls. */
 function draftOf(model: AiModel | undefined, today: string): Draft {
   const rates = model?.price ?? model?.builtIn?.rates;
   return {
@@ -257,7 +244,6 @@ function draftOf(model: AiModel | undefined, today: string): Draft {
   };
 }
 
-/** What is wrong with a typed price, or null. */
 function priceProblem(
   text: string,
   optional: boolean,
@@ -295,7 +281,7 @@ function problemsOf(
   return problems;
 }
 
-/** A typed cache price: empty is charged as input. */
+/** An empty cache price uses the input price. */
 const optionalRate = (text: string) => (text.trim() === "" ? null : Number(text));
 
 const ratesOf = (draft: Draft): Rates => ({
@@ -305,10 +291,7 @@ const ratesOf = (draft: Draft): Rates => ({
   cacheWrite: optionalRate(draft.cacheWrite),
 });
 
-/**
- * What a price for all calls replaces: "its 2 dated prices (from 1 Jan
- * 2027 and 1 Mar 2027) and its price as gpt-4o"; null for nothing.
- */
+/** Describe the dated prices and alias that an all-calls correction would replace. */
 function replacedText(model: AiModel, timeZone: string): string | null {
   const dated = model.prices.flatMap((price) =>
     price.effectiveFrom === null ? [] : [formatDate(price.effectiveFrom, timeZone)],
@@ -326,7 +309,6 @@ function replacedText(model: AiModel, timeZone: string): string | null {
   return parts.length === 0 ? null : parts.join(" and ");
 }
 
-/** One term of the sheet's details and what it says. */
 function Detail({ term, children }: { term: string; children: React.ReactNode }) {
   return (
     <>
@@ -336,7 +318,6 @@ function Detail({ term, children }: { term: string; children: React.ReactNode })
   );
 }
 
-/** The host of a price page, for its link's text: "docs.anthropic.com". */
 function hostOf(address: string): string {
   try {
     return new URL(address).host;
@@ -345,11 +326,6 @@ function hostOf(address: string): string {
   }
 }
 
-/**
- * What the sheet knows about a model past its price: where the price comes
- * from, the built-in one with its page and notes, the instance's own prices,
- * price as, and its calls. The IDs a price covers are in the Price line.
- */
 function ModelDetails({
   model,
   list,
@@ -423,20 +399,11 @@ function ModelDetails({
   );
 }
 
-/** Where focus goes when the sheet closes: a row's model button, or Add model. */
 type FinalFocus = () => HTMLElement | true;
 
-/** What the model sheet says once a change is made, and the model to focus after. */
 type Done = (notice: string, model: string | null) => void;
 
-/**
- * A model's sheet, opened by its row: its price as a form with the save
- * rule (Save waits for a change; closing with one asks first, and so does
- * leaving the page), as all calls (a correction) or from a day on (a price
- * change: calls before it keep the earlier price); its details; Price as
- * another model and Reset to built-in, each a dialog over it. Without a
- * model, it adds one: the provider and model ID, then the price.
- */
+/** Ask before discarding unsaved prices (docs/design-system.md, "The save rule"). Dated changes preserve earlier prices; corrections apply to all calls. */
 function ModelSheet({
   model,
   list,
@@ -446,7 +413,6 @@ function ModelSheet({
   finalFocus,
   onDone,
 }: {
-  /** The model whose price it edits; undefined: Add model. */
   model: AiModel | undefined;
   list: AiModelList;
   timeZone: string;
@@ -457,7 +423,7 @@ function ModelSheet({
 }) {
   const afterChange = useAfterChange();
   const adding = model === undefined;
-  // The day the sheet opened: a From date that midnight moved would read as the server's change.
+  // Capture today when opening so midnight does not change the form's default date.
   const [today] = React.useState(() => todayIn(timeZone));
   const form = useDirtyForm(draftOf(model, today), {
     key: model?.model ?? "",
@@ -465,7 +431,7 @@ function ModelSheet({
   });
   const draft = form.values;
   const [checked, setChecked] = React.useState(false);
-  // The dialog over the sheet, kept while it closes so its content stays for the animation.
+  // Keep dialog content through its closing animation.
   const [inner, setInner] = React.useState<"discard" | "price-as" | "reset">("discard");
   const [innerOpen, setInnerOpen] = React.useState(false);
   const ask = (kind: "discard" | "price-as" | "reset") => {
@@ -484,7 +450,6 @@ function ModelSheet({
       }),
     onSuccess: (_, values) => {
       form.saved(values);
-      // The sheet closes: anything typed while the request ran goes with it.
       form.discard();
       afterChange();
       const name = values.model.trim();
@@ -533,7 +498,6 @@ function ModelSheet({
     if (form.dirty) ask("discard");
     else onOpenChange(false);
   };
-  // Price as and Reset end the sheet's visit: what was typed in it goes.
   const doneElsewhere = (notice: string) => {
     form.discard();
     setInnerOpen(false);
@@ -739,7 +703,7 @@ function ModelSheet({
             </Button>
           </SheetFooter>
         </form>
-        {/* Outside the form: a dialog's own form must not submit the price. */}
+        {/* Keep the dialog's form outside the price form to prevent nested submission. */}
         <Dialog open={innerOpen} onOpenChange={setInnerOpen}>
           <DialogContent className="sm:max-w-lg" showCloseButton={inner !== "discard"}>
             {inner === "discard" && (
@@ -782,7 +746,7 @@ function ModelSheet({
   );
 }
 
-/** Price as: an unknown model (a dated snapshot) takes another model's price, for all its calls. */
+/** A price alias applies to all calls, including dated snapshots. */
 function PriceAsForm({
   model,
   list,
@@ -793,7 +757,7 @@ function PriceAsForm({
   onDone: (notice: string) => void;
 }) {
   const afterChange = useAfterChange();
-  // Models with a price of their own: one level only.
+  // Offer models with their own price; aliases allow only one level.
   const targets = React.useMemo(
     () =>
       list.models.filter(
@@ -864,7 +828,7 @@ function PriceAsForm({
             <ComboboxList>
               {(item: string) => (
                 <ComboboxItem key={item} value={item}>
-                  {/* Wrapped, not cut off: a tooltip would not show on a highlighted option. */}
+                  {/* Wrap labels because highlighted options cannot show tooltips. */}
                   <span className="min-w-0 break-words">{item}</span>
                 </ComboboxItem>
               )}
@@ -890,7 +854,6 @@ function PriceAsForm({
   );
 }
 
-/** Asks before removing a model's own prices. */
 function ResetForm({ model, onDone }: { model: AiModel; onDone: (notice: string) => void }) {
   const afterChange = useAfterChange();
   const reset = useMutation({
@@ -933,7 +896,6 @@ function ResetForm({ model, onDone }: { model: AiModel; onDone: (notice: string)
   );
 }
 
-/** The table's loading shape: its title and a few rows. */
 function TableSkeleton() {
   return (
     <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading the AI models">
@@ -982,11 +944,10 @@ function ModelsTable({
             const covers = coversLine(model);
             return (
               <TableRow key={model.model} {...clickableRow()}>
-                {/* Room for a whole Bedrock ID ("us.anthropic.…-v1:0") once the table has it. */}
+                {/* Reserve room for full Bedrock IDs such as "us.anthropic.…-v1:0". */}
                 <TableCell className={cn("max-w-64 min-w-40 @min-[96rem]:max-w-100", PINNED)}>
                   <TruncatedText
                     text={model.model}
-                    // A button is only as wide as its text: held to the cell, so it cuts off.
                     className="max-w-full text-left font-mono text-sm text-link hover:underline"
                     render={
                       <button
@@ -1044,20 +1005,11 @@ function ModelsTable({
   );
 }
 
-/** The models' buttons in the table, in its order. */
 const modelButtons = (list: HTMLElement | null) => [
   ...(list?.querySelectorAll<HTMLElement>("[data-model]") ?? []),
 ];
 
-/**
- * The AI models tab of the instance's Settings, for the owner and admins
- * (docs/dashboard.md, "AI models"): every model the instance's apps
- * called in the last 30 days and every built-in one, each with its price
- * and where it comes from, 50 rows at a time, with a search. A click on a
- * row opens the model's sheet; Add model opens the same sheet empty.
- * `?show=no-price` lists only the models without a price, as the AI page's
- * link opens it.
- */
+/** List models called in the last 30 days and all built-in models (docs/dashboard.md, "AI models"). */
 export function AiModelsTab({ timeZone }: InstanceTabProps) {
   const list = useQuery(aiModelsQuery());
   const [show, setShow] = useSearchParam("show");
@@ -1094,11 +1046,7 @@ export function AiModelsTab({ timeZone }: InstanceTabProps) {
   );
 }
 
-/**
- * What the sheet is open for: a model, by its ID (with the row as it was,
- * for a model a reset takes out of the list while the sheet closes), or a
- * new one.
- */
+/** Keep the row snapshot if a reset removes the model during the closing animation. */
 type SheetFor = { model: string; snapshot: AiModel } | "add";
 
 function ModelsList({
@@ -1114,20 +1062,17 @@ function ModelsList({
 }) {
   const [search, setSearch] = React.useState("");
   const query = search.trim();
-  // How many rows show, for this filter and search; a new one starts again at a page.
   const filterKey = `${noPriceOnly ? NO_PRICE : "all"}:${query}`;
   const [paging, setPaging] = React.useState({ key: filterKey, rows: MODELS_PAGE });
   const rows = paging.key === filterKey ? paging.rows : MODELS_PAGE;
-  // What the sheet is for, and whether it is open: kept while it closes, for its animation.
+  // Keep sheet content through its closing animation.
   const [sheet, setSheet] = React.useState<SheetFor | null>(null);
   const [open, setOpen] = React.useState(false);
-  // Opened again for the same model, the sheet starts afresh.
   const [opened, setOpened] = React.useState(0);
   const [notice, setNotice] = React.useState("");
   const listRef = React.useRef<HTMLDivElement>(null);
   const addButton = React.useRef<HTMLButtonElement>(null);
-  // The model whose button focus goes back to, and its row's place, for the row after it
-  // when a change takes it out of the list (a price set under No price, a reset).
+  // Remember the model and row position so focus can return after a price change removes its row.
   const focusTo = React.useRef<string | null>(null);
   const place = React.useRef(0);
   const focusTarget = React.useCallback(() => {
@@ -1136,8 +1081,7 @@ function ModelsList({
     return own ?? buttons[Math.min(place.current, buttons.length - 1)] ?? addButton.current;
   }, []);
   const finalFocus = React.useCallback<FinalFocus>(() => focusTarget() ?? true, [focusTarget]);
-  // A change reads the list again: once the new list is in, focus that lost its button
-  // (the row left the list after the sheet closed) goes to the row in its place.
+  // After refetch, move focus to the replacement row if its original button disappeared.
   const changedFrom = React.useRef<AiModelList | null>(null);
   React.useEffect(() => {
     const before = changedFrom.current;
@@ -1146,13 +1090,12 @@ function ModelsList({
     const active = document.activeElement;
     if (active === null || active === document.body || !active.isConnected) focusTarget()?.focus();
   }, [list, open, focusTarget]);
-  // Show more that shows the last rows goes away: focus moves to the first of them.
+  // When Show more disappears, focus the first newly shown row.
   const focusRow = React.useRef<number | null>(null);
 
   const unpriced = list.models.filter((model) => model.price === null);
   const filtered = (noPriceOnly ? unpriced : list.models).filter((model) => matches(model, query));
   const shown = filtered.slice(0, rows);
-  // After the render that showed the rows (a check of a ref on every render).
   React.useEffect(() => {
     const index = focusRow.current;
     if (index === null) return;

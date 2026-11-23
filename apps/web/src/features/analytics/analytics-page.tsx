@@ -92,12 +92,10 @@ interface ListTab {
   nameHeading: string;
   secondaryHeading: string;
   empty: string;
-  /** The full list, for "Show all". */
   report: ListReport;
   rows: RankedRow[];
 }
 
-/** A list of visits grouped by one property. */
 function visitsTab(
   value: string,
   label: string,
@@ -116,7 +114,6 @@ function visitsTab(
   };
 }
 
-/** A page's heatmap, after its path in the Pages lists: the page's days and environment. */
 function HeatmapLink({
   projectId,
   search,
@@ -145,11 +142,7 @@ function HeatmapLink({
   );
 }
 
-/**
- * One breakdown as a compact table; with more than one list of the kind, a
- * toggle group switches between them. A list that shows its full
- * LIST_PREVIEW_ROWS may have more: "Show all" opens it in full.
- */
+/** A full LIST_PREVIEW_ROWS preview may have more rows. */
 function BreakdownSection({
   title,
   tabs,
@@ -161,7 +154,6 @@ function BreakdownSection({
   tabs: ListTab[];
   projectId: string;
   search: PageSearch;
-  /** Each row with a path links to its page's heatmap, after its name. */
   heatmapLinks?: boolean;
 }) {
   const [first] = tabs;
@@ -235,7 +227,6 @@ function BreakdownSection({
   );
 }
 
-/** "Changes compare with 3 to 9 Nov 2026, up to 15:00 on 9 Nov." */
 function comparisonNote({ previous, timeZone }: Analytics): string {
   const days = formatDayRange(previous.firstDay, previous.lastDay);
   const before = previous.summary;
@@ -251,11 +242,7 @@ function comparisonNote({ previous, timeZone }: Analytics): string {
     : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}.`;
 }
 
-/**
- * All the period's figures in one strip. A change shows only when its counts
- * reach the minimum (lib/change.ts): visitors, visits and pageviews rest on
- * themselves, the per-visit figures and the bounce rate on visits.
- */
+/** Use the minimum in lib/change.ts. Per-visit metrics and bounce rate use visit counts. */
 function Summary({ analytics }: { analytics: Analytics }) {
   const { summary } = analytics;
   const before = analytics.previous.summary;
@@ -323,7 +310,6 @@ function Summary({ analytics }: { analytics: Analytics }) {
   );
 }
 
-/** A short, wide chart of one metric per day, and every day's numbers on demand. */
 function Trend({ days }: { days: DayPoint[] }) {
   const [metric, setMetric] = React.useState<Metric>("visitors");
   const [showTable, setShowTable] = React.useState(false);
@@ -449,7 +435,7 @@ function Reports({
     <>
       <Summary analytics={analytics} />
       <Trend days={analytics.days} />
-      {/* Side by side by the content's width, not the window's: the sidebar takes 16rem. */}
+      {/* Use content width; the sidebar takes 16rem. */}
       <div className="@container border-t pt-5">
         <div className="grid gap-x-8 gap-y-8 @3xl:grid-cols-2 @5xl:grid-cols-3">
           <BreakdownSection
@@ -501,7 +487,7 @@ function Reports({
             title="Releases"
             tabs={[
               {
-                // Only "Unknown" means the site names no release: say how to.
+                // Show setup help only for the unnamed release ("Unknown").
                 ...visitsTab(
                   "release",
                   "Releases",
@@ -543,7 +529,6 @@ function Reports({
   );
 }
 
-/** Shaped like the report: the strip of figures, the short chart, and the breakdowns. */
 function LoadingReports() {
   return (
     <>
@@ -569,10 +554,6 @@ function LoadingReports() {
   );
 }
 
-/**
- * The active filters, each with a way to remove it, and a way to remove them
- * all; with none, how to add one.
- */
 function ActiveFilters({ projectId, search }: { projectId: string; search: PageSearch }) {
   const active = activeFilters(search.filters);
   if (active.length === 0) {
@@ -620,7 +601,6 @@ function ActiveFilters({ projectId, search }: { projectId: string; search: PageS
   );
 }
 
-/** No data in the range: nothing ever arrived, nothing matches the filters, or nothing lately. */
 function NoData({
   projectId,
   project,
@@ -630,11 +610,10 @@ function NoData({
   projectId: string;
   project: ProjectSummary | undefined;
   search: PageSearch;
-  /** Other environments have events, which the environment picker can show. */
   otherEnvironments: boolean;
 }) {
   const neverReceived = project?.lastEventAt === null;
-  // The snippet is in the project's settings, for those who manage projects.
+  // Installation instructions require project management access.
   const canInstall = useAccess().can("projects");
   const isYear = "period" in search.range && search.range.period === "12m";
   if (!neverReceived && activeFilters(search.filters).length > 0) {
@@ -709,11 +688,7 @@ const hasData = (analytics: Analytics) =>
   analytics.summary.visits > 0 ||
   analytics.customEvents.length > 0;
 
-/**
- * Web analytics for one project: the numbers, a trend, and ranked lists,
- * all for a period that ends today or for chosen days, in the
- * timezone set in Settings.
- */
+/** Use the timezone set in Settings. */
 export function AnalyticsPage({
   projectId,
   range,
@@ -733,7 +708,7 @@ export function AnalyticsPage({
     void navigate({
       to: "/projects/$projectId/web-analytics",
       params: { projectId },
-      // New days, or another environment, keep everything else.
+      // Preserve other filters when changing dates or environment.
       search: searchOf({ ...search, ...next }),
     });
 
@@ -752,8 +727,7 @@ export function AnalyticsPage({
           <PeriodSelect range={range} answered={data} onRange={(next) => show({ range: next })} />
         }
         environment={
-          // Only once there is a choice (most projects have production alone),
-          // and always while another is shown, so there is a way back.
+          // Keep the picker visible for a selected environment so the user can switch back.
           data !== undefined && (
             <EnvironmentSelect
               environment={environment}

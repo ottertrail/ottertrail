@@ -9,7 +9,6 @@ import { type MetricKind, metricSparklineQuery } from "@/lib/metrics-api";
 import { stepText } from "./chart-time";
 import { formatMetricValue, formatRate } from "./metric-format";
 
-/** What each kind's sparkline draws, in words: the line its chart opens on. */
 const SPARKLINE_MEASURES: Record<MetricKind, string> = {
   gauge: "Average",
   updown: "Total",
@@ -17,31 +16,21 @@ const SPARKLINE_MEASURES: Record<MetricKind, string> = {
   histogram: "95th percentile",
 };
 
-/** The longest period a sparkline is drawn for, in days, as the API allows. */
+/** Match the API's maximum sparkline period in days. */
 export const SPARKLINE_MAX_DAYS = 7;
 
 const WIDTH = 96;
 const HEIGHT = 24;
-/** Room for the 2px line and the latest point's dot at the edges. */
+/** Leave room for the 2px stroke and latest-point dot. */
 const PAD = 3;
 
-/**
- * A small line of one metric over the period, in a row of the Metrics
- * list: the measure its chart opens on, in at most 30 buckets, on its own
- * scale from its lowest to its highest value. The line is the de-emphasis
- * gray, 2px, broken where nothing arrived; the latest value is a dot in
- * the first chart color. No axis: the metric's own chart carries the
- * numbers. The line is decoration, hidden from screen readers and never
- * focused, so a row adds no tab stop: its words (the measure, the lowest,
- * the highest, and the latest value) are visually hidden text beside it,
- * and the hover title for the pointer.
- */
+/** Provide hidden text and a hover title; the line itself adds no tab stop. */
 function Line({
   values,
   label,
 }: {
   values: (number | null)[];
-  /** What it shows, in words: visually hidden text and the hover title. */
+  /** Used as hidden text and the hover title. */
   label: string;
 }) {
   const present = values.filter((value): value is number => value !== null);
@@ -109,12 +98,7 @@ function Line({
   );
 }
 
-/**
- * Whether `ref`'s element is within 200 pixels of what the reader sees,
- * now: of the scrolling content panel (`app-content`), where the pages
- * scroll, or of the window outside it. Without IntersectionObserver (an
- * old browser), always.
- */
+/** Observe within 200 pixels of app-content or the window. Treat missing IntersectionObserver as visible. */
 function useNearView(ref: React.RefObject<HTMLElement | null>): boolean {
   const [near, setNear] = React.useState(() => typeof IntersectionObserver === "undefined");
   React.useEffect(() => {
@@ -133,15 +117,7 @@ function useNearView(ref: React.RefObject<HTMLElement | null>): boolean {
   return near;
 }
 
-/**
- * One row's sparkline, asked for only while the row is within 200 pixels
- * of the view: a row scrolled past does not ask again when the period or
- * environment changes, only once it is back in view. At most two lines
- * of a page load at once (metricSparklineQuery), and the API gives them
- * one of its places. Loading is a skeleton; a failed load, a period with
- * nothing, and a histogram without bucket counts are each a dash that
- * says so, never a flat line.
- */
+/** Fetch within 200 pixels of view, at most two at once (metricSparklineQuery). Missing data, errors, and histograms without counts show a dash. */
 export function MetricSparkline({
   projectId,
   range,
@@ -153,10 +129,7 @@ export function MetricSparkline({
   range: PageRange;
   environment: string;
   metric: { name: string; kind: MetricKind; unit: string };
-  /**
-   * The period's days: past SPARKLINE_MAX_DAYS no line is asked for.
-   * Undefined while the list's answer for the period has not come: wait.
-   */
+  /** Wait while undefined; skip periods longer than SPARKLINE_MAX_DAYS. */
   days: number | undefined;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);

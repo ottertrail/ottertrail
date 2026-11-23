@@ -10,11 +10,7 @@ import { bucketRange, type ListChartFrame, selectHint } from "./list-chart-frame
 import { severityParts } from "./severity-parts";
 import { StackedBarChart } from "./stacked-bar-chart";
 
-/**
- * Above the logs list: the records of the period and filters per time
- * bucket, stacked by severity, from its own request, so it loads, fails,
- * and retries without the list. A bar narrows the period to its day.
- */
+/** Load independently of the list so chart failures cannot block it. */
 export function LogsVolumeChart({
   projectId,
   range,

@@ -27,7 +27,6 @@ import {
 
 import { countLine, stepsLine } from "./format";
 
-/** What a saved funnel keeps, and what it does not. */
 export function DefinitionSummary({ definition }: { definition: FunnelDefinition }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-hairline p-3 text-sm">
@@ -48,7 +47,7 @@ export function DefinitionSummary({ definition }: { definition: FunnelDefinition
   );
 }
 
-/** The form, mounted while the dialog is open, so each opening starts from `initialName`. */
+/** Remount on open to reset to initialName. */
 function FunnelNameForm({
   projectId,
   title,
@@ -78,7 +77,7 @@ function FunnelNameForm({
       rememberSavedFunnel(queryClient, projectId, funnel);
       onSaved(funnel);
     },
-    // Changed or deleted elsewhere: the list as it is now, before trying again.
+    // Refetch after conflicts before retrying.
     onError: () => void queryClient.invalidateQueries({ queryKey: savedFunnelsKey(projectId) }),
   });
 
@@ -138,11 +137,6 @@ function FunnelNameForm({
   );
 }
 
-/**
- * Asks for a saved funnel's name, checked as the API checks it, then saves
- * it with `save`: a new funnel, or a new name. A name already taken shows
- * on the field; any other refusal of the API, in an alert.
- */
 export function FunnelNameDialog({
   open,
   onOpenChange,
@@ -152,10 +146,7 @@ export function FunnelNameDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /**
-   * Where focus goes once saved, when the button that opened the dialog is
-   * gone by then. Without it, and on Cancel, focus goes back to that button.
-   */
+  /** After saving, focus here if the trigger is gone. Cancel returns focus to the trigger. */
   savedFocus?: React.RefObject<HTMLElement | null>;
   projectId: string;
   title: string;
@@ -166,7 +157,6 @@ export function FunnelNameDialog({
   onSaved: (funnel: SavedFunnel) => void;
   children?: React.ReactNode;
 }) {
-  // Whether this opening ended in a save: read when the dialog has closed.
   const saved = React.useRef(false);
   React.useEffect(() => {
     if (open) saved.current = false;

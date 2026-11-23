@@ -31,7 +31,7 @@ import { formatWhole } from "../analytics/format";
 import { elementTitle, formatSavedAt } from "./format";
 import { type MissingElements, readSnapshotMissingMessage } from "./snapshot-messages";
 
-/** Asks before deleting the saved view; the heatmap's data stays. */
+/** Delete the saved view only; heatmap data stays. */
 function DeleteSnapshot({
   projectId,
   path,
@@ -93,7 +93,6 @@ function DeleteSnapshot({
   );
 }
 
-/** The elements of the heatmap the snapshot does not have, with their clicks. */
 function NotOnSnapshot({ missing }: { missing: MissingElements }) {
   if (missing.total === 0) return null;
   const more = missing.total - missing.items.length;
@@ -119,13 +118,7 @@ function NotOnSnapshot({ missing }: { missing: MissingElements }) {
   );
 }
 
-/**
- * A saved view: the page as its owner saved it from the overlay, rebuilt
- * in the replay player's frame with this report's heatmap drawn over it
- * (docs/dashboard.md, "Heatmaps"). The frame is an API page under its own
- * Content Security Policy; it sends back only the elements it did not
- * find, checked (snapshot-messages.ts).
- */
+/** The API frame has its own CSP. Validate its missing-element messages in snapshot-messages.ts (docs/dashboard.md, "Heatmaps"). */
 function SavedView({
   projectId,
   path,
@@ -143,14 +136,14 @@ function SavedView({
 }) {
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const { theme } = useTheme();
-  // Deleting a saved view is the owner's and admins' (docs/access.md); members see it.
+  // Only owners and admins may delete saved views (docs/access.md).
   const canManage = useAccess().can("projects");
   const src = `${snapshotPlayerSrc(projectId, snapshot.device, path, range, environment)}&v=${encodeURIComponent(snapshot.savedAt)}`;
-  // The theme of the moment the view opened, for its first paint; later ones as a message.
+  // Send theme changes as messages so they do not reload the frame.
   const [opened, setOpened] = React.useState({ src, theme });
   if (opened.src !== src) setOpened({ src, theme });
   const frameSrc = playerUrlInTheme(opened.src, opened.theme);
-  // What the frame said, for the address it said it from: a new view starts with nothing.
+  // Associate messages with their source URL so a new view starts empty.
   const [heard, setHeard] = React.useState<{ src: string; missing: MissingElements } | null>(null);
   const missing =
     heard !== null && heard.src === frameSrc ? heard.missing : { items: [], total: 0 };
@@ -181,9 +174,7 @@ function SavedView({
         </p>
         {canManage && <DeleteSnapshot projectId={projectId} path={path} device={snapshot.device} />}
       </div>
-      {/* No sandbox: the player must run its script and read the snapshot as the
-          signed-in user, and the page's own Content Security Policy keeps the
-          snapshot from running anything (its frame inside is rrweb's sandbox). */}
+      {/* The player needs scripts and authenticated snapshot access. Its CSP and rrweb's inner sandbox isolate the snapshot. */}
       {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
       <iframe
         ref={frameRef}
@@ -201,11 +192,6 @@ function SavedView({
   );
 }
 
-/**
- * The page's saved view for the device the report shows, with the heatmap
- * over it; without one, a line on how to save it. Nothing for all devices,
- * or where the server keeps no saved views (no object store).
- */
 export function SnapshotSection({
   projectId,
   path,

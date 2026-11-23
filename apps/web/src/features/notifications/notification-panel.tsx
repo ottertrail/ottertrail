@@ -12,10 +12,8 @@ import { useMarkAllRead } from "./inbox-hooks";
 import { NotificationList } from "./notification-items";
 import { PanelHead, type PanelKind } from "./panel-title";
 
-/** Items the bell shows; the Notifications page has the rest. */
 const BELL_ITEMS = 10;
 
-/** Three rows' shapes while the items load. */
 function PanelSkeleton() {
   return (
     <div className="flex flex-col gap-2 p-3" aria-busy="true" aria-label="Loading">
@@ -26,11 +24,6 @@ function PanelSkeleton() {
   );
 }
 
-/**
- * The bell's panel: the newest items, with Mark all read and a link to the
- * Notifications page. Loaded the first time the bell opens
- * (notification-bell.tsx), so a first visit does not download it.
- */
 export function BellPanel({
   unread,
   close,

@@ -66,14 +66,9 @@ export interface WidgetProps {
   arrange?: Arrange | undefined;
 }
 
-/** The link in a widget's head, to the page it summarises. */
 const headLink = "text-sm whitespace-nowrap text-link hover:underline";
 
-/**
- * A cell's figure with its change from the period before, shown by the
- * same rule as the stat strips' (lib/change.ts): "New" when the period
- * before had none.
- */
+/** Use lib/change.ts thresholds. Show "New" when the previous period had none. */
 function Changed({
   value,
   change,
@@ -122,7 +117,6 @@ const headClass = "h-8 text-xs font-normal text-ink-subtle";
 const numHeadClass = `${headClass} text-right`;
 const numClass = "text-right tabular-nums";
 
-/** The widget's numbers, fetched only while it is shown. */
 function useWidget<K extends WidgetId>(id: K, props: WidgetProps) {
   return useQuery({
     ...widgetQuery(props.projectId, id, props.period, props.environment),
@@ -130,7 +124,6 @@ function useWidget<K extends WidgetId>(id: K, props: WidgetProps) {
   });
 }
 
-/** "09:41 today", or "14 Nov, 09:41" on another day, in the instance's timezone. */
 function formatSince(iso: string, timeZone: string): string {
   const day = (moment: Date) =>
     new Intl.DateTimeFormat("en-GB", { timeZone, day: "numeric", month: "short" }).format(moment);
@@ -145,7 +138,6 @@ function formatSince(iso: string, timeZone: string): string {
     : `${day(new Date(iso))}, ${time}`;
 }
 
-// 1. Needs attention now.
 export function AttentionWidget(props: WidgetProps) {
   const query = useWidget("attention", props);
   const { canUse } = useAccess();
@@ -294,7 +286,6 @@ export function AttentionWidget(props: WidgetProps) {
   );
 }
 
-// 2. New and returning errors.
 export function ErrorsWidget(props: WidgetProps) {
   const query = useWidget("errors", props);
   const { projectId, period } = props;
@@ -428,7 +419,6 @@ export function ErrorsWidget(props: WidgetProps) {
   );
 }
 
-// 3. Uptime and response time.
 export function UptimeWidget(props: WidgetProps) {
   const query = useWidget("uptime", props);
   const { canUse } = useAccess();
@@ -546,11 +536,9 @@ export function UptimeWidget(props: WidgetProps) {
   );
 }
 
-/** The share of requests that failed; null without requests. */
 const failedShare = (failed: number, requests: number) =>
   requests === 0 ? null : failed / requests;
 
-// 4. Server requests, failures and p95.
 export function ServicesWidget(props: WidgetProps) {
   const query = useWidget("services", props);
   const { projectId, period } = props;
@@ -673,12 +661,10 @@ export function ServicesWidget(props: WidgetProps) {
   );
 }
 
-// The estimated cost of AI calls.
 export function AiCostWidget(props: WidgetProps) {
   const query = useWidget("ai-cost", props);
   const { projectId, period, environment } = props;
   const title = widgetTitle("ai-cost");
-  // The AI page over the Overview's days and environment, as the widget counts them.
   const aiSearch = {
     ...(period === DEFAULT_PERIOD ? {} : { period }),
     ...environmentSearch(environment),
@@ -795,7 +781,6 @@ export function AiCostWidget(props: WidgetProps) {
 const CORE = ["lcp", "inp", "cls"] as const;
 const RANK: Record<Rating, number> = { good: 0, needsImprovement: 1, poor: 2 };
 
-// 5. Page speed.
 export function SpeedWidget(props: WidgetProps) {
   const query = useWidget("speed", props);
   const { projectId, period } = props;
@@ -922,7 +907,6 @@ export function SpeedWidget(props: WidgetProps) {
   );
 }
 
-/** A goal's visitors, conversion, and times, as a stat strip. */
 function goalStats(goal: OverviewGoal, visitors: number, previousVisitors: number): Stat[] {
   return [
     {
@@ -943,7 +927,6 @@ function goalStats(goal: OverviewGoal, visitors: number, previousVisitors: numbe
   ];
 }
 
-// The headline business figure: the main goal, or new signed-in users.
 export function MainGoalWidget(props: WidgetProps) {
   const query = useWidget("main-goal", props);
   const { can, canUse } = useAccess();
@@ -1019,7 +1002,6 @@ export function MainGoalWidget(props: WidgetProps) {
   );
 }
 
-/** Visitors per day as a short line, wide and low; its numbers are read out in its label. */
 function DayLine({ days }: { days: { day: string; visitors: number }[] }) {
   const width = 600;
   const height = 64;
@@ -1082,7 +1064,6 @@ function DayLine({ days }: { days: { day: string; visitors: number }[] }) {
   );
 }
 
-// 6. Traffic.
 export function TrafficWidget(props: WidgetProps) {
   const query = useWidget("traffic", props);
   const { can } = useAccess();
@@ -1158,7 +1139,6 @@ export function TrafficWidget(props: WidgetProps) {
   );
 }
 
-// 7. Goals and conversion.
 export function GoalsWidget(props: WidgetProps) {
   const query = useWidget("goals", props);
   const { canUse } = useAccess();
@@ -1260,11 +1240,7 @@ export function GoalsWidget(props: WidgetProps) {
   );
 }
 
-/**
- * A cohort's share active in a later week: "40%"; "Not yet" before that
- * week begins; "This week, not over" while it runs, since a share of a
- * week in progress only grows.
- */
+/** Mark incomplete weeks so partial retention is not read as final. */
 const retained = (later: Retained | null, users: number) =>
   later === null
     ? "Not yet"
@@ -1274,11 +1250,9 @@ const retained = (later: Retained | null, users: number) =>
         ? MISSING
         : formatPercent(later.users / users);
 
-/** A cohort's share active in its second week, once that week is over. */
 const week1Share = (cohort: { week1: Retained | null; users: number }) =>
   (cohort.week1?.users ?? 0) / cohort.users;
 
-// 8. Signed-in users.
 export function UsersWidget(props: WidgetProps) {
   const query = useWidget("users", props);
   const { canUse } = useAccess();
@@ -1418,7 +1392,6 @@ export function UsersWidget(props: WidgetProps) {
   );
 }
 
-// 9. Top sources and pages.
 export function SourcesWidget(props: WidgetProps) {
   const query = useWidget("sources", props);
   const { projectId, period } = props;

@@ -21,7 +21,6 @@ const TONES: Record<string, StatusTone> = {
   fatal: "critical",
 };
 
-/** A record's severity as the sender named it, or its range's name, as an icon and a label. */
 export function SeverityBadge({ log }: { log: LogSummary }) {
   const range = severityOf(log.severityNumber);
   const label = log.severityText !== "" ? log.severityText : (range?.label ?? "No severity");
@@ -39,7 +38,6 @@ export function SeverityBadge({ log }: { log: LogSummary }) {
   );
 }
 
-/** The record's trace: a link to its page, or on that page, a button that shows its span. */
 function TraceFacts({
   log,
   projectId,
@@ -58,7 +56,6 @@ function TraceFacts({
       <dt className="text-xs text-ink-subtle">Trace</dt>
       <dd className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {onSpan === undefined && inWorkbench ? (
-          // Beside the logs list: the trace opens in the Traces workbench, on its span.
           <Link
             to="/projects/$projectId/traces"
             params={{ projectId }}
@@ -102,12 +99,7 @@ function TraceFacts({
 
 const hasTrace = (log: LogSummary): log is LogSummary & { traceId: string } => log.traceId !== null;
 
-/**
- * An opened record: its whole body, times, labels, attributes, and
- * resource attributes, read now (a list holds only a summary of each), and
- * its trace. Under a row it opened, and in the Logs workbench beside the
- * list (`inWorkbench`), where the trace's link opens the Traces workbench.
- */
+/** Fetch full records on opening; list rows hold summaries only. Embedded trace links stay in the workbench. */
 export function LogRecordView({
   summary,
   timeZone,
@@ -244,7 +236,6 @@ function Entry({
         onClick={() => setOpen((value) => !value)}
         className="flex w-full min-w-0 flex-col gap-1 rounded-lg px-3 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex-row sm:items-center sm:gap-3"
       >
-        {/* One line from 40rem; under it, the message on a second line. */}
         <span className="flex min-w-0 shrink-0 items-center gap-3">
           <ChevronRightIcon
             aria-hidden="true"
@@ -293,7 +284,7 @@ function Entry({
   );
 }
 
-/** A line in the live view's list where records were left out (live-logs.ts, LiveNote). */
+/** Match gap notes from live-logs.ts (LiveNote). */
 export function LiveNoteItem({ text, className }: { text: string; className?: string }) {
   return (
     <li
@@ -309,11 +300,6 @@ export function LiveNoteItem({ text, className }: { text: string; className?: st
   );
 }
 
-/**
- * Log records, each a row that opens to its whole body, attributes,
- * resource attributes, and its trace: a link to the trace's page, or, on
- * that page, a button that shows its span.
- */
 export function LogList({
   logs,
   timeZone,
@@ -328,13 +314,9 @@ export function LogList({
   timeZone: string;
   projectId: string;
   label: string;
-  /** On a trace's page: selects the record's span in the waterfall. */
   onSpan?: (spanId: string) => void;
-  /** The trace's spans' names, by span ID, for the button. */
   spanNames?: ReadonlyMap<string, string>;
-  /** A record shown open from the start, such as one an address names. */
   openId?: string | undefined;
-  /** The live view's lines where records were left out, each before its record ("" at the end). */
   notes?: readonly { id: string; before: string; text: string }[];
 }) {
   const notesBefore = (id: string) =>

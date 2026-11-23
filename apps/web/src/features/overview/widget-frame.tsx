@@ -14,7 +14,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-/** What edit mode gives each widget: its place, and the buttons that change it. */
 export interface Arrange {
   index: number;
   count: number;
@@ -23,12 +22,7 @@ export interface Arrange {
   onToggle: () => void;
 }
 
-/**
- * One widget of the overview: a region under a hairline, its title, a link
- * to the page it summarises, and in edit mode the buttons that move, hide,
- * and show it. A hidden widget, in edit mode, shows only its head: its
- * numbers are not fetched.
- */
+/** Hidden widgets do not fetch their data. */
 export function WidgetFrame({
   id,
   title,
@@ -39,7 +33,6 @@ export function WidgetFrame({
   id: string;
   title: string;
   link?: React.ReactNode;
-  /** Present in edit mode. */
   arrange?: Arrange;
   children: React.ReactNode;
 }) {
@@ -108,7 +101,6 @@ export function WidgetFrame({
   );
 }
 
-/** A widget's numbers in their four states: loading, failed, and through `render`, empty or full. */
 export function WidgetState<T>({
   title,
   query,
@@ -144,7 +136,6 @@ export function WidgetState<T>({
   return <div className={cn(query.isPlaceholderData && "opacity-60")}>{children(query.data)}</div>;
 }
 
-/** Nothing to show: what belongs here, and the one thing that fills it. */
 export function WidgetEmpty({
   title,
   children,
@@ -165,7 +156,6 @@ export function WidgetEmpty({
   );
 }
 
-/** A widget's note under its numbers: what they mean, in a sentence. */
 export function WidgetNote({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-ink-subtle">{children}</p>;
 }

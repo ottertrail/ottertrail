@@ -19,12 +19,7 @@ import { MAX_RANGE_DAYS, rangeProblem } from "@/lib/analytics-api";
 
 import { DAY_PLACEHOLDER, DAY_TEXT_LENGTH, dateOf, dayFromText, dayOf, dayText } from "./day-text";
 
-/**
- * Chosen days for the page: a first and a last day, both included, in the
- * timezone set in Settings. Picked in the calendar (a first click, then a
- * last), or typed, day first. Either way, the days are checked as the API
- * checks them.
- */
+/** Both dates are inclusive and use the timezone set in Settings. */
 export function CustomRangeDialog({
   open,
   onOpenChange,
@@ -43,9 +38,8 @@ export function CustomRangeDialog({
 }) {
   const [fromText, setFromText] = React.useState(dayText(initialFrom));
   const [toText, setToText] = React.useState(dayText(initialTo));
-  // A half-typed day is not an error yet: only once complete, left, or sent.
+  // Validate after completion, blur, or submit.
   const [checked, setChecked] = React.useState({ from: false, to: false });
-  // The month the calendar shows: where the range ends, then wherever typing goes.
   const [month, setMonth] = React.useState(
     () => dateOf(initialTo) ?? dateOf(initialFrom) ?? new Date(),
   );
@@ -64,7 +58,7 @@ export function CustomRangeDialog({
         : rangeProblem(from, to);
   const fromShown = checked.from || fromText.length === DAY_TEXT_LENGTH;
   const toShown = checked.to || toText.length === DAY_TEXT_LENGTH;
-  // Each field's own problem waits for that field; the range's for both.
+  // Show range errors only after both fields have been checked.
   const shownProblem =
     problem === null
       ? null
@@ -114,17 +108,16 @@ export function CustomRangeDialog({
           </DialogHeader>
           <Calendar
             mode="range"
-            // A click on a complete range starts a new one: first day, then last.
+            // A click on a complete range starts a new range.
             resetOnSelect
             locale={enGB}
             selected={{ from: dateOf(from ?? ""), to: dateOf(to ?? "") }}
             onSelect={picked}
             month={month}
             onMonthChange={setMonth}
-            // Larger days than the default, and the dialog's own background.
             className="mx-auto rounded-lg border bg-transparent [--cell-size:--spacing(9)]"
             classNames={{
-              // Today underlined, not filled: a fill reads as part of a range.
+              // Underline today; a fill would look like part of the range.
               today:
                 "[&_button]:font-semibold [&_button]:underline [&_button]:decoration-2 [&_button]:underline-offset-4",
             }}

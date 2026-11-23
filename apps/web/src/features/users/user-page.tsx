@@ -38,7 +38,6 @@ import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "
 import { UnverifiedIdsNotice } from "./unverified-ids-notice";
 import { UserAi } from "./user-ai";
 
-/** An error: its type and message, linked to its group on the Errors page. */
 function ErrorTitle({
   error,
   path,
@@ -50,7 +49,6 @@ function ErrorTitle({
   path: string;
   projectId: string;
   environment: string;
-  /** Days that include this occurrence. */
   range: ReturnType<typeof rangeCovering>;
 }) {
   const text = `${error.type}${error.message === "" ? "" : `: ${error.message}`}`;
@@ -93,7 +91,6 @@ function ErrorTitle({
   );
 }
 
-/** An error's replay: a link to play it, or that it is on its way; nothing without one. */
 function ActivityReplay({
   activity,
   projectId,
@@ -127,7 +124,6 @@ function ActivityReplay({
   return null;
 }
 
-/** The user's latest replays, each linked to its page. */
 function UserReplays({
   replays,
   projectId,
@@ -194,7 +190,6 @@ function UserReplays({
   );
 }
 
-/** What happened: "Viewed /pricing", or a custom event's name, and its page if it has one. */
 function ActivityTitle({ activity }: { activity: Activity }) {
   // An event the site's server sent may name no page.
   if (activity.path === "") {
@@ -217,7 +212,6 @@ function ActivityTitle({ activity }: { activity: Activity }) {
   );
 }
 
-/** Where and on what, each part apart: "Firefox, Linux; Munich, Germany; release 1.4.2". */
 function activityDetails(activity: Activity): string {
   const place = [activity.city, activity.country === null ? null : countryName(activity.country)]
     .filter((part) => part !== null && part !== "")
@@ -232,7 +226,6 @@ function activityDetails(activity: Activity): string {
     .join("; ");
 }
 
-/** A custom event's properties as "plan: free", one each. */
 function Properties({ properties }: { properties: Record<string, unknown> }) {
   const entries = Object.entries(properties);
   if (entries.length === 0) return null;
@@ -247,16 +240,7 @@ function Properties({ properties }: { properties: Record<string, unknown> }) {
   );
 }
 
-/**
- * One known user with the loading, missing, and failed states: when first
- * and last seen, and what they did, newest first, by day in the timezone
- * set in Settings. Only events that carry the user's ID: anonymous browsing
- * before a sign-in is not theirs for sure. With the AI area, their AI usage
- * (user-ai.tsx). On its own page, a notice while the project accepts
- * unsigned user IDs. On the user's own page, and in
- * the Users workbench beside the list, where `actions` links to the page
- * and a missing user's link clears the selection instead.
- */
+/** Include only events carrying the user ID; earlier anonymous events may belong to someone else. */
 export function UserView({
   projectId,
   userId,
@@ -267,7 +251,6 @@ export function UserView({
   projectId: string;
   userId: string;
   environment?: string;
-  /** Beside the user's ID, such as a link to their own page. */
   actions?: React.ReactNode;
   inWorkbench?: boolean;
 }) {
@@ -315,7 +298,6 @@ export function UserView({
     );
   }
 
-  // Newest first, under a heading for each local day.
   const days: { key: string; items: Activity[] }[] = [];
   for (const item of activity) {
     const key = dayKey(item.occurredAt, timeZone);
@@ -328,7 +310,6 @@ export function UserView({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          {/* On its own page, the page header names the user, so it is not repeated here. */}
           {!inWorkbench && <PageTitle title={userId} />}
           {inWorkbench && (
             <h2 className="min-w-0 font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
@@ -360,7 +341,6 @@ export function UserView({
             Times in {timeZone}. Only events with this user ID count.
           </p>
         )}
-        {/* In the workbench, the list above says it already. */}
         {!inWorkbench && first !== undefined && !first.signedUserIdsRequired && (
           <UnverifiedIdsNotice projectId={projectId} />
         )}
@@ -478,7 +458,6 @@ export function UserView({
   );
 }
 
-/** One known user on their own page, for deep links and narrow screens. */
 export function UserPage({
   projectId,
   userId,

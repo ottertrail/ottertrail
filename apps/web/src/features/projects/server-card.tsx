@@ -10,7 +10,6 @@ import { Switch } from "@/components/ui/switch";
 import { useDirtyForm } from "@/hooks/use-dirty-form";
 import { type Project, projectQuery, projectsQuery, updateProject } from "@/lib/projects-api";
 
-/** A server-side event, as a site's server sends it. */
 function serverEventExample(origin: string, secretKey: string): string {
   return `curl ${origin}/api/server-events \\
   -H "Authorization: Bearer ${secretKey}" \\
@@ -27,7 +26,6 @@ const signature = createHmac("sha256", process.env.OTTERTRAIL_SECRET_KEY)
   .update(userId).digest("hex");
 // In the page: <script … data-user-id="42" data-user-signature="<signature>"></script>`;
 
-/** The Your server tab's form: whether browser events need a signed user ID. */
 interface SigningValues {
   requireSignedUserIds: boolean;
 }
@@ -36,17 +34,12 @@ const signingValues = (project: Project): SigningValues => ({
   requireSignedUserIds: project.requireSignedUserIds,
 });
 
-/**
- * The project's secret key and what it is for: events from the site's own
- * server, and signed user IDs. The key is hidden until asked for: it must
- * never go in a page. The signed-IDs switch saves with its form's Save.
- */
+/** Keep the secret key hidden until requested; it must never appear in a site page. */
 export function ServerSettings({
   project,
   onDirty,
 }: {
   project: Project;
-  /** Says whether the form holds unsaved changes, for the tab's mark. */
   onDirty: (dirty: boolean) => void;
 }) {
   const form = useDirtyForm(signingValues(project), { key: project.id });
@@ -59,7 +52,6 @@ export function ServerSettings({
       form.saved(values);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
-      // The Users pages say whether IDs are signed.
       void queryClient.invalidateQueries({ queryKey: ["users", project.id] });
       void queryClient.invalidateQueries({ queryKey: ["user", project.id] });
     },

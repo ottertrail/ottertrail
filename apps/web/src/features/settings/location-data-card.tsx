@@ -22,7 +22,6 @@ import {
 import { formatMoment } from "../uptime/format";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
 
-/** "1 Nov 2026": a file's build or download date, in the instance's timezone. */
 function formatDay(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone,
@@ -32,32 +31,23 @@ function formatDay(iso: string, timeZone: string): string {
   }).format(new Date(iso));
 }
 
-/** An error as a sentence: the API's messages end without a full stop. */
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
-/** Whether the latest attempt failed: it came after the last success, or nothing has worked yet. */
 const latestFailed = (update: LocationDataUpdate) =>
   update.lastError !== null &&
   (update.lastSuccessAt === null || update.lastAttemptAt > update.lastSuccessAt);
 
-/** How long after a download the API may take to load it: it looks every 10 minutes. */
+/** The API checks for downloaded files every 10 minutes. */
 const LOAD_GRACE_MS = 15 * 60 * 1000;
 
-/** One file's state, from what the API loaded and what the last update did. */
 interface FileState {
-  /** What the API has loaded, as a short description; null when nothing. */
   loaded: string | null;
-  /** When the loaded file was written; null when unknown or nothing is loaded. */
   loadedModifiedAt: string | null;
   loadError: string | null;
   update: LocationDataUpdate | null;
 }
 
-/**
- * Whether the last update's file is newer than what the API loaded: the
- * API has not loaded it yet ("waiting", within LOAD_GRACE_MS of the
- * download), or did not ("stuck").
- */
+/** A newer download is waiting within LOAD_GRACE_MS; after that, it is stuck. */
 function apiLag(file: FileState, now: number): "none" | "waiting" | "stuck" {
   const { update } = file;
   if (update === null || update.lastSuccessAt === null || update.fileModifiedAt === null) {
@@ -71,10 +61,6 @@ function apiLag(file: FileState, now: number): "none" | "waiting" | "stuck" {
   return now - Date.parse(update.lastSuccessAt) <= LOAD_GRACE_MS ? "waiting" : "stuck";
 }
 
-/**
- * What the API has (or lacks), and what happens next: `consequence` is
- * what the instance does without the file.
- */
 function stateText(
   file: FileState,
   consequence: string,
@@ -115,7 +101,6 @@ function stateText(
   return lines;
 }
 
-/** One file: what is loaded, when it was last updated, and the last error. */
 function FileStatus({
   title,
   file,
@@ -130,7 +115,7 @@ function FileStatus({
   consequence: string;
   automatic: boolean;
   timeZone: string;
-  /** The server's time in its answer: what "15 minutes ago" counts from, whatever the browser's clock says. */
+  /** Use the server's response time to avoid browser clock errors. */
   now: number;
   credit?: React.ReactNode;
 }) {
@@ -281,11 +266,7 @@ function DataCentersStatus({
   );
 }
 
-/**
- * The Location data tab of the instance's Settings, for the owner: whether
- * the worker keeps the files current, and each file's state. The switch
- * saves with the section's Save (docs/design-system.md, "The save rule").
- */
+/** Save the auto-update setting with the section's Save button (docs/design-system.md, "The save rule"). */
 function LocationDataForm({
   settings,
   timeZone,
@@ -381,7 +362,6 @@ function LocationDataForm({
   );
 }
 
-/** The tab, once the settings have loaded (the General tab loads the same query). */
 export function LocationDataTab({ timeZone, onDirty }: InstanceTabProps) {
   const settings = useQuery(settingsQuery());
   if (settings.isPending) return <SectionSkeleton />;

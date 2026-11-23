@@ -5,28 +5,18 @@ import type { Heatmap } from "@/lib/heatmaps-api";
 import { formatWhole } from "../analytics/format";
 import { formatShare } from "./format";
 
-/** One depth's row: 10 rows make the report's 140px plot. */
+/** Ten rows must fit the 140px plot. */
 const ROW = 14;
-/** Vertical gridlines, as shares of pageviews. */
 const GRID = [0.25, 0.5, 0.75, 1];
 
 type Reach = Heatmap["scroll"]["reach"][number];
 
 const depthText = (depth: number) => (depth === 100 ? "the bottom" : `${depth}% down`);
 
-/** What hover, focus, and a screen reader give for one depth. */
 const describe = (row: Reach) =>
   `${depthText(row.depth)}: ${formatShare(row.share)} of pageviews reached it (${formatWhole(row.pageviews)})`;
 
-/**
- * How far down a page its pageviews scrolled: a horizontal bar per depth,
- * from the top of the page (10%) down to its bottom (100%), each as long as
- * the share of pageviews that reached it, on one baseline at the left, in
- * `chart-1`. The average fold, how much of the page showed without
- * scrolling, is a solid line across the rows at its depth, named in text.
- * Hovering a row, or the arrow keys on the hidden range input, read one
- * depth out. Drawn in HTML: a page needs no chart library for this.
- */
+/** Bars show pageview share at each depth; the fold line shows page depth. A hidden range input supports keyboard navigation. */
 export function ScrollReachChart({
   reach,
   averageFold,
@@ -51,7 +41,6 @@ export function ScrollReachChart({
   }
 
   const fold = averageFold === null ? null : Math.min(1, Math.max(0, averageFold));
-  // The fold's name sits in the gutter beside its line, kept inside the chart's height.
   const foldLabelTop = fold === null ? 0 : Math.min(height - 13, Math.max(13, fold * height));
 
   return (
@@ -126,10 +115,8 @@ export function ScrollReachChart({
             </div>
           ))}
         </div>
-        {/* The gutter for the fold's name, so it never covers a bar. */}
         <div aria-hidden="true" />
         {fold !== null && (
-          // Across the labels and the plot: a depth of the page, not a share.
           <div data-slot="average-fold" aria-hidden="true" className="pointer-events-none">
             <div
               className="absolute right-24 left-0 border-t border-ink-muted"
@@ -167,7 +154,7 @@ export function ScrollReachChart({
           {GRID.map((share) => (
             <span
               key={share}
-              // On a phone, the quarters' labels would touch: 0, 50%, and 100% stay.
+              // Hide quarter labels on phones to avoid overlap.
               className={`absolute ${share === 1 ? "right-0" : "-translate-x-1/2"} ${
                 share === 0.25 || share === 0.75 ? "max-sm:hidden" : ""
               }`}
@@ -182,7 +169,6 @@ export function ScrollReachChart({
   );
 }
 
-/** The chart's numbers, for "Show the numbers". */
 export function ScrollReachTable({ reach }: { reach: Reach[] }) {
   return (
     <table className="w-full max-w-2xl text-sm">

@@ -3,7 +3,6 @@ import * as React from "react";
 import { formatCount, formatDay, niceTicks } from "./format";
 
 export interface DayValue {
-  /** "YYYY-MM-DD" */
   day: string;
   /** null: nothing measured that day; the line has a gap there. */
   value: number | null;
@@ -12,18 +11,15 @@ export interface DayValue {
 export interface TooltipRow {
   label: string;
   value: string;
-  /** The metric the line draws; its row carries the line's key. */
   plotted: boolean;
 }
 
-/** Plot height; the x-axis labels get their own band below it, inside the container. */
+/** Reserve a separate band below the plot for x-axis labels. */
 const DEFAULT_PLOT_HEIGHT = 220;
 const AXIS_BAND = 28;
 const MARGIN = { top: 12, right: 16, left: 48 };
-/** Space each x-axis label needs, so labels never collide. */
 const LABEL_SPACING = 72;
 
-/** The line's runs of days with a value, as indexes into the points: a gap breaks the line. */
 function runsOf(points: DayValue[]): number[][] {
   const runs: number[][] = [];
   let run: number[] = [];
@@ -39,17 +35,7 @@ function runsOf(points: DayValue[]): number[][] {
   return runs;
 }
 
-/**
- * One metric per day as a line with a light area wash: a single series, so
- * no legend (the card's title names the metric). A crosshair snaps to the
- * nearest day under the pointer, and the readout lists every metric of that
- * day.
- *
- * For keyboards and screen readers the chart holds a hidden range input
- * over the days: the arrow keys, Home and End move between days, and each
- * day is read out with all its numbers. The table view, outside this component, keeps every value
- * reachable without moving through the chart.
- */
+/** The hidden range input supports keyboard and screen reader navigation. The caller supplies the table view. */
 export function DayChart({
   points,
   label,
@@ -58,12 +44,9 @@ export function DayChart({
   plotHeight = DEFAULT_PLOT_HEIGHT,
 }: {
   points: DayValue[];
-  /** What the line is, such as "Visitors per day"; the chart's accessible name. */
   label: string;
   tooltipRows: (index: number) => TooltipRow[];
-  /** The y-axis labels; counts by default. */
   formatValue?: (value: number) => string;
-  /** The plot's height in pixels, without the axis labels: lower for a report's short chart. */
   plotHeight?: number;
 }) {
   const height = 12 + plotHeight + AXIS_BAND;
@@ -96,7 +79,7 @@ export function DayChart({
   const y = (value: number) => MARGIN.top + plotHeight - (value / top) * plotHeight;
 
   const valueAt = (index: number) => points[index]?.value ?? 0;
-  // Days without a value break the line; a day alone between gaps is a dot.
+  // Draw isolated values as dots and leave gaps for missing days.
   const runs = runsOf(points);
   const lines = runs
     .filter((run) => run.length > 1)
@@ -109,7 +92,7 @@ export function DayChart({
       return { first, line, area: `${line}L${x(end)},${y(0)}L${x(first)},${y(0)}Z` };
     });
   const dots = runs.filter((run) => run.length === 1).map((run) => run[0] ?? 0);
-  // Label every nth day, counted back from the last, so the latest day always has one.
+  // Count labels back from the last day so it always has one.
   const labelEvery = Math.max(
     1,
     Math.ceil(count / Math.max(1, Math.floor(plotWidth / LABEL_SPACING))),

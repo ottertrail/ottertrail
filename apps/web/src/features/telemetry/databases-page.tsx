@@ -43,7 +43,6 @@ import { DatabasesTrend } from "./report-trends";
 import { databasesSearchOf, shapeSearchOf } from "./search";
 import { SendTelemetry } from "./send-telemetry";
 
-/** The columns a shape table sorts by, with what each sort is called in sentences. */
 const SORT_COLUMNS: Record<DatabaseSort, { header: string; phrase: string }> = {
   time: { header: "Total time", phrase: "with the most time spent" },
   p95: { header: "95th percentile", phrase: "with the slowest 95th percentile" },
@@ -51,11 +50,7 @@ const SORT_COLUMNS: Record<DatabaseSort, { header: string; phrase: string }> = {
   failures: { header: "Failed", phrase: "with the most failed calls" },
 };
 
-/**
- * A column header the shapes sort by: a button, the column sorted by
- * marked (aria-sort), largest first. Sorting asks the API again: it keeps
- * a database's first 200 shapes in that order.
- */
+/** Sort on the API so its 200-shape limit retains the requested order. */
 function SortHeader({
   sort,
   current,
@@ -81,7 +76,6 @@ function SortHeader({
   );
 }
 
-/** One database: its numbers, and a table of its query shapes. */
 function DatabaseCard({
   projectId,
   range,
@@ -185,7 +179,6 @@ function DatabaseCard({
   );
 }
 
-/** What the page reads, and how a server sends it: shown above the list and when it is empty. */
 function WhatIsRead() {
   return (
     <>
@@ -199,13 +192,6 @@ function WhatIsRead() {
   );
 }
 
-/**
- * The database calls inside the project's traces: each database (system
- * and name), the most time spent first, with its calls, calls per second,
- * time spent, durations, and failed share, and a table of its query
- * shapes, sorted by a column the reader chooses (total time by default).
- * A shape opens its page.
- */
 export function DatabasesPage({
   projectId,
   range,

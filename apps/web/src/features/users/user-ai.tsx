@@ -15,15 +15,13 @@ import { featureLabel, formatMs, formatTokens, formatUsd, modelLabel } from "../
 import { formatConversion, formatCount, formatWhole } from "../analytics/format";
 import { aiSearchOf } from "../telemetry/search";
 
-/** The days the section covers: the user page has no period of its own. */
+/** The user page has no period picker. */
 const RANGE: PageRange = { period: "30d" };
 
-/** The models and features a section lists: those that cost this user the most. */
 const LISTED = 3;
 
 const share = (value: number | null) => (value === null ? MISSING : formatConversion(value));
 
-/** A model's or feature's row: its name, its estimated cost (the bar), and its calls. */
 const rowOf = (key: string, label: string, row: AiModelRow | AiFeatureRow) => ({
   key,
   label,
@@ -32,16 +30,7 @@ const rowOf = (key: string, label: string, row: AiModelRow | AiFeatureRow) => ({
   figures: [formatUsd(row.costUsd), formatWhole(row.calls)],
 });
 
-/**
- * One user's AI calls over the last 30 days in one environment
- * (docs/ai-usage.md, "A user's AI usage"): the AI report's routes with the
- * user filter, so counts, tokens, estimated cost, latency, and failures,
- * never what was asked or answered. Nothing at all for a project that has
- * never had an AI call, nor while that is not known yet; one line when
- * this user had none. Shown only with
- * the AI area (the caller checks), and on a page that already
- * needs the users area, which the filter needs too.
- */
+/** Requires AI and users access. Show 30 days of metadata, never prompts or answers (docs/ai-usage.md, "A user's AI usage"). */
 export function UserAi({
   projectId,
   userId,
@@ -108,8 +97,7 @@ export function UserAi({
         </section>
       );
     }
-    // Nothing while it loads: most projects have no AI calls, and a placeholder
-    // for a section that then never shows would move the page.
+    // Avoid layout shifts for projects that have no AI calls.
     return null;
   }
 
@@ -134,7 +122,7 @@ export function UserAi({
               { label: "95th percentile", value: formatMs(totals.p95Ms) },
             ]}
           />
-          {/* Side by side by the content's width: the workbench's pane is narrower than the page. */}
+          {/* Use content width because the workbench pane is narrower than the page. */}
           <div className="@container">
             <div className="grid gap-6 @2xl:grid-cols-2">
               <BreakdownTable

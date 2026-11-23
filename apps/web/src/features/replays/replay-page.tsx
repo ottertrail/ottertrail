@@ -29,14 +29,7 @@ import { clientText, formatReplayDuration, pagesText } from "./format";
 import { ReplayErrorLink } from "./replay-error-link";
 import { ReplayViewer } from "./replay-viewer";
 
-/**
- * One replay's detail with its loading, missing, and failed states: what it
- * shows (its error, user, pages, browser), then the player beside its
- * timeline (ReplayViewer), side by side where its container has room and
- * one above the other where it has not. On the replay's own page, and in
- * the Replays workbench beside the list, where `actions` links to the page
- * and a missing replay's link clears the selection instead.
- */
+/** Shared by the replay page and workbench. A missing replay clears the workbench selection. */
 export function ReplayView({
   projectId,
   replayId,
@@ -45,9 +38,7 @@ export function ReplayView({
 }: {
   projectId: string;
   replayId: string;
-  /** Beside the replay's title, such as a link to its own page. */
   actions?: React.ReactNode;
-  /** Beside the replays list: the player takes a fixed height in the scrolling pane. */
   inWorkbench?: boolean;
 }) {
   const query = useQuery(replayTimelineQuery(projectId, replayId));
@@ -112,7 +103,6 @@ export function ReplayView({
     >
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-          {/* On its own page, the page header names the replay, so it is not repeated here. */}
           {!inWorkbench && <PageTitle title={`Replay at ${when}`} />}
           {inWorkbench && (
             <h2 className="text-xl font-semibold text-ink">
@@ -203,7 +193,6 @@ export function ReplayView({
   );
 }
 
-/** One replay on its own page, for deep links and narrow screens. */
 export function ReplayPage({ projectId, replayId }: { projectId: string; replayId: string }) {
   return (
     <div className="flex h-[calc(100dvh-4rem)] min-h-[40rem] flex-col gap-4 px-gutter py-5">

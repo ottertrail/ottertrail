@@ -3,21 +3,15 @@ import { type HeatmapDevice, isHeatmapDevice } from "@/lib/heatmaps-api";
 
 import { errorsSearchOf } from "../errors/search";
 
-/** What the Heatmaps page's address holds. */
 export interface HeatmapsSearch {
   range: PageRange;
   environment: string;
   /** The page shown; left out for the page with the most pageviews. */
   path: string | undefined;
-  /**
-   * The reader's choice: a device class, or "all" for every device. Left
-   * out, the page shows the device with the most pageviews for the page and
-   * period, worked out each time and never written here.
-   */
+  /** Omit to derive the most-viewed device for this page and period; do not save the derived value. */
   device: DeviceChoice | undefined;
 }
 
-/** What the device picker can hold: a device class, or all of them. */
 export type DeviceChoice = HeatmapDevice | "all";
 
 export const isDeviceChoice = (value: unknown): value is DeviceChoice =>

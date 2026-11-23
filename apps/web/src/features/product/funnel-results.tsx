@@ -26,11 +26,6 @@ function StepName({ step }: { step: FunnelStep }) {
   );
 }
 
-/**
- * Each step's people as a bar from one baseline, sized against step 1,
- * with the numbers in text: reached, from step 1, and from the step
- * before.
- */
 export function FunnelResults({ funnel }: { funnel: Funnel }) {
   const first = funnel.steps[0]?.reached ?? 0;
   const last = funnel.steps.at(-1)?.reached ?? 0;

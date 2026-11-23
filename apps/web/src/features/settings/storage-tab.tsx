@@ -24,15 +24,9 @@ import { cn } from "@/lib/utils";
 import { formatMoment } from "../uptime/format";
 import { type InstanceTabProps, SectionFailed, SectionSkeleton } from "./section-states";
 
-/**
- * The Storage tab of the instance's Settings (docs/deployment.md,
- * "Storage"; GET /api/settings/storage): the warnings first, then the
- * disk and what fills it, one row per store, and the channels that get
- * storage warnings. For the owner and admins. Self-contained: its own
- * query, and the instance's timezone as a prop.
- */
+/** Storage figures come from GET /api/settings/storage (docs/deployment.md, "Storage"). */
 
-/** "46%": a share, rounded down below 100, never "100%" while something is left. */
+/** Round down below 100% so remaining space never reads as full. */
 function percent(part: number, whole: number): string {
   if (whole <= 0) return "0%";
   const share = (part / whole) * 100;
@@ -42,7 +36,6 @@ function percent(part: number, whole: number): string {
 
 const code = (text: string) => <code className="font-mono text-code text-ink">{text}</code>;
 
-/** How long a ClickHouse table keeps its rows, in words. */
 function retentionText(retention: Retention): string {
   if (retention.kind === "days") return `Kept ${retention.days} days.`;
   if (retention.kind === "with_events") return "Kept with the project's events.";
@@ -53,7 +46,6 @@ function retentionText(retention: Retention): string {
     : `Kept as long as each project's retention says. ${forever} ${forever === 1 ? "project keeps" : "projects keep"} events forever: set a retention in its settings to limit them.`;
 }
 
-/** What the API's table names mean. */
 const TABLE_NAMES: Record<string, string> = {
   events: "Events and errors",
   spans: "Traces",
@@ -66,12 +58,11 @@ const TABLE_NAMES: Record<string, string> = {
   schema_migrations: "Schema versions",
 };
 
-/** One bar against a limit: the used part filled, the rest the track, both in the blue ramp. */
 function Meter({ used, limit, label }: { used: number; limit: number; label: string }) {
   const share = limit <= 0 ? 0 : Math.min(1, used / limit);
   return (
     <div data-slot="storage-meter" className="relative">
-      {/* The meter for assistive technology; the bar below draws it, alike in every browser. */}
+      {/* Use a native meter for accessibility and a separate bar for consistent rendering. */}
       <meter
         aria-label={label}
         min={0}
@@ -90,25 +81,17 @@ function Meter({ used, limit, label }: { used: number; limit: number; label: str
   );
 }
 
-/** A part of the disk: what fills it, in the categorical order, then the rest in gray. */
 interface DiskPart {
   key: string;
   name: string;
   bytes: number;
-  /** A Tailwind background class: chart-1 to chart-3 for the stores, gray for the rest. */
   fill: string;
 }
 
-/** The figure a row shows: its amount, or what is missing in words. */
 function Figure({ bytes, missing }: { bytes: number | null; missing: string }) {
   return bytes === null ? <Missing label={missing} /> : <>{formatBytes(bytes)}</>;
 }
 
-/**
- * One store: its name and state, the four figures (used, limit, left,
- * share of the disk), an optional bar, and a note on what the figure
- * measures.
- */
 function StoreRow({
   name,
   swatch,
@@ -163,7 +146,6 @@ function StoreRow({
   );
 }
 
-/** The stores' bytes on the disk, and the disk's free space, as one thin segmented bar. */
 function DiskBar({ parts, total }: { parts: DiskPart[]; total: number }) {
   const shown = parts.filter((part) => part.bytes > 0);
   const text = `The disk, ${formatBytes(total)}: ${parts
@@ -202,7 +184,6 @@ function DiskBar({ parts, total }: { parts: DiskPart[]; total: number }) {
   );
 }
 
-/** What the undetermined warnings are about, in words. */
 const UNDETERMINED_TEXT: Record<string, string> = {
   merge_headroom: "room to merge",
   backup_space: "room for a backup",
@@ -215,11 +196,6 @@ const UNDETERMINED_TEXT: Record<string, string> = {
   backup_destination: "whether backups have a destination",
 };
 
-/**
- * The warnings on now; those on when last measured that could not be
- * measured now ("still on"); and "No warnings" only when every figure was
- * measured.
- */
 function Warnings({ report }: { report: StorageReport }) {
   const { warnings, held, undetermined, objectStore } = report;
   const unheld = undetermined.filter((id) => !held.some((warning) => warning.id === id));
@@ -296,10 +272,7 @@ function Warnings({ report }: { report: StorageReport }) {
   );
 }
 
-/**
- * Whether scheduled backups are on: off is a state to see, not a warning,
- * so a session that turned them off can't hide it (docs/dashboard.md, "Backups").
- */
+/** Show disabled backups even after warnings are dismissed (docs/dashboard.md, "Backups"). */
 function BackupsLine({ report, timeZone }: { report: StorageReport; timeZone: string }) {
   const backups = report.backups;
   if (backups === undefined || backups === null || backups.enabled) return null;
@@ -313,7 +286,6 @@ function BackupsLine({ report, timeZone }: { report: StorageReport; timeZone: st
   );
 }
 
-/** "Could not measure" with the reason: never 0 bytes, never an old figure. */
 function Unmeasured({ error }: { error: string }) {
   return (
     <p className="text-sm [overflow-wrap:anywhere] text-ink-muted">Could not measure: {error}</p>
@@ -328,7 +300,7 @@ function Stores({ report }: { report: StorageReport }) {
   const share = (bytes: number | null) =>
     bytes === null || total === null ? <Missing label="Not measured" /> : percent(bytes, total);
 
-  // The objects on this disk: only with the stack's Garage. Garage's own count when it has one.
+  // Include objects only for local Garage; prefer Garage's count when available.
   const recordedObjects =
     budgets?.ok === true ? budgets.replays.usedBytes + budgets.sourceMaps.usedBytes : null;
   const garageBytes = garage?.state === "ok" ? (garage.bucket?.bytes ?? null) : null;
@@ -406,7 +378,7 @@ function Stores({ report }: { report: StorageReport }) {
       );
     }
     const budget = budgets[key];
-    // The warning's own state, which stays on down to 88%.
+    // The warning stays active until usage drops to 88%.
     const warned = report.warnings.some((warning) => warning.id === warningId);
     return (
       <StoreRow
@@ -658,7 +630,6 @@ function GarageRow({
   );
 }
 
-/** The channels that get storage warnings, saved with the section's Save (the save rule). */
 function WarningChannelsSection({
   value,
   onDirty,
@@ -674,7 +645,7 @@ function WarningChannelsSection({
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
   const existing = (ids: string[]) =>
     ids.filter((id) => value.channels.some((channel) => channel.id === id));
-  // A channel deleted in the channels card leaves the choice too, saved or not.
+  // Drop deleted channels from saved and unsaved selections.
   const { setValues } = form;
   React.useEffect(() => {
     setValues((previous) => {
@@ -685,7 +656,7 @@ function WarningChannelsSection({
     });
   }, [setValues, value.channels]);
   const save = useMutation({
-    // A chosen channel deleted since drops out rather than refuse the save.
+    // Drop channels deleted since selection so saving can succeed.
     mutationFn: (values: { channelIds: string[] }) =>
       updateWarningChannels(existing(values.channelIds)),
     onSuccess: (updated, values) => {
@@ -745,11 +716,7 @@ function WarningChannelsSection({
   );
 }
 
-/**
- * The Storage tab of the instance's Settings (`?tab=storage`), for the
- * owner and admins. `onDirty` reports unsaved changes to the channels: the
- * tab's "Unsaved" mark and the leave guard follow it.
- */
+/** `onDirty` drives the Unsaved mark and leave guard for channel selections. */
 export function StorageTab({ timeZone, onDirty }: InstanceTabProps) {
   const storage = useQuery(storageQuery());
 

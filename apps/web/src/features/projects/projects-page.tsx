@@ -49,10 +49,6 @@ function LastEvent({ project, timeZone }: { project: ProjectSummary; timeZone?: 
   );
 }
 
-/**
- * A project's star: a toggle that acts alone inside the clickable row
- * (it is a button, so the row leaves its click to it).
- */
 function StarButton({
   project,
   starred,
@@ -79,7 +75,6 @@ function StarButton({
   );
 }
 
-/** The table's rows while the list loads: its columns' shape. */
 function ProjectsSkeleton() {
   return (
     <div
@@ -95,22 +90,15 @@ function ProjectsSkeleton() {
   );
 }
 
-/**
- * The projects (/projects): each one's name, then what an owner checks
- * first: whether its events arrive (the last one), and, for those who
- * manage projects, whether any site may send them, how long they are kept,
- * and a way into its settings. Members see the projects they were given.
- */
 export function ProjectsPage() {
   const projects = useQuery(projectsQuery());
   const { can, me } = useAccess();
-  // Creating projects, their allowed sites, and their settings are for those who manage projects.
   const canManage = can("projects");
   const timeZone = me?.instance.timeZone;
   const starredIds = useQuery(starredProjectsQuery()).data;
   const star = useProjectStar();
   const isStarred = (id: string) => starredIds?.includes(id) === true;
-  // Starred projects first, each part in the API's order (oldest project first).
+  // Keep API order within each group (oldest first).
   const list = projects.data?.toSorted((a, b) => Number(isStarred(b.id)) - Number(isStarred(a.id)));
 
   return (
@@ -209,8 +197,7 @@ export function ProjectsPage() {
                 const noSites = full !== null && full.allowedHostnames.length === 0;
                 return (
                   <TableRow key={project.id} {...clickableRow()}>
-                    {/* The row's header, for reading the table by rows. */}
-                    {/* Named by the link alone: the star is a control, not part of the name. */}
+                    {/* Exclude the star control from the row's accessible name. */}
                     <TableHead
                       scope="row"
                       aria-labelledby={`project-name-${project.id}`}

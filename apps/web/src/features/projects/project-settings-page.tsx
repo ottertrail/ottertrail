@@ -45,18 +45,13 @@ import { ServerSettings } from "./server-card";
 import { SourceMapsCard } from "./source-maps-card";
 import { SpamTab } from "./spam-tab";
 
-/** While waiting for the first event, check every few seconds. */
 const STATUS_REFRESH_MS = 10_000;
 
 type CopyState = "idle" | "copied" | "failed";
 
-/**
- * Copies the prompt a coding agent needs to add Ottertrail to the app: this
- * instance's address and the public key, never the secret key.
- */
+/** Copy the public key only; never expose the secret key. */
 function CopySetupPrompt({ project }: { project: Project }) {
   const [state, setState] = React.useState<CopyState>("idle");
-  // After a refused copy, the prompt stays on screen to copy by hand.
   const [showText, setShowText] = React.useState(false);
   const timer = React.useRef<number | undefined>(undefined);
   React.useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -66,7 +61,7 @@ function CopySetupPrompt({ project }: { project: Project }) {
   async function copy() {
     window.clearTimeout(timer.current);
     try {
-      // Missing outside a secure context, as on a self-hosted instance over plain HTTP.
+      // Clipboard access requires a secure context; self-hosted HTTP may lack it.
       const clipboard = (navigator as Partial<Navigator>).clipboard;
       if (clipboard === undefined) throw new Error("No clipboard");
       await clipboard.writeText(prompt);
@@ -101,7 +96,7 @@ function CopySetupPrompt({ project }: { project: Project }) {
 }
 
 function InstallSection({ project }: { project: Project }) {
-  // The saved setting, not the form's: the snippet shows what the site should have now.
+  // Use the saved setting so the snippet reflects the current site configuration.
   const snippet = installSnippet(window.location.origin, project.publicKey, {
     heatmaps: project.heatmaps,
   });
@@ -173,7 +168,7 @@ function InstallSection({ project }: { project: Project }) {
   );
 }
 
-/** How long a project keeps its events; "forever" is null, the default. */
+/** null means the default, "forever". */
 const RETENTION_CHOICES = [
   { value: "forever", label: "Forever" },
   { value: "180", label: "6 months" },
@@ -182,20 +177,16 @@ const RETENTION_CHOICES = [
   { value: "1825", label: "5 years" },
 ];
 
-/** The main goal's choice for none. */
 const NO_GOAL = "none";
 
 const retentionValue = (days: number | null) => (days === null ? "forever" : String(days));
 const retentionDays = (value: string) => (value === "forever" ? null : Number(value));
 
-/** The General tab's form, as the fields hold it. */
 interface GeneralValues {
   name: string;
-  /** The allowed sites, one per line, as typed. */
   hostnames: string;
   retention: string;
   mainGoal: string;
-  /** The uploaded icon's address, a chosen image's data: URL, or null. */
   avatar: string | null;
 }
 
@@ -207,14 +198,7 @@ const generalValues = (project: Project): GeneralValues => ({
   mainGoal: project.mainGoalId ?? NO_GOAL,
 });
 
-/**
- * The project's icon, name, allowed sites, how long it keeps events, and
- * main goal: one form, saved with its Save bar. Sites compare as a set,
- * so reordering them is no change. Save sends a changed icon first, then
- * the rest; if the rest fails, the icon stays saved and the other edits
- * stay. Without an uploaded icon, the site's favicon shows, if the server
- * fetched one.
- */
+/** Compare sites as a set. Save the icon first; keep it saved and preserve other edits if the rest fails. */
 function GeneralSettings({
   project,
   onDirty,
@@ -241,7 +225,7 @@ function GeneralSettings({
     ...(goals.data ?? []).map((goal) => ({ value: goal.id, label: goal.name })),
   ];
   const chosenDays = retentionDays(form.values.retention);
-  // A stricter limit than now deletes events: say so before saving.
+  // Warn before shortening retention because it deletes events.
   const deletes =
     chosenDays !== null && (project.retentionDays === null || chosenDays < project.retentionDays);
   const uploads = useQuery(meQuery()).data?.avatarUploads ?? false;
@@ -260,7 +244,6 @@ function GeneralSettings({
         name: values.name,
         allowedHostnames: hostnamesFromText(values.hostnames),
         retentionDays: retentionDays(values.retention),
-        // Sent only once the goals have loaded, so a choice is never made blind.
         ...(goals.isSuccess
           ? { mainGoalId: values.mainGoal === NO_GOAL ? null : values.mainGoal }
           : {}),
@@ -275,7 +258,6 @@ function GeneralSettings({
       form.saved(submitted);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: ["projects"], exact: true });
-      // The overview's business figures start with the main goal.
       void queryClient.invalidateQueries({ queryKey: ["overview", project.id] });
     },
   });
@@ -294,7 +276,6 @@ function GeneralSettings({
           value={form.values.avatar}
           onChange={(icon) => form.set("avatar", icon)}
           text={initialOf(form.values.name)}
-          // The site's favicon, when no icon was uploaded and none is chosen.
           fallbackSrc={project.iconUrl === null ? project.avatarUrl : null}
           uploads={uploads}
         />
@@ -396,7 +377,6 @@ function GeneralSettings({
   );
 }
 
-/** The tabs, in the mockup's order: what a new project needs first. */
 function SettingsTabsFor({ project }: { project: Project }) {
   const [generalDirty, setGeneralDirty] = React.useState(false);
   const [serverDirty, setServerDirty] = React.useState(false);
@@ -414,10 +394,6 @@ function SettingsTabsFor({ project }: { project: Project }) {
           content: (
             <>
               <InstallSection project={project} />
-              {/*
-               * Heatmaps belong here: their visible effect is the snippet right
-               * above (data-heatmaps="on"), and there is no Web analytics tab.
-               */}
               <HeatmapsSettings project={project} onDirty={setHeatmapsDirty} />
             </>
           ),
@@ -462,12 +438,6 @@ function SettingsTabsFor({ project }: { project: Project }) {
   );
 }
 
-/**
- * A project's settings: /projects/<id>/settings, as tabs (the chosen one in
- * `?tab=`). Activity, Source maps, and Danger zone hold no fields; Install has the
- * Heatmaps form under its snippet, and General, Your server, Spam and bots,
- * and Session replay are forms, each with a Save bar.
- */
 export function ProjectSettingsPage({ projectId }: { projectId: string }) {
   const project = useQuery({
     ...projectQuery(projectId),

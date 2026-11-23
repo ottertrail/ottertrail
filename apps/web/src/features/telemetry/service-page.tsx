@@ -54,7 +54,6 @@ import type { ChartLine } from "./time-chart";
 
 const formatShare = (percent: number) => `${formatNumber(percent)}%`;
 
-/** The charts of one service's or route's requests over the period. */
 function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
   const step = stepText(data.stepSeconds);
   const classes = STATUS_CLASSES.filter((name) => data.totals.statuses[name] > 0);
@@ -68,7 +67,7 @@ function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
     {
       key: "failed",
       label: "Failed",
-      // Slots the status classes (chart-1 to chart-4) never use on this page.
+      // Avoid status-class color slots (chart-1 through chart-4).
       color: SLOTS[4] ?? "",
       values: data.failedShare.map((share) => (share === null ? null : share * 100)),
     },
@@ -110,7 +109,6 @@ function Charts({ data, subject }: { data: ServiceChart; subject: string }) {
   );
 }
 
-/** The period's totals, as on the Services page, with the requests by status class as a bar and a table. */
 function Totals({ data, subject }: { data: ServiceChart; subject: string }) {
   const { totals } = data;
   const figures = [
@@ -179,13 +177,6 @@ function Totals({ data, subject }: { data: ServiceChart; subject: string }) {
   );
 }
 
-/**
- * One service's requests, or one of its routes', over the period: the
- * totals the Services page shows, then requests per second by status
- * class, the failed share, and the median, 95th, and 99th percentile, in
- * the time buckets the API chose. Links to the requests' traces and to a
- * new alert rule on them.
- */
 export function ServicePage({
   projectId,
   service,
@@ -253,7 +244,6 @@ export function ServicePage({
           </nav>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="flex min-w-0 flex-col gap-1">
-              {/* The page header names it, so it is not repeated here. */}
               <PageTitle title={route ?? service} />
               <p className="text-sm text-ink-subtle">
                 {route === undefined ? (

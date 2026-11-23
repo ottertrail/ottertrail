@@ -40,7 +40,6 @@ import { FunnelNameDialog } from "./funnel-name-dialog";
 import { LoadFailed, LoadingRows } from "./report-state";
 import { type FunnelSearch, funnelSearchOf, stepsFrom } from "./search";
 
-/** Renames a saved funnel: the same steps, count, and window under a new name. */
 function RenameFunnelDialog({ projectId, funnel }: { projectId: string; funnel: SavedFunnel }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -73,7 +72,7 @@ function RenameFunnelDialog({ projectId, funnel }: { projectId: string; funnel: 
   );
 }
 
-/** Asks before deleting a saved funnel; only its definition goes, the events stay. */
+/** Delete only the definition; events stay. */
 function DeleteFunnelDialog({
   projectId,
   funnel,
@@ -86,7 +85,7 @@ function DeleteFunnelDialog({
   onDeleted: (funnel: SavedFunnel) => void;
 }) {
   const [open, setOpen] = React.useState(false);
-  // Once deleted, the row and its buttons go: focus goes to the heading. On Cancel, back to the button.
+  // Deletion removes the trigger. Return focus to the heading; Cancel returns to the trigger.
   const deleted = React.useRef(false);
   const queryClient = useQueryClient();
   const remove = useMutation({
@@ -94,7 +93,7 @@ function DeleteFunnelDialog({
       try {
         await deleteFunnel(projectId, funnel.id);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
+        // Treat deletion in another tab as success.
         if (!(error instanceof ApiError && error.code === "funnel_not_found")) throw error;
       }
     },
@@ -102,7 +101,7 @@ function DeleteFunnelDialog({
       deleted.current = true;
       setOpen(false);
       onDeleted(funnel);
-      // Gone from the list at once, even should fetching it again fail.
+      // Remove the row even if refetching fails.
       queryClient.setQueryData<SavedFunnel[]>(savedFunnelsKey(projectId), (list) =>
         list?.filter((item) => item.id !== funnel.id),
       );
@@ -153,7 +152,6 @@ function DeleteFunnelDialog({
   );
 }
 
-/** Each saved funnel by name: a link that opens it, its steps, and who it counts for how long. */
 function SavedFunnelTable({
   funnels,
   projectId,
@@ -249,10 +247,7 @@ function SavedFunnelTable({
   );
 }
 
-/**
- * The project's saved funnels. Opening one shows it in the page's period and
- * environment; renaming and deleting refetch the list.
- */
+/** Opening a saved funnel keeps the current period and environment. */
 export function SavedFunnelsCard({
   projectId,
   funnels,
@@ -263,17 +258,14 @@ export function SavedFunnelsCard({
   onDeleted,
 }: {
   projectId: string;
-  /** undefined while the list loads, or when it could not load. */
   funnels: SavedFunnel[] | undefined;
-  /** Why the list could not load, if it could not. */
   failure: string | null;
   onRetry: () => void;
   search: FunnelSearch;
-  /** The saved funnel open in the address, if any. */
   openId: string | undefined;
   onDeleted: (funnel: SavedFunnel) => void;
 }) {
-  // Where focus goes when a dialog closes: a deleted row's buttons are gone.
+  // Return focus to the heading if deletion removed the row.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
   return (
     <section aria-labelledby="saved-funnels" className="flex flex-col gap-3">

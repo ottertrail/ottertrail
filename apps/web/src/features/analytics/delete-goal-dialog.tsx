@@ -16,7 +16,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { deleteGoal, type Goal } from "@/lib/goals-api";
 
-/** Asks before deleting a goal; its counts are worked out from events, so only the definition goes. */
+/** Delete only the definition; counts come from events. */
 export function DeleteGoalDialog({
   projectId,
   goal,
@@ -24,7 +24,7 @@ export function DeleteGoalDialog({
 }: {
   projectId: string;
   goal: Goal;
-  /** Where focus goes on closing: this button leaves with its row. */
+  /** Focus here on close because deletion removes the trigger. */
   returnFocus: React.RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -34,7 +34,7 @@ export function DeleteGoalDialog({
       try {
         await deleteGoal(projectId, goal.id);
       } catch (error) {
-        // Already deleted, such as in another tab: what was asked for.
+        // Treat deletion in another tab as success.
         if (!(error instanceof ApiError && error.code === "goal_not_found")) throw error;
       }
     },

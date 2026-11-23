@@ -22,7 +22,6 @@ import { createProject } from "@/lib/projects-api";
 
 import { hostnamesFromText } from "./format";
 
-/** "New project" button and its dialog. On success, opens the new project's page. */
 export function NewProjectDialog({ variant = "default" }: { variant?: "default" | "outline" }) {
   const [open, setOpen] = React.useState(false);
   const navigate = useNavigate();

@@ -1,12 +1,7 @@
-/**
- * The Server log's lines as the tab reads them (docs/dashboard.md, "Server
- * log"): the API's pino lines and the worker's own, each as the stream
- * sends it (`{ process, line }`, apps/api/src/server-log/routes.ts).
- */
+/** Read API and worker lines as { process, line } (apps/api/src/server-log/routes.ts; docs/dashboard.md, "Server log"). */
 
 export type ServerProcess = "api" | "worker";
 
-/** Levels, quietest first; trace counts with debug. */
 export const LEVELS = ["debug", "info", "warn", "error", "fatal"] as const;
 export type LevelName = (typeof LEVELS)[number];
 
@@ -21,20 +16,15 @@ export const LEVEL_LABELS: Record<LevelName, string> = {
 export const PROCESS_LABELS: Record<ServerProcess, string> = { api: "API", worker: "Worker" };
 
 export interface ServerLine {
-  /** Counts up in this browser: the order lines arrived in, and each line's key. */
   n: number;
   process: ServerProcess;
   level: LevelName;
-  /** Milliseconds since 1970, or null when the line has no time. */
   time: number | null;
   msg: string;
-  /** A request's line: Fastify's "incoming request" and "request completed". */
   request: { method: string; url: string; status: number | null; ms: number | null } | null;
-  /** The line as the process wrote it, masked (redact.ts). */
+  /** Preserve the masked process output (redact.ts). */
   raw: Record<string, unknown>;
-  /** The line's JSON in lower case, made once, for the text filter. */
   search: string;
-  /** About what the line holds in memory: its JSON's length, which the browser's cap counts. */
   bytes: number;
 }
 
@@ -59,7 +49,6 @@ function levelOf(value: unknown): LevelName {
   return "info";
 }
 
-/** A LOG_LEVEL's rank among LEVELS: "silent" above them all. */
 export function levelRank(level: string): number {
   if (level === "trace") return 0;
   if (level === "silent") return LEVELS.length;
@@ -92,7 +81,6 @@ function requestOf(raw: Record<string, unknown>): ServerLine["request"] {
   };
 }
 
-/** One event's data as a line, or null when it is not one. */
 export function parseLine(data: string, n: number): ServerLine | null {
   let parsed: unknown;
   try {
@@ -116,11 +104,9 @@ export function parseLine(data: string, n: number): ServerLine | null {
   };
 }
 
-/** Warnings and worse, grouped by process, level, and message, newest group first. */
 export interface LineGroup {
   key: string;
   count: number;
-  /** The group's newest line. */
   latest: ServerLine;
 }
 
@@ -142,7 +128,6 @@ export function groupProblems(lines: readonly ServerLine[]): LineGroup[] {
 
 export interface LineFilters {
   process: ServerProcess | "all";
-  /** The quietest level shown. */
   level: LevelName;
   text: string;
 }
@@ -158,16 +143,12 @@ export function filterLines(lines: readonly ServerLine[], filters: LineFilters):
   );
 }
 
-/**
- * What LOG_LEVEL keeps the API from writing that the view would show, or
- * null: "warn" with "info and above" shown leaves no info lines.
- */
+/** Report levels hidden by LOG_LEVEL, such as info lines when LOG_LEVEL is warn. */
 export function missingNote(apiLevel: string | null, lowestShown: LevelName): string | null {
   if (apiLevel === null) return null;
   const written = levelRank(apiLevel);
   const missing = LEVELS.filter((_level, rank) => rank >= levelRank(lowestShown) && rank < written);
   if (missing.length === 0) return null;
-  // Loudest first: "no info or debug lines".
   const names = missing.map((level) => (level === "warn" ? "warning" : level)).toReversed();
   const listed =
     names.length === 1
@@ -178,7 +159,6 @@ export function missingNote(apiLevel: string | null, lowestShown: LevelName): st
     : `LOG_LEVEL is ${apiLevel} on this server, so the API writes no ${listed} lines.`;
 }
 
-/** The lines as a .jsonl file's text: one JSON object per line, each with its process. */
 export function toJsonl(lines: readonly ServerLine[]): string {
   return lines
     .map((line) => `${JSON.stringify({ process: line.process, ...line.raw })}\n`)

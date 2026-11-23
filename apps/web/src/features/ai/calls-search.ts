@@ -4,10 +4,8 @@ import type { PageRange } from "@/lib/analytics-api";
 
 import { aiFiltersFrom, environmentSearch, rangeSearch } from "../telemetry/search";
 
-/** The AI calls page's two lists: every call, or the conversations they make. */
 export type AiCallsView = "calls" | "conversations";
 
-/** Where the AI calls page is: what a link to it keeps. */
 export interface AiCallsPlace {
   projectId: string;
   range: PageRange;
@@ -15,12 +13,7 @@ export interface AiCallsPlace {
   filters: AiCallFilters;
 }
 
-/**
- * The AI calls page's address, the defaults left out. In the Conversations
- * view, `conversation` is the selected conversation; in the Calls view, the
- * calls of one conversation: switching views keeps it, so a conversation's
- * calls and the conversation are one click apart.
- */
+/** Keep conversation when switching views: it selects a conversation or filters its calls. */
 export const aiCallsSearchOf = ({
   range,
   environment,
@@ -52,7 +45,6 @@ function idText(value: unknown, max: number): string | undefined {
   return /[\u0000-\u001F\u007F-\u009F]/u.test(found) ? undefined : found;
 }
 
-/** The AI calls page's filters from an address; anything it does not take is dropped. */
 export function aiCallFiltersFrom(search: {
   service?: unknown;
   provider?: unknown;
@@ -70,7 +62,6 @@ export function aiCallFiltersFrom(search: {
   };
 }
 
-/** The view an address names: the Calls view unless it says otherwise. */
 export const aiCallsViewFrom = (value: unknown): AiCallsView =>
   value === "conversations" ? "conversations" : "calls";
 

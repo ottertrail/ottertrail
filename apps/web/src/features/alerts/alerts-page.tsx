@@ -71,12 +71,6 @@ import { RuleStateBadge } from "./rule-state-badge";
 import { watchesText } from "./rule-text";
 import { RuleView, SavedNotice } from "./rule-view";
 
-/**
- * The rules, in the API's order: each one's name (a link to its own page;
- * in the workbench a plain click selects the row instead) and what it
- * watches, its state (with why it is off or not evaluated), its on or off
- * switch, and edit and delete. The switch acts at once.
- */
 function RuleTable({
   rules,
   projectId,
@@ -93,7 +87,6 @@ function RuleTable({
   projectId: string;
   checks: readonly { id: string; name: string }[];
   channels: readonly ChannelName[];
-  /** The instance's, for when a rule stopped being evaluated. */
   timeZone: string;
   canManage: boolean;
   onWarning: (saved: SavedWarning) => void;
@@ -109,7 +102,6 @@ function RuleTable({
         <col />
         <col className="w-28" />
         <col className="w-14" />
-        {/* On a phone, edit and delete are on the rule's page: the name keeps the room. */}
         {actions && <col className="w-20" />}
       </colgroup>
       <TableHeader>
@@ -204,12 +196,6 @@ function RuleTable({
   );
 }
 
-/**
- * With nothing selected, the detail pane sums up the rules (the API lists
- * every one the user may see) by state: firing, quiet, or off, with a note
- * on any that cannot be evaluated; then the alerts firing now and the
- * recent ones. On a narrow screen it follows the list.
- */
 function Summary({
   data,
   projectId,
@@ -217,7 +203,6 @@ function Summary({
 }: {
   data: RuleList;
   projectId: string;
-  /** Under the list on a narrow screen, where no item is chosen beside it. */
   underList?: boolean;
 }) {
   const { can } = useAccess();
@@ -238,7 +223,7 @@ function Summary({
       <section aria-label="Every rule" className="flex flex-col gap-3 border-t pt-5">
         <StatStrip label="Rules by state" stats={stats} />
         {failing.length > 0 && (
-          // Firing and quiet rules both may fail to evaluate: a note, not a fourth state.
+          // Evaluation failures can affect both firing and quiet rules.
           <p className="flex items-start gap-1.5 text-sm text-destructive">
             <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {failing.length === 1
@@ -271,17 +256,7 @@ function Summary({
   );
 }
 
-/**
- * The project's alert rules as a workbench (docs/design-system.md,
- * "Workbench"): each with what it watches, its state, and its on or off
- * switch, with edit and delete; beside the selected rule's detail (where
- * it sends, what it fires for now, its alerts) or, with none selected, a
- * summary with the alerts firing now and the recent ones. Firing alerts
- * belong to their rules, so they are not a second list: the summary shows
- * them all, a rule's detail its own. Rules are added and edited through
- * forms; a link from a check's or an error's page opens the form with what
- * it knows (`prefill`). Under 64rem a row opens the rule's own page.
- */
+/** Alerts workbench. Below 64rem, rows open their own pages (docs/design-system.md, "Workbench"). */
 export function AlertsPage({ projectId, prefill }: { projectId: string; prefill: RulePrefill }) {
   const navigate = useNavigate();
   const list = useQuery(rulesQuery(projectId));
@@ -302,8 +277,7 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
   const noChannels = channels.data !== undefined && channelList.length === 0;
   const full = data !== undefined && data.rules.length >= data.maxRules;
   const ready = data !== undefined && channels.data !== undefined;
-  // A link from a check's or an error's page opens the form at once.
-  // A link opens the form only for a kind the user may add.
+  // Open a prefilled form only for a rule kind the user may add.
   const prefillArea = prefill.add === undefined ? null : kindArea(prefill.add);
   const open =
     adding ||
@@ -319,14 +293,14 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
       void navigate({ to: "/projects/$projectId/alerts", params: { projectId }, search: {} });
     }
   };
-  // A deleted rule that was selected gives way to the one after it (or before, at the end).
+  // After deletion, select the next rule, or the previous rule at the end.
   const afterDelete = (ruleId: string) => {
     if (ruleId !== selected) return;
     const ids = (data?.rules ?? []).map((rule) => rule.id);
     const at = ids.indexOf(ruleId);
     setSelected(ids[at + 1] ?? (at > 0 ? ids[at - 1] : undefined), { replace: true });
   };
-  // The Workbench keeps the latest of this, so it may be a new function each render.
+  // Workbench keeps the latest callback; it need not be stable.
   const openPage = (ruleId: string) =>
     void navigate({ to: "/projects/$projectId/alerts/$ruleId", params: { projectId, ruleId } });
   const addButton = canManage && (

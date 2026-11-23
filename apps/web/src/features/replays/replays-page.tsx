@@ -79,18 +79,12 @@ const DURATION_CHOICES = MIN_REPLAY_DURATIONS.map((ms) => ({
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const USER_ID = /^[^\u0000-\u001F\u007F-\u009F]{1,200}$/u;
 
-/** The error a replay shows, as plain text in the list: its link is in the detail. */
 function errorText(replay: ReplaySummary): string {
   const { error } = replay;
   if (error === null) return replay.linked ? "Error not found" : "Looking for its error…";
   return `${error.type}${error.message === "" ? "" : `: ${error.message}`}`;
 }
 
-/**
- * The listed replays, newest first: when (the row's link, to the replay's
- * own page; in the workbench a plain click selects the row instead), its
- * error, user, and pages under it, and its length.
- */
 function ReplayTable({
   replays,
   projectId,
@@ -178,15 +172,9 @@ function ReplayTable({
   );
 }
 
-/** The most errors the summary names, by replays. */
 const TOP_ERRORS = 5;
 
-/**
- * With nothing selected, the detail pane sums up the replays listed (only
- * those loaded, so "at least" while older ones wait), then the errors with
- * the most replays in the period, which the API counts whatever the other
- * filters: each name filters the list by its error.
- */
+/** Summarize loaded rows as "at least" while more remain. Top errors ignore the list filters. */
 function Summary({
   first,
   replays,
@@ -295,7 +283,6 @@ function Summary({
   );
 }
 
-/** Why the list is empty: replays off, none in the period, or none that match. */
 function NoReplays({
   projectId,
   filtered,
@@ -344,15 +331,7 @@ function NoReplays({
   );
 }
 
-/**
- * A project's session replays as a workbench (docs/design-system.md,
- * "Workbench"): each one recorded around an error (docs/session-replay.md),
- * newest first, for a period and an environment, filtered by a path
- * visited, a user, an error group, and a minimum length, fifty at a time
- * with older ones on request; beside the selected replay's detail and
- * player or, with none selected, a summary. Under 64rem a row opens the
- * replay's own page.
- */
+/** Replays workbench, 50 rows at a time. Below 64rem, rows open their own pages (docs/design-system.md, "Workbench"; docs/session-replay.md). */
 export function ReplaysPage({
   projectId,
   range,
@@ -369,7 +348,7 @@ export function ReplaysPage({
   const overview = useQuery(replaysQuery(projectId));
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const search: ReplaysSearch = { range, environment, filters };
-  // A filter keeps the selected replay beside the list, listed or not.
+  // Keep the selected replay visible when filters exclude it.
   const show = (next: Partial<ReplaysSearch>) =>
     void navigate({
       to: "/projects/$projectId/replays",
@@ -380,7 +359,7 @@ export function ReplaysPage({
       }),
     });
   const filter = (next: Partial<ReplayFilters>) => show({ filters: { ...filters, ...next } });
-  // The Workbench keeps the latest of this, so it may be a new function each render.
+  // Workbench keeps the latest callback; it need not be stable.
   const openPage = (replayId: string) =>
     void navigate({
       to: "/projects/$projectId/replays/$replayId",
@@ -542,7 +521,7 @@ export function ReplaysPage({
             {list.isError && <div className="px-gutter pt-4">{failure}</div>}
             {empty ? (
               narrow ? (
-                // No room for the guidance beside the list: it takes the list's place.
+                // Replace the list with guidance when both cannot fit.
                 <div className="px-gutter py-5">{guidance}</div>
               ) : (
                 <p className="px-gutter py-6 text-sm text-ink-subtle">

@@ -16,15 +16,9 @@ import { playerUrl, playerUrlAt, replayTimelineQuery } from "@/lib/replays-api";
 import { ReplayViewer } from "../replays/replay-viewer";
 import { formatMoment } from "../users/format";
 
-/** Why a recent occurrence has no replay yet. */
 export const ARRIVING_HINT = "The page sends its replay about 10 seconds after the error.";
 
-/**
- * The player and its timeline. The player marks the error where the
- * timeline does: at the recording's start plus the error's offset, on the
- * recording's own clock, which a visitor's wrong clock moves away from the
- * server's; at the occurrence's time while the timeline loads, or without one.
- */
+/** Use the recording clock for the error marker: recording start plus error offset. Fall back to occurrence time while the timeline loads or is missing. */
 function OccurrenceReplayViewer({
   projectId,
   replayId,
@@ -47,10 +41,6 @@ function OccurrenceReplayViewer({
   );
 }
 
-/**
- * The replay of one occurrence, in a dialog that takes most of the screen:
- * the player beside its timeline (ReplayViewer).
- */
 function ReplayDialog({
   projectId,
   replayId,
@@ -94,7 +84,6 @@ function ReplayDialog({
   );
 }
 
-/** The Replay column of the latest occurrences: play it, it is on its way, or none. */
 export function OccurrenceReplayCell({
   projectId,
   occurrence,

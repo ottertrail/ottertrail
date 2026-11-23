@@ -15,17 +15,7 @@ import { TimeChart } from "./time-chart";
 
 type Shown = "traces" | "duration";
 
-/**
- * Above the traces list: the list's traces per time bucket, those with
- * errors apart, or, through the toggle, their 95th-percentile duration;
- * one measure a chart, so each keeps one axis. From its own request, so
- * it loads, fails, and retries without the list. A bar of the count
- * narrows the period to its day.
- *
- * A trace with errors is a state: it takes the critical status color, on
- * the baseline, with the rest in the light neutral above it. The duration
- * is a measure of every trace: one line in the first chart color.
- */
+/** Load independently of the list. Keep errors on the baseline in the critical color; duration uses chart-1. */
 export function TracesChart({
   projectId,
   range,

@@ -7,26 +7,18 @@ import { Switch } from "@/components/ui/switch";
 import { useDirtyForm } from "@/hooks/use-dirty-form";
 import { type Project, projectQuery, projectsQuery, updateProject } from "@/lib/projects-api";
 
-/** The Heatmaps form: whether the snippet asks the tracker for clicks and scroll depth. */
 interface HeatmapValues {
   heatmaps: boolean;
 }
 
-/** An attribute to type, as code. */
 const code = (text: string) => <code className="font-mono">{text}</code>;
 
-/**
- * Heatmaps on or off, saved with its own Save bar. It sits on the Install
- * tab, under the snippet: what the setting changes on the site is that
- * snippet (`data-heatmaps="on"`), and the project has no Web analytics tab
- * of its own.
- */
+/** This setting changes the Install snippet (data-heatmaps="on"). */
 export function HeatmapsSettings({
   project,
   onDirty,
 }: {
   project: Project;
-  /** Says whether the form holds unsaved changes, for the tab's mark. */
   onDirty: (dirty: boolean) => void;
 }) {
   const form = useDirtyForm<HeatmapValues>({ heatmaps: project.heatmaps }, { key: project.id });
@@ -38,7 +30,6 @@ export function HeatmapsSettings({
       form.saved(values);
       queryClient.setQueryData(projectQuery(project.id).queryKey, updated);
       void queryClient.invalidateQueries({ queryKey: projectsQuery().queryKey, exact: true });
-      // The Heatmaps page says whether the setting is on.
       void queryClient.invalidateQueries({ queryKey: ["heatmaps", project.id] });
     },
   });

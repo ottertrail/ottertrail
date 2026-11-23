@@ -10,13 +10,7 @@ import { projectQuery } from "@/lib/projects-api";
 
 import { NoSuchProject } from "./no-such-project";
 
-/**
- * Every page inside a project (/projects/<id>/…). The page starts loading
- * at once; this only steps in when the project does not exist, or is not
- * one the user may reach (the API answers both the same), or when the page
- * needs an area the user does not have (docs/access.md). A project that
- * loads becomes the one the home page opens next time.
- */
+/** The API uses the same response for missing and inaccessible projects. Check area access too (docs/access.md). */
 export function ProjectLayout({ projectId }: { projectId: string }) {
   const project = useQuery(projectQuery(projectId));
   const me = useQuery(meQuery());

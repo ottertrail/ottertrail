@@ -69,7 +69,6 @@ const DURATION_CHOICES = MIN_DURATIONS.map((ms) => ({
   label: `${formatDuration(ms * 1000)} or longer`,
 }));
 
-/** A trace's status: whether any of its spans failed. */
 export function TraceStatus({ error }: { error: boolean }) {
   return error ? (
     <StatusBadge tone="critical">Error</StatusBadge>
@@ -78,12 +77,6 @@ export function TraceStatus({ error }: { error: boolean }) {
   );
 }
 
-/**
- * The listed traces, newest first, by their root span: its name (the row's
- * link, to the trace's own page; in the workbench a plain click selects the
- * row instead), service, start, and whether a span failed, then the
- * duration and the number of spans.
- */
 function TraceTable({
   traces,
   projectId,
@@ -161,14 +154,9 @@ function TraceTable({
   );
 }
 
-/** The most traces the summary names, slowest first. */
 const TOP_TRACES = 5;
 
-/**
- * With nothing selected, the detail pane sums up the traces loaded (so "at
- * least" while older ones wait), the period's services (which the API
- * counts whole), and the slowest of those loaded, each a link that selects it.
- */
+/** Summarize loaded traces as lower bounds while more remain. Service counts cover the full period. */
 function Summary({
   first,
   traces,
@@ -276,15 +264,7 @@ function Summary({
   );
 }
 
-/**
- * A project's recent traces as a workbench (docs/design-system.md,
- * "Workbench"): one row per root span, newest first, for a period and an
- * environment, filtered by service, name, errors, and duration, a hundred
- * at a time with older ones on request; beside the selected trace's
- * waterfall, span detail, and logs or, with none selected, a summary. The
- * selected span is in the address too (`span`). Under 64rem a row opens the
- * trace's own page.
- */
+/** Load 100 traces at a time. Below 64rem rows open separate pages (docs/design-system.md, "Workbench"). */
 export function TracesPage({
   projectId,
   range,
@@ -299,8 +279,6 @@ export function TracesPage({
   const navigate = useNavigate();
   const list = useInfiniteQuery(tracesQuery(projectId, range, environment, filters));
   const narrow = useMediaQuery(NARROW_WORKBENCH);
-  // The selected trace's span, and when it ran, for a trace the list does not hold
-  // (a link from a log record).
   const { span, at } = useSearch({
     strict: false,
     select: (search: Record<string, unknown>) => ({
@@ -310,11 +288,9 @@ export function TracesPage({
   });
   const search: TracesSearch = { range, environment, filters };
   const traces = (list.data?.pages ?? []).flatMap((page) => page.traces);
-  // When a trace ran: its row's start, else what the address says (a link from a log record).
   const startOf = (traceId: string) =>
     traces.find((trace) => trace.traceId === traceId)?.start ?? at;
 
-  // A filter keeps the selected trace beside the list, listed or not.
   const show = (next: Partial<TracesSearch>) =>
     void navigate({
       to: "/projects/$projectId/traces",
@@ -323,7 +299,7 @@ export function TracesPage({
         ...tracesSearchOf({ ...search, ...next }),
         trace: typeof previous.trace === "string" ? previous.trace : undefined,
         span: typeof previous.span === "string" ? previous.span : undefined,
-        // When the trace ran, so it is still found once the new list leaves it out.
+        // Preserve the start time so filtered-out traces can still be found.
         at: typeof previous.trace === "string" ? startOf(previous.trace) : undefined,
       }),
     });
@@ -482,7 +458,6 @@ export function TracesPage({
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"
         ids={[...new Set(traces.map((trace) => trace.traceId))]}
         param="trace"
-        // A trace chosen runs at its row's start, with no span of the one before.
         selectionSearch={(id) => ({
           span: undefined,
           at: id === undefined ? undefined : startOf(id),
