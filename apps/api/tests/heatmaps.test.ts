@@ -149,7 +149,7 @@ describe("POST /api/heatmaps", () => {
       origin: `https://${SITE}`,
     });
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({ stored: 2, tooOld: 0, bots: 0, blocked: 0, spam: 0 });
+    expect(response.json()).toEqual({ received: 2 });
     expect(response.headers["access-control-allow-origin"]).toBe(`https://${SITE}`);
     const rows = await stored(project.id);
     expect(rows).toEqual([
@@ -363,7 +363,8 @@ describe("POST /api/heatmaps", () => {
       click({ at: NOON - 25 * 3_600_000 }),
       click(),
     ]);
-    expect(response.json()).toMatchObject({ stored: 1, tooOld: 1 });
+    expect(response.json()).toEqual({ received: 2 });
+    expect(await stored(project.id)).toHaveLength(1);
   });
 
   test("refuses the project's data while its heatmaps are off (403 heatmaps_off), and others' keys and sites", async () => {
@@ -407,26 +408,29 @@ describe("POST /api/heatmaps", () => {
     });
     const key = project.public_key;
     const blocked = await send(key, [click()], { remoteAddress: "203.0.113.9" });
-    expect(blocked.json()).toMatchObject({ stored: 0, blocked: 1 });
+    // The same answer as for stored records: a sender learns nothing about the filters.
+    expect(blocked.json()).toEqual({ received: 1 });
     const bot = await send(key, [click()], {
       userAgent: "Googlebot/2.1 (+http://www.google.com/bot.html)",
     });
-    expect(bot.json()).toMatchObject({ stored: 0, bots: 1 });
+    expect(bot.json()).toEqual({ received: 1 });
     const spam = await send(key, [click(), scroll({ page: 1 })], {
       pages: [PAGE, { url: PAGE.url, referrer: "https://www.spam.example/landing" }],
     });
-    expect(spam.json()).toMatchObject({ stored: 0, spam: 2 });
+    expect(spam.json()).toEqual({ received: 2 });
+    expect(await stored(project.id)).toEqual([]);
     // The site's own pages as referrers are never spam.
     const own = await send(key, [click()], {
       pages: [{ url: PAGE.url, referrer: `https://${SITE}/` }],
     });
-    expect(own.json()).toMatchObject({ stored: 1 });
+    expect(own.json()).toEqual({ received: 1 });
+    expect(await stored(project.id)).toHaveLength(1);
 
     const cloud = appWith({
       collection: { clickhouse: dashboard.reader.client, isDataCenter: () => true },
     });
     const fromCloud = await send(key, [click()], { app: cloud });
-    expect(fromCloud.json()).toMatchObject({ stored: 0, bots: 1 });
+    expect(fromCloud.json()).toEqual({ received: 1 });
     expect(await stored(project.id)).toHaveLength(1);
   });
 

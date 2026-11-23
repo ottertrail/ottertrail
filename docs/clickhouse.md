@@ -28,7 +28,7 @@ ClickHouse has no unique constraint, and the endpoints look nothing up before th
 - **The table keeps one row per project, day, and event ID.** Rows with the same key are merged into one when ClickHouse merges parts, and reports read with `FINAL`, which merges at query time, so a retry not merged yet still counts once. The [benchmark](storage-benchmark.md) found `FINAL` costs almost nothing.
 - **The day, not the exact time.** A server-side event keeps the time its server sent, the same on every attempt. A browser's time is corrected for a wrong clock from when its request arrives ([clock correction](web-analytics.md#clock-correction)), so a retry, which spends another time on the way, comes out a few milliseconds or seconds apart. With the exact time in the key, such a retry would be a second row. A test sends a batch twice, with a new `sentAt` and 4 seconds more on the way, from a right clock and from clocks 10 minutes slow and fast, and ClickHouse counts each event once.
 - **One case still counts twice:** a retry whose time and the first attempt's fall either side of midnight UTC, which needs the retry to arrive within its extra time on the way of midnight. A test shows it.
-- **The answer cannot say which events were repeats.** `stored` counts the events accepted and written, a retry's included; the answers no longer have `duplicates`.
+- **The answer cannot say which events were repeats.** A browser batch's answer is the same whatever became of it; a server's counts the events written in `stored`, a retry's included.
 - **A batch is all or nothing.** One insert: if ClickHouse refuses it, nothing of the batch is stored. A test sends a batch with one row ClickHouse cannot read.
 
 ## When ClickHouse is down

@@ -10,7 +10,7 @@ import { isTrustedOrigin } from "../src/auth/origin.ts";
 import { purgeDeletedProjects } from "../src/clickhouse/delete-events.ts";
 import { parseHostname } from "../src/projects/projects.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
-import { countEvents } from "./helpers/events.ts";
+import { countEvents, storedEvents } from "./helpers/events.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
 
 describe("parseHostname", () => {
@@ -190,8 +190,10 @@ describe("project routes", () => {
     const created = (
       await request("POST", "/api/projects", { name: "Signed", allowedHostnames: ["shop.example"] })
     ).json().project;
-    const browserEvent = () =>
-      app.inject({
+    /** Sends an event from user 42, unsigned, and gives the user ID stored with it. */
+    const browserEvent = async () => {
+      const id = randomUUID();
+      const response = await app.inject({
         method: "POST",
         url: "/api/events",
         headers: {
@@ -206,7 +208,7 @@ describe("project routes", () => {
           sentAt: Date.now(),
           events: [
             {
-              id: randomUUID(),
+              id,
               name: "pageview",
               occurredAt: Date.now(),
               url: "https://shop.example/",
@@ -215,15 +217,19 @@ describe("project routes", () => {
           ],
         }),
       });
+      expect(response.statusCode).toBe(202);
+      const stored = await storedEvents(dashboard.reader.client, created.id);
+      return stored.find((event) => event.event_id === id)?.user_id;
+    };
     // Read once, so collection has the project cached.
-    expect((await browserEvent()).json().unverifiedUsers).toBe(0);
+    expect(await browserEvent()).toBe("42");
 
     const changed = await request("PATCH", `/api/projects/${created.id}`, {
       requireSignedUserIds: true,
     });
     expect(changed.json().project.requireSignedUserIds).toBe(true);
 
-    expect((await browserEvent()).json().unverifiedUsers).toBe(1);
+    expect(await browserEvent()).toBeNull();
   });
 
   test("changing the allowed sites applies from the next event on", async () => {

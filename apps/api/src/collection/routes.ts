@@ -217,24 +217,16 @@ const eventBatchSchema = {
   },
 } as const;
 
-const storedResponseSchema = {
+/**
+ * The 202 answer is the same whatever became of the batch: stored, too old,
+ * a bot, a blocked address, spam, or past a visitor's daily cap. A sender
+ * learns nothing about the filters; the project's Activity tab counts them.
+ */
+const receivedResponseSchema = {
   type: "object",
-  required: ["stored", "tooOld", "bots"],
+  required: ["received"],
   additionalProperties: false,
-  properties: {
-    // Events accepted and written. A retry counts again here, and once in reports.
-    stored: { type: "integer" },
-    tooOld: { type: "integer" },
-    bots: { type: "integer" },
-    // Events whose user ID lacked a valid signature, stored without it.
-    unverifiedUsers: { type: "integer" },
-    // Not stored: from one of the project's blocked addresses.
-    blocked: { type: "integer" },
-    // Not stored: referred by a referrer spam domain (the shared lists or the project's own).
-    spam: { type: "integer" },
-    // Not stored: the visitor had already stored its daily cap (visitor-cap.ts).
-    capped: { type: "integer" },
-  },
+  properties: { received: { type: "integer" } },
 } as const;
 
 function problem(code: string, message: string) {
@@ -381,7 +373,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
     "/events",
     {
       bodyLimit: MAX_BODY_BYTES,
-      schema: { body: eventBatchSchema, response: { 202: storedResponseSchema } },
+      schema: { body: eventBatchSchema, response: { 202: receivedResponseSchema } },
       // Runs before the body is read: the cheapest way to turn a flood away.
       onRequest: async (request, reply) => {
         const result = ipLimiter.take(request.ip);
@@ -446,18 +438,10 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       }
 
       // Acknowledge blocked addresses without storing their events or address.
-      const noneStored = {
-        stored: 0,
-        tooOld: 0,
-        bots: 0,
-        unverifiedUsers: 0,
-        blocked: 0,
-        spam: 0,
-        capped: 0,
-      };
+      const received = { received: events.length };
       if (isBlockedAddress(project.blocked, request.ip)) {
         count("filtered_spam", inBatch);
-        return reply.code(202).send({ ...noneStored, blocked: events.length });
+        return reply.code(202).send(received);
       }
 
       // Acknowledge bots to avoid retries; check before the budget so they consume none.
@@ -474,7 +458,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       }
       if (bot || dataCenter) {
         count("filtered_bot", inBatch);
-        return reply.code(202).send({ ...noneStored, bots: events.length });
+        return reply.code(202).send(received);
       }
 
       // One spam referrer drops the whole visit batch, including engagement and vitals.
@@ -490,7 +474,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
         )
       ) {
         count("filtered_spam", inBatch);
-        return reply.code(202).send({ ...noneStored, spam: events.length });
+        return reply.code(202).send(received);
       }
 
       // Use the IP for location, then discard it. Never store or log it.
@@ -498,9 +482,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       const location = locate(request);
 
       const accepted: NewEvent[] = [];
-      let tooOld = 0;
       const tooOldBySource = new Map<IngestSource, number>();
-      let unverifiedUsers = 0;
       for (const [index, event] of events.entries()) {
         const page = parsePageUrl(event.url);
         if (page === null) {
@@ -581,7 +563,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
 
         const occurredAt = correctClock(event.occurredAt, sentAt, receivedAt);
         if (occurredAt === null) {
-          tooOld += 1;
           const source = sourceOf(event);
           tooOldBySource.set(source, (tooOldBySource.get(source) ?? 0) + 1);
           continue;
@@ -594,7 +575,6 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           !isSignedUserId(project.secretKey, userId, event.userSignature)
         ) {
           userId = undefined;
-          unverifiedUsers += 1;
         }
         accepted.push({
           eventId: event.id,
@@ -685,13 +665,7 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
       lastEvents.record(project.id, toStore).catch((error: unknown) => {
         request.log.warn({ err: error }, "could not record the project's latest event");
       });
-      return reply.code(202).send({
-        ...noneStored,
-        stored: toStore.length,
-        tooOld,
-        unverifiedUsers,
-        capped,
-      });
+      return reply.code(202).send(received);
     },
   );
 

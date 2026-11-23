@@ -258,7 +258,7 @@ describe("browser events", () => {
     const response = await sendEvents(project.publicKey, [pageview(), pageview(), pageview()], {
       app: capped,
     });
-    expect(response.json()).toMatchObject({ stored: 1, capped: 2 });
+    expect(response.json()).toEqual({ received: 3 });
     expect(await countsOf(project.id)).toEqual({
       "browser_events accepted": counted(1, 1),
       "browser_events filtered_spam": counted(1, 2),

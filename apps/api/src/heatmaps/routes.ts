@@ -174,18 +174,12 @@ const batchSchema = {
   },
 } as const;
 
-const storedResponseSchema = {
+/** The same 202 answer for every outcome, as for events (collection/routes.ts). */
+const receivedResponseSchema = {
   type: "object",
-  required: ["stored", "tooOld", "bots", "blocked", "spam"],
+  required: ["received"],
   additionalProperties: false,
-  properties: {
-    // Records written; a retry counts again here, and once in reports.
-    stored: { type: "integer" },
-    tooOld: { type: "integer" },
-    bots: { type: "integer" },
-    blocked: { type: "integer" },
-    spam: { type: "integer" },
-  },
+  properties: { received: { type: "integer" } },
 } as const;
 
 const problem = (error: string, message: string) => ({ error, message });
@@ -320,7 +314,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
     "/heatmaps",
     {
       bodyLimit: MAX_BODY_BYTES,
-      schema: { body: batchSchema, response: { 202: storedResponseSchema } },
+      schema: { body: batchSchema, response: { 202: receivedResponseSchema } },
       onRequest: async (request, reply) => {
         const result = ipLimiter.take(request.ip);
         return result.allowed ? undefined : tooManyRequests(reply, result.retryAfterSeconds);
@@ -375,15 +369,15 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
           .send(problem("invalid_request", "release contains an unpaired surrogate."));
       }
 
-      const none = { stored: 0, tooOld: 0, bots: 0, blocked: 0, spam: 0 };
+      const received = { received: records.length };
       if (isBlockedAddress(project.blocked, request.ip)) {
         count("filtered_spam", records.length);
-        return reply.code(202).send({ ...none, blocked: records.length });
+        return reply.code(202).send(received);
       }
       const userAgent = request.headers["user-agent"];
       if (isBot(userAgent) || (project.ignoreDataCenters && isDataCenter(request.ip))) {
         count("filtered_bot", records.length);
-        return reply.code(202).send({ ...none, bots: records.length });
+        return reply.code(202).send(received);
       }
       if (
         pages.some((page) =>
@@ -396,7 +390,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
         )
       ) {
         count("filtered_spam", records.length);
-        return reply.code(202).send({ ...none, spam: records.length });
+        return reply.code(202).send(received);
       }
 
       const spent = budget.take(project.id, records.length);
@@ -486,7 +480,7 @@ export const heatmapCollectionRoutes: FastifyPluginCallback<{
       // Per record: those stored, and those too old to store.
       if (accepted.length > 0) count("accepted", accepted.length);
       if (tooOld > 0) count("filtered_too_old", tooOld);
-      return reply.code(202).send({ ...none, stored: accepted.length, tooOld });
+      return reply.code(202).send(received);
     },
   );
 

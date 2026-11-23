@@ -149,21 +149,16 @@ describe("the daily cap per visitor", () => {
     const app = appWith({ visitorCap: 3 });
     const project = await newProject();
     const first = await send(project.public_key, pageviews(2), { app });
-    expect(first.json()).toMatchObject({ stored: 2, capped: 0 });
+    expect(first.statusCode).toBe(202);
+    expect(await count(project.id)).toBe(2);
     const second = await send(project.public_key, pageviews(2), { app });
     expect(second.statusCode).toBe(202);
-    expect(second.json()).toEqual({
-      stored: 1,
-      tooOld: 0,
-      bots: 0,
-      unverifiedUsers: 0,
-      blocked: 0,
-      spam: 0,
-      capped: 1,
-    });
+    // The same answer as for a batch stored in full.
+    expect(second.json()).toEqual({ received: 2 });
+    expect(await count(project.id)).toBe(3);
     // Another browser on the same address is another visitor.
     const other = await send(project.public_key, pageviews(2), { app, userAgent: FIREFOX });
-    expect(other.json()).toMatchObject({ stored: 2, capped: 0 });
+    expect(other.statusCode).toBe(202);
     expect(await count(project.id)).toBe(5);
   });
 
@@ -173,17 +168,13 @@ describe("the daily cap per visitor", () => {
       projectLimit: { capacity: 50, refillPerSecond: 0.001 },
     });
     const project = await newProject();
-    expect((await send(project.public_key, pageviews(1), { app })).json()).toMatchObject({
-      stored: 1,
-    });
+    expect((await send(project.public_key, pageviews(1), { app })).statusCode).toBe(202);
     // 49 left: a capped batch of 49 is refunded, so the next is still allowed.
-    expect((await send(project.public_key, pageviews(49), { app })).json()).toMatchObject({
-      stored: 0,
-      capped: 49,
-    });
+    expect((await send(project.public_key, pageviews(49), { app })).statusCode).toBe(202);
+    expect(await count(project.id)).toBe(1);
     const next = await send(project.public_key, pageviews(49), { app, userAgent: FIREFOX });
     expect(next.statusCode).toBe(202);
-    expect(next.json()).toMatchObject({ stored: 1, capped: 48 });
+    expect(await count(project.id)).toBe(2);
   });
 
   test("a batch ClickHouse could not write gives back its budget and its visitor's counts", async () => {
@@ -247,7 +238,8 @@ describe("blocked addresses", () => {
     });
     const { project } = created.json();
     // Loaded into the key cache, unblocked.
-    expect((await send(project.publicKey, [pageview()])).json()).toMatchObject({ stored: 1 });
+    expect((await send(project.publicKey, [pageview()])).statusCode).toBe(202);
+    expect(await count(project.id)).toBe(1);
 
     const changed = await patch(project.id, {
       blockedAddresses: ["198.51.100.0/24", "2001:DB8:9::/64", "203.0.113.7", "203.0.113.7/32"],
@@ -267,24 +259,18 @@ describe("blocked addresses", () => {
     ]) {
       const response = await send(project.publicKey, pageviews(2), { remoteAddress });
       expect(response.statusCode).toBe(202);
-      expect(response.json()).toEqual({
-        stored: 0,
-        tooOld: 0,
-        bots: 0,
-        unverifiedUsers: 0,
-        blocked: 2,
-        spam: 0,
-        capped: 0,
-      });
+      expect(response.json()).toEqual({ received: 2 });
     }
+    expect(await count(project.id)).toBe(1);
     expect(
-      (await send(project.publicKey, [pageview()], { remoteAddress: "203.0.113.8" })).json(),
-    ).toMatchObject({ stored: 1, blocked: 0 });
+      (await send(project.publicKey, [pageview()], { remoteAddress: "203.0.113.8" })).statusCode,
+    ).toBe(202);
     expect(await count(project.id)).toBe(2);
 
     // Emptied: the next request is stored again.
     await patch(project.id, { blockedAddresses: [] });
-    expect((await send(project.publicKey, [pageview()])).json()).toMatchObject({ stored: 1 });
+    expect((await send(project.publicKey, [pageview()])).statusCode).toBe(202);
+    expect(await count(project.id)).toBe(3);
   });
 
   test("are refused when malformed or more than 100, and nothing changes", async () => {
@@ -312,20 +298,20 @@ describe("blocked addresses", () => {
         app,
         remoteAddress: `203.0.113.${i + 1}`,
       });
-      expect(blocked.json()).toMatchObject({ blocked: 50 });
+      expect(blocked.statusCode).toBe(202);
       const spam = await send(
         project.public_key,
         pageviews(50, { referrer: "https://semalt.com/" }),
         { app, remoteAddress: `198.51.100.${i + 20}` },
       );
-      expect(spam.json()).toMatchObject({ spam: 50 });
+      expect(spam.statusCode).toBe(202);
     }
     const real = await send(project.public_key, pageviews(50), {
       app,
       remoteAddress: "198.51.100.99",
     });
     expect(real.statusCode).toBe(202);
-    expect(real.json()).toMatchObject({ stored: 50 });
+    expect(await count(project.id)).toBe(50);
   });
 
   test("do not apply to server-side events", async () => {
@@ -494,17 +480,14 @@ describe("referrer spam", () => {
       { ...pageview(), name: "engagement", properties: { engagedMs: 1000 } },
     ]);
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toMatchObject({ stored: 0, spam: 2 });
+    expect(response.json()).toEqual({ received: 2 });
     expect(await count(project.id)).toBe(0);
   });
 
   test("a lookalike that is not a subdomain is kept", async () => {
     const project = await newProject();
     for (const referrer of ["https://notsemalt.com/", "https://semalt.com.example.org/"]) {
-      expect((await send(project.public_key, [pageview({ referrer })])).json()).toMatchObject({
-        stored: 1,
-        spam: 0,
-      });
+      expect((await send(project.public_key, [pageview({ referrer })])).statusCode).toBe(202);
     }
     expect((await storedEvents(dashboard.reader.client, project.id)).length).toBe(2);
   });
@@ -514,21 +497,14 @@ describe("referrer spam", () => {
     const other = await newProject();
     const referrer = "https://deals.spam.example/offer";
     // Loaded into the key cache before the change.
-    expect((await send(mine.public_key, [pageview({ referrer })])).json()).toMatchObject({
-      stored: 1,
-    });
+    expect((await send(mine.public_key, [pageview({ referrer })])).statusCode).toBe(202);
     const changed = await patch(mine.id, { blockedReferrers: ["https://Spam.Example:8443/x"] });
     expect(changed.statusCode).toBe(200);
     expect(changed.json().project.blockedReferrers).toEqual(["spam.example"]);
-    expect((await send(mine.public_key, [pageview({ referrer })])).json()).toMatchObject({
-      stored: 0,
-      spam: 1,
-    });
-    expect((await send(other.public_key, [pageview({ referrer })])).json()).toMatchObject({
-      stored: 1,
-      spam: 0,
-    });
+    expect((await send(mine.public_key, [pageview({ referrer })])).statusCode).toBe(202);
+    expect((await send(other.public_key, [pageview({ referrer })])).statusCode).toBe(202);
     expect(await count(mine.id)).toBe(1);
+    expect(await count(other.id)).toBe(1);
   });
 
   test("a referrer on the project's own site is never spam, whatever the lists hold", async () => {
@@ -540,7 +516,8 @@ describe("referrer spam", () => {
     const response = await send(project.public_key, [
       pageview({ url: "https://semalt.com/b", referrer: "https://semalt.com/a" }),
     ]);
-    expect(response.json()).toMatchObject({ stored: 1, spam: 0 });
+    expect(response.statusCode).toBe(202);
+    expect(await count(project.id)).toBe(1);
   });
 
   test("blocking the project's own site, or a parent of it, is refused", async () => {

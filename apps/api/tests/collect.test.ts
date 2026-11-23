@@ -158,15 +158,7 @@ describe("POST /api/events", () => {
     const response = await send(body);
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toEqual({
-      stored: 2,
-      tooOld: 0,
-      bots: 0,
-      unverifiedUsers: 0,
-      blocked: 0,
-      spam: 0,
-      capped: 0,
-    });
+    expect(response.json()).toEqual({ received: 2 });
     const [first, second] = await storedEvents(project.id);
     expect(first).toMatchObject({
       name: "pageview",
@@ -180,6 +172,35 @@ describe("POST /api/events", () => {
       occurred_at: new Date(NOW - 5000),
     });
     expect(second).toMatchObject({ path: "/", occurred_at: new Date(NOW - 1000) });
+  });
+
+  test("answers the same for every outcome, so a sender cannot tell which filter caught it", async () => {
+    const project = await insertProject(db(), {
+      name: "Filters",
+      allowed_hostnames: [SITE],
+      blocked_addresses: ["198.51.100.0/24"],
+      require_signed_user_ids: true,
+    });
+    const day = 24 * 60 * 60 * 1000;
+    const answers = [
+      await send(batch(project.public_key, pageviews(2))),
+      await send(batch(project.public_key, pageviews(2)), { remoteAddress: "198.51.100.1" }),
+      await send(batch(project.public_key, pageviews(2)), { headers: { "user-agent": "curl/8" } }),
+      await send(
+        batch(
+          project.public_key,
+          pageviews(2).map((event) => ({ ...event, referrer: "https://semalt.com/" })),
+        ),
+      ),
+      await send(batch(project.public_key, [pageview({ occurredAt: NOW - day - 1 }), pageview()])),
+      await send(batch(project.public_key, [pageview({ userId: "42" }), pageview()])),
+    ];
+    for (const answer of answers) {
+      expect({ status: answer.statusCode, body: answer.json() }).toEqual({
+        status: 202,
+        body: { received: 2 },
+      });
+    }
   });
 
   test("accepts application/json as well as text/plain", async () => {
@@ -215,17 +236,9 @@ describe("POST /api/events", () => {
       { instance },
     );
 
-    expect(first.json()).toMatchObject({ stored: 2 });
+    expect(first.json()).toEqual({ received: 2 });
     // Each answer counts what it was sent: the server looks nothing up.
-    expect(retry.json()).toEqual({
-      stored: 2,
-      tooOld: 0,
-      bots: 0,
-      unverifiedUsers: 0,
-      blocked: 0,
-      spam: 0,
-      capped: 0,
-    });
+    expect(retry.json()).toEqual({ received: 2 });
     // The retry's times are later by the extra time on the way, about 4
     // seconds, but on the same day: ClickHouse keeps each event once.
     expect(await countEvents(clickhouse(), project.id)).toBe(2);
@@ -243,15 +256,8 @@ describe("POST /api/events", () => {
     const response = await send(
       batch(project.public_key, [pageview({ occurredAt: NOW - day - 1 }), pageview()]),
     );
-    expect(response.json()).toEqual({
-      stored: 1,
-      tooOld: 1,
-      bots: 0,
-      unverifiedUsers: 0,
-      blocked: 0,
-      spam: 0,
-      capped: 0,
-    });
+    expect(response.json()).toEqual({ received: 2 });
+    expect(await storedEvents(project.id)).toHaveLength(1);
   });
 
   test("ignores unknown fields, so newer trackers still work", async () => {
@@ -623,15 +629,7 @@ describe("POST /api/events", () => {
         headers: { "user-agent": userAgent },
       });
       expect(response.statusCode).toBe(202);
-      expect(response.json()).toEqual({
-        stored: 0,
-        tooOld: 0,
-        bots: 2,
-        unverifiedUsers: 0,
-        blocked: 0,
-        spam: 0,
-        capped: 0,
-      });
+      expect(response.json()).toEqual({ received: 2 });
       expect(await storedEvents(project.id)).toHaveLength(0);
     });
 
@@ -663,20 +661,13 @@ describe("POST /api/events", () => {
           remoteAddress: CLOUD,
         });
         expect(response.statusCode).toBe(202);
-        expect(response.json()).toEqual({
-          stored: 0,
-          tooOld: 0,
-          bots: 2,
-          unverifiedUsers: 0,
-          blocked: 0,
-          spam: 0,
-          capped: 0,
-        });
+        expect(response.json()).toEqual({ received: 2 });
         expect(await storedEvents(project.id)).toHaveLength(0);
 
         // The same browser from anywhere else counts.
         const home = await send(batch(project.public_key, [pageview()]), { instance });
-        expect(home.json()).toMatchObject({ stored: 1, bots: 0 });
+        expect(home.statusCode).toBe(202);
+        expect(await storedEvents(project.id)).toHaveLength(1);
       });
 
       test("counts them for a project that turned this off", async () => {
@@ -689,7 +680,8 @@ describe("POST /api/events", () => {
           instance: cloudAware(),
           remoteAddress: CLOUD,
         });
-        expect(response.json()).toMatchObject({ stored: 1, bots: 0 });
+        expect(response.statusCode).toBe(202);
+        expect(await storedEvents(project.id)).toHaveLength(1);
       });
     });
   });
@@ -712,7 +704,7 @@ describe("POST /api/events", () => {
       );
       const caught = errorEvent({ type: "Error", message: "Payment declined", handled: true });
       const response = await send(batch(project.public_key, [event, caught]));
-      expect(response.json()).toMatchObject({ stored: 2 });
+      expect(response.json()).toEqual({ received: 2 });
 
       const stored = await storedEvents(project.id);
       const row = stored.find((item) => item.event_id === event.id);
@@ -735,7 +727,7 @@ describe("POST /api/events", () => {
     test("an event named error without details is a custom event, as before errors", async () => {
       const project = await createProject();
       const response = await send(batch(project.public_key, [pageview({ name: "error" })]));
-      expect(response.json()).toMatchObject({ stored: 1 });
+      expect(response.json()).toEqual({ received: 1 });
       const [row] = await storedEvents(project.id);
       expect(row).toMatchObject({ name: "error", error_fingerprint: null, error_type: null });
     });
@@ -863,7 +855,7 @@ describe("POST /api/events", () => {
       });
       const response = await send(batch(project.public_key, [report, odd]));
       // The event and its batch are kept either way.
-      expect(response.json()).toMatchObject({ stored: 2 });
+      expect(response.json()).toEqual({ received: 2 });
 
       const stored = await storedEvents(project.id);
       expect(stored.find((event) => event.event_id === report.id)?.properties).toEqual({
@@ -969,7 +961,7 @@ describe("POST /api/events", () => {
         ]),
       );
       expect(response.statusCode).toBe(202);
-      expect(response.json()).toMatchObject({ stored: 3, unverifiedUsers: 2 });
+      expect(response.json()).toEqual({ received: 3 });
       const stored = await storedEvents(project.id);
       expect(stored.map((event) => event.user_id)).toEqual(["42", null, null]);
     });
