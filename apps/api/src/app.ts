@@ -69,7 +69,23 @@ import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telem
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
 
+/**
+ * How long a client has to send a whole request, its body included, and
+ * its headers. Fastify turns off Node's own limits, so without them a
+ * client could send a body a byte at a time and hold its connection for
+ * ever. Enough for the largest upload, a 25 MiB source map, at about
+ * 2 Mbit/s. A response may take as long as it needs: the Server log's
+ * stream stays open.
+ */
+export const REQUEST_TIMEOUT_MS = 120_000;
+export const HEADERS_TIMEOUT_MS = 20_000;
+
 export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
+  /**
+   * REQUEST_TIMEOUT_MS and HEADERS_TIMEOUT_MS, and how often Node checks
+   * them (30 seconds by default), which tests lower.
+   */
+  timeouts?: { requestMs?: number; headersMs?: number; checkIntervalMs?: number };
   db: Kysely<Database>;
   /**
    * Rate limits, location lookup, and clock for the collection endpoints,
@@ -308,11 +324,19 @@ export function buildApp({
   trackerScriptPath,
   dashboardPath,
   replayPlayerPath,
+  timeouts = {},
   ...fastifyOptions
 }: AppOptions) {
   const app = Fastify({
     // A user ID in a path may be 200 characters, 400 UTF-16 units; Fastify allows 100.
     routerOptions: { maxParamLength: 512 },
+    requestTimeout: timeouts.requestMs ?? REQUEST_TIMEOUT_MS,
+    http: {
+      headersTimeout: timeouts.headersMs ?? HEADERS_TIMEOUT_MS,
+      ...(timeouts.checkIntervalMs === undefined
+        ? {}
+        : { connectionsCheckingInterval: timeouts.checkIntervalMs }),
+    },
     ...fastifyOptions,
     logger:
       log === undefined
