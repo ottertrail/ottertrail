@@ -16,10 +16,12 @@ import { MalformedError } from "./read.ts";
 export const MAX_MESSAGES = 1_000_000;
 
 /**
- * Elements of a list of numbers (a histogram's bounds and counts) count as
- * a message per this many: decoded, one takes about 32 bytes, a message
- * about 120. So 4 million fit, a Collector's batch of 8,192 points with 64
- * bounds about 1.1 million; 16 MiB of one-byte varints, 16 million, do not.
+ * Elements of a list of doubles, floats, or 32-bit numbers (a histogram's
+ * bounds) count as a message per this many: decoded, one takes about 32
+ * bytes, a message about 100. A 64-bit integer (bucket counts) decodes to
+ * a BigInt of about a message's size, and counts one, as does a string. In
+ * JSON, where a list's type is not known, every element counts a quarter:
+ * JSON.parse makes plain numbers and strings, never BigInts.
  */
 export const ELEMENTS_PER_MESSAGE = 4;
 
@@ -39,9 +41,13 @@ function malformed(): MalformedError {
  * A field that counts: one holding a message, or a repeated scalar, each
  * element of which decoding allocates for. A packed list's elements are
  * `size` bytes each, or varints when it is 0; a repeated string's or
- * bytes' (null) one per occurrence.
+ * bytes' (null) one per occurrence. Each element weighs `quarters`
+ * quarters of a message.
  */
-type CountedField = { message: protobuf.Type } | { size: 0 | 4 | 8 | null };
+type CountedField = { message: protobuf.Type } | { size: 0 | 4 | 8 | null; quarters: 1 | 4 };
+
+/** Decoded to Long, then BigInt: as large as a message. */
+const WIDE_INTEGERS = new Set(["fixed64", "sfixed64", "uint64", "int64", "sint64"]);
 
 const FIXED_SIZES: Record<string, 4 | 8> = {
   double: 8,
@@ -65,7 +71,10 @@ function countedFieldsOf(type: protobuf.Type): Map<number, CountedField> {
       } else if (field.repeated) {
         const fixed = FIXED_SIZES[field.type];
         const text = field.type === "string" || field.type === "bytes";
-        fields.set(field.id, { size: fixed ?? (text ? null : 0) });
+        fields.set(field.id, {
+          size: fixed ?? (text ? null : 0),
+          quarters: text || WIDE_INTEGERS.has(field.type) ? 4 : 1,
+        });
       }
     }
     countedFields.set(type, fields);
@@ -99,14 +108,15 @@ export function countProtobufMessages(
     }
     throw malformed();
   };
-  let elements = 0;
-  const total = () => count + Math.ceil(elements / ELEMENTS_PER_MESSAGE);
+  /** List elements, in quarters of a message. */
+  let quarters = 0;
+  const total = () => count + Math.ceil(quarters / ELEMENTS_PER_MESSAGE);
   const add = (messages: number) => {
     count += messages;
     if (total() > max) throw new TooManyMessagesError(`more than ${max} messages`);
   };
-  const addElements = (found: number) => {
-    elements += found;
+  const addElements = (found: number, weight: number) => {
+    quarters += found * weight;
     if (total() > max) throw new TooManyMessagesError(`more than ${max} messages`);
   };
   // Each open message: its type, and where it ends.
@@ -131,12 +141,14 @@ export function countProtobufMessages(
         open.push({ type: counted.message, end });
         continue;
       }
-      if (counted?.size === null) addElements(1);
+      if (counted?.size === null) addElements(1, counted.quarters);
       else if (counted?.size === 0) {
         let varints = 0;
         for (let at = position; at < end; at += 1) if ((body[at] ?? 0) < 0x80) varints += 1;
-        addElements(varints);
-      } else if (counted !== undefined) addElements(Math.ceil(length / counted.size));
+        addElements(varints, counted.quarters);
+      } else if (counted !== undefined) {
+        addElements(Math.ceil(length / counted.size), counted.quarters);
+      }
       position = end;
       continue;
     }
@@ -146,7 +158,7 @@ export function countProtobufMessages(
     // Groups (3, 4) are not in OTLP; 6 and 7 are not wire types.
     else throw malformed();
     // A repeated scalar's element, sent unpacked.
-    if (counted !== undefined && !("message" in counted)) addElements(1);
+    if (counted !== undefined && !("message" in counted)) addElements(1, counted.quarters);
     if (position > current.end) throw malformed();
   }
 }
