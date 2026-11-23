@@ -68,7 +68,11 @@ export const AI_ATTRIBUTES = {
   firstChunk: ["gen_ai.response.time_to_first_chunk"],
   errorType: ["error.type"],
   feature: ["ottertrail.feature"],
-  agent: ["gen_ai.agent.name"],
+  /**
+   * The Vercel AI SDK's `functionId`: `gen_ai.agent.name` from AI SDK 7's OpenTelemetry
+   * integration, `ai.telemetry.functionId` from LegacyOpenTelemetry and AI SDK 5 and 6.
+   */
+  agent: ["gen_ai.agent.name", "ai.telemetry.functionId"],
   conversation: ["gen_ai.conversation.id"],
 } as const;
 
@@ -122,15 +126,17 @@ export function inputIncludesCache(
 }
 
 /**
- * Anthropic, Claude on Vertex AI, and Bedrock Converse/InvokeModel report cached tokens
- * separately. Bedrock OpenAI Responses, OpenAI, and Gemini include them. Other providers default
- * to inclusive counts.
+ * Anthropic and Claude on Vertex AI report cached tokens separately. So do Bedrock's Converse API
+ * (for every model) and InvokeModel for Claude (Anthropic's body). InvokeModel for OpenAI's models
+ * and Bedrock's Responses API return OpenAI's form, which includes them, but an HTTP call does not
+ * say which Bedrock API it used: `aws.bedrock` takes Converse's rule, and a Responses call sends
+ * `inputIncludesCache: true`. A call through OpenAI's SDK on Bedrock's OpenAI-compatible endpoint
+ * is sent as `openai`. OpenAI, Gemini, and other providers default to inclusive counts.
  */
 export function inputIncludesCacheByDefault(provider: string, model: string): boolean {
   const name = provider.toLowerCase();
   const id = model.toLowerCase();
-  if (name === "anthropic") return false;
-  if (name === "aws.bedrock") return id.includes("openai.");
+  if (name === "anthropic" || name === "aws.bedrock") return false;
   if (name === "gcp.vertex_ai") return !id.includes("claude");
   return true;
 }
@@ -222,9 +228,10 @@ const GEMINI_API_PROVIDERS = new Set(["gcp.gemini", "gcp.gen_ai", "gemini", "goo
 const VERTEX_PROVIDERS = new Set(["gcp.vertex_ai", "vertex_ai"]);
 
 /**
- * OpenAI and Anthropic include reasoning in output counts. Gemini, including Vertex AI, reports
- * thoughts separately and bills them as output. Vercel's Google providers add thoughts to outputTokens; other
- * providers default to inclusive counts.
+ * OpenAI and Anthropic include reasoning in output counts. Gemini's API and Vertex AI report
+ * thoughts separately (totalTokenCount sums candidatesTokenCount and thoughtsTokenCount, per each
+ * one's API reference) and bill them as output. Vercel's Google providers add thoughts to
+ * outputTokens; other providers default to inclusive counts.
  */
 export function outputIncludesReasoningByDefault(provider: string, model: string): boolean {
   const name = provider.toLowerCase();

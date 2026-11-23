@@ -12,7 +12,13 @@ import {
 } from "@opentelemetry/sdk-trace";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
-import { aiCallsOf, conversationIdOf, isAiCall, MAX_TOKENS } from "../src/ai/calls.ts";
+import {
+  aiCallsOf,
+  conversationIdOf,
+  inputIncludesCacheByDefault,
+  isAiCall,
+  MAX_TOKENS,
+} from "../src/ai/calls.ts";
 import { buildApp } from "../src/app.ts";
 import { createClickHouse } from "../src/clickhouse/clickhouse.ts";
 import { loadConfig } from "../src/config.ts";
@@ -413,6 +419,72 @@ describe("detection", () => {
       true,
     ]);
   });
+
+  test("the feature: ottertrail.feature, else gen_ai.agent.name, else ai.telemetry.functionId", () => {
+    const now = nowNs();
+    const spanOf = (attributes: Record<string, string | number>) => ({
+      traceId: hex(16),
+      spanId: hex(8),
+      name: "chat",
+      startTimeUnixNano: String(now - 2_000_000n),
+      endTimeUnixNano: String(now - 1_000_000n),
+      attributes: keyValues({
+        "gen_ai.system": "anthropic.messages",
+        "gen_ai.usage.input_tokens": 30,
+        ...attributes,
+      }),
+    });
+    const { rows } = normalizeTraces(
+      {
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  spanOf({ "ottertrail.feature": "chosen", "ai.telemetry.functionId": "sdk" }),
+                  // AI SDK 7's OpenTelemetry integration.
+                  spanOf({ "gen_ai.agent.name": "agent", "ai.telemetry.functionId": "sdk" }),
+                  // AI SDK 5 and 6, and LegacyOpenTelemetry: the same rules as the others.
+                  spanOf({
+                    "operation.name": "ai.generateText.doGenerate support",
+                    "ai.telemetry.functionId": `  support\u0007-${"x".repeat(200)}  `,
+                  }),
+                  spanOf({ "ai.telemetry.functionId": "  \u0001 " }),
+                  spanOf({}),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { projectId: "0b0e5f1e-8a4e-4e43-9b0a-1f0c5d3e7a11", receivedAtNs: now, retentionDays: 30 },
+    );
+    expect(aiCallsOf(rows).map((call) => call.feature)).toEqual([
+      "chosen",
+      "agent",
+      `support-${"x".repeat(92)}`,
+      "",
+      "",
+    ]);
+  });
+
+  test.each([
+    ["anthropic", "claude-sonnet-4-6", false],
+    ["aws.bedrock", "us.anthropic.claude-sonnet-4-6", false],
+    // Converse counts the cache apart for every model; a Responses API call sends true.
+    ["aws.bedrock", "openai.gpt-5.5", false],
+    ["aws.bedrock", "amazon.nova-pro-v1:0", false],
+    ["gcp.vertex_ai", "claude-sonnet-4-6", false],
+    ["gcp.vertex_ai", "gemini-2.5-pro", true],
+    // OpenAI's SDK on Bedrock's OpenAI-compatible endpoint.
+    ["openai", "openai.gpt-5.5", true],
+    ["mistral", "mistral-large-4", true],
+  ])(
+    "an HTTP call from %s %s holds the cache in its input by default: %s",
+    (provider, model, includes) => {
+      expect(inputIncludesCacheByDefault(provider, model)).toBe(includes);
+    },
+  );
 
   test("only the spans a request stores: a refused span makes no call", () => {
     const now = nowNs();

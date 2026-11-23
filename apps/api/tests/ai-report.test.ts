@@ -309,6 +309,10 @@ describe("the price table", () => {
     expect(priceOf("Claude-Sonnet-4-6")?.label).toBe("Claude Sonnet 4.6");
     expect(priceOf("us.anthropic.claude-sonnet-4-6")?.provider).toBe("aws.bedrock");
     expect(priceOf("gpt-4o-2024-08-06")?.label).toBe("GPT-4o");
+    // Google Cloud (Google managed) IDs.
+    expect(priceOf("claude-opus-4-1@20250805")?.label).toBe("Claude Opus 4.1");
+    expect(priceOf("claude-opus-4@20250514")?.label).toBe("Claude Opus 4");
+    expect(priceOf("claude-sonnet-4@20250514")?.label).toBe("Claude Sonnet 4");
     expect(priceOf("llama3.3:70b")).toBeNull();
     expect(priceOf("")).toBeNull();
   });

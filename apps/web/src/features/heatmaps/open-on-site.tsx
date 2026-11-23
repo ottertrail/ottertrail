@@ -77,7 +77,8 @@ export function OpenOnSite({
 
   const open = async () => {
     setProblem(null);
-    // Open during the click; waiting for the request would trigger popup blocking.
+    // Open during the click: waiting for the request can outlast the click's activation, and the
+    // browser may then block the popup.
     const popup = window.open("", "_blank", popupFeatures(size, window.screen));
     if (popup === null) {
       setProblem(

@@ -536,7 +536,8 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
      *   is on disk, as events' do.
      * - Cost is not stored: the API works it out from the tokens when it
      *   reads them (ai/prices.ts), so a corrected price applies to past calls.
-     * - feature: `ottertrail.feature`, else `gen_ai.agent.name`, else "".
+     * - feature: `ottertrail.feature`, else `gen_ai.agent.name`, else
+     *   `ai.telemetry.functionId`, else "".
      *   user_id: as an error event's, "" for none.
      * - first_chunk_ns: the time to the first chunk of a streamed answer;
      *   null when not reported.

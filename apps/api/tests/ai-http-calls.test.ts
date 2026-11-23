@@ -317,7 +317,21 @@ describe("POST /api/ai-calls", () => {
         aiCall({ ...cached, provider: "aws.bedrock", model: "us.anthropic.claude-sonnet-4-6" }),
         false,
       ],
-      [aiCall({ ...cached, provider: "aws.bedrock", model: "openai.gpt-5.5" }), true],
+      // Converse counts cached tokens apart for every model, OpenAI's too; a call does not say
+      // which Bedrock API it used, so a Responses API call states it.
+      [aiCall({ ...cached, provider: "aws.bedrock", model: "openai.gpt-5.5" }), false],
+      [aiCall({ ...cached, provider: "aws.bedrock", model: "us.amazon.nova-pro-v1:0" }), false],
+      [
+        aiCall({
+          ...cached,
+          provider: "aws.bedrock",
+          model: "global.openai.gpt-5.6-sol",
+          inputIncludesCache: true,
+        }),
+        true,
+      ],
+      // OpenAI's SDK on Bedrock's OpenAI-compatible endpoint reports OpenAI's form.
+      [aiCall({ ...cached, provider: "openai", model: "openai.gpt-5.5" }), true],
       [aiCall({ ...cached, provider: "gcp.vertex_ai", model: "claude-sonnet-4-6" }), false],
       [aiCall({ ...cached, provider: "gcp.vertex_ai", model: "gemini-2.5-pro" }), true],
       [aiCall({ ...cached, provider: "anthropic", inputIncludesCache: true }), true],

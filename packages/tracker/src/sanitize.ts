@@ -18,7 +18,7 @@ export function byteLength(text: string): number {
 }
 
 /**
- * PostgreSQL rejects NUL and unpaired surrogates. Older browsers lack
+ * PostgreSQL can't store NUL or unpaired surrogates (jsonb rejects them). Older browsers lack
  * isWellFormed, and older Safari cannot parse lookbehind.
  */
 export const UNSTORABLE =

@@ -97,6 +97,8 @@ Decided on 22 November 2026: for every project, always, with no setting to turn 
 | OpenLLMetry (Traceloop) [6]   | `gen_ai.prompt.<n>.…` and `gen_ai.completion.<n>.…` but `….finish_reason`, `traceloop.entity.input`, `traceloop.entity.output`, `traceloop.prompt.template`, everything under `traceloop.prompt.template_variables.`, `llm.request.functions.`, `llm.prompts.`, and `llm.completions.`, `gen_ai.task.input`, `gen_ai.task.output`, `mcp.request.argument`, `mcp.response.value`                                                                                                    |
 | OpenInference (Arize) [7, 8]  | `input.value`, `output.value`, `llm.prompt_template.template`, `llm.prompt_template.variables`, `llm.function_call`, `tool.parameters`, `tool.json_schema`, `reranker.query`, everything under `llm.input_messages.`, `llm.output_messages.`, `llm.prompts.`, `llm.choices.`, `llm.tools.`, `input.images.`, `input.documents.`, `output.images.`, `output.documents.`, `embedding.embeddings.`, `retrieval.documents.`, `reranker.input_documents.`, `reranker.output_documents.` |
 
+OpenLLMetry's main instrumentations (OpenAI, Anthropic, Bedrock, LangChain, LlamaIndex, LiteLLM, Groq, and others) now write `gen_ai.input.messages` and `gen_ai.output.messages`, dropped with the GenAI names. The numbered `gen_ai.prompt.<n>` and `gen_ai.completion.<n>` names remain in about 13 of its instrumentations, such as Cohere, Mistral, Ollama, Vertex AI, and watsonx (its repository at commit `282cbd0`).
+
 Kept, for the AI usage page ([AI usage](ai-usage.md), which reads them into a table of its own): token counts (`gen_ai.usage.*`, `llm.token_count.*`, `ai.usage.*`), model, provider, and operation names, finish reasons, `error.type`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.conversation.id`, tool call and response IDs, prompt names and versions, and the `_ref` URIs that point to content kept elsewhere.
 
 Known limits:
@@ -114,7 +116,7 @@ Sources:
 3. GenAI events up to v1.36.0: https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/gen-ai-events.md; the `gen_ai.client.inference.operation.details` event: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/client-inference.md
 4. Vercel AI SDK telemetry: https://ai-sdk.dev/docs/ai-sdk-core/telemetry
 5. The attributes it records only with `recordInputs` or `recordOutputs`: https://github.com/vercel/ai/blob/main/packages/otel/src/open-telemetry.ts, https://github.com/vercel/ai/blob/main/packages/otel/src/legacy-open-telemetry.ts
-6. OpenLLMetry's conventions: https://github.com/traceloop/openllmetry/blob/main/packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/__init__.py (v0.10.0's for `llm.prompts` and `llm.completions`); content by default: https://www.traceloop.com/docs/openllmetry/privacy/traces
+6. OpenLLMetry's conventions: https://github.com/traceloop/openllmetry/blob/main/packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv_ai/__init__.py (v0.10.0's, for `llm.prompts` and `llm.completions`: https://github.com/traceloop/openllmetry/blob/v0.10.0/packages/opentelemetry-semantic-conventions-ai/opentelemetry/semconv/ai/__init__.py); content by default: https://www.traceloop.com/docs/openllmetry/privacy/traces
 7. OpenInference's conventions: https://github.com/Arize-ai/openinference/blob/main/spec/attributes/semantic-conventions.md
 8. What OpenInference's settings hide: https://github.com/Arize-ai/openinference/blob/main/spec/configuration/trace-config.md
 

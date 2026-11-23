@@ -230,7 +230,8 @@ const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   beforeLoad: async ({ context, preload, matches }) => {
-    // Skip preload session checks to avoid Better Auth's get-session rate limit.
+    // Skip preload session checks to stay under Better Auth's rate limit (100 requests per 10 s
+    // for each address and path, get-session included; it has no rule of its own).
     // Navigation checks the session.
     if (preload) {
       return;
