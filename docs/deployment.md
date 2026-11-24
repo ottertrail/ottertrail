@@ -47,11 +47,6 @@ cp example.env .env
 chmod 600 .env
 ```
 
-While the repository is private, these links answer 404 without a GitHub sign-in, and the image needs one too:
-
-- Download the files with the [GitHub CLI](https://cli.github.com/), signed in with `gh auth login`: `gh release download --repo ottertrail/ottertrail --pattern compose.yaml --pattern example.env --pattern backup.sh --pattern restore.sh` takes the latest release; put a release's tag (`vX.Y.Z`) before `--repo` for another. Without the CLI, GitHub's API serves each file with a token: list the release's files with `curl -fsSL -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/ottertrail/ottertrail/releases/latest`, then download each from its `url` with the same header and `-H "Accept: application/octet-stream"`.
-- Log in to the registry once, with a GitHub token that can only read packages (a classic token with `read:packages`): `echo "$TOKEN" | docker login ghcr.io -u <GitHub user> --password-stdin`.
-
 Edit `.env`:
 
 - `OTTERTRAIL_DOMAIN`: the instance's domain.
@@ -483,7 +478,7 @@ Every install serves one customer, whether self-hosted or hosted: each hosted cu
 
 ## Images and releases
 
-**From the registry.** Each release is built once in CI (`.github/workflows/release.yml`), for `linux/amd64` and `linux/arm64`, and pushed to the GitHub Container Registry as `ghcr.io/ottertrail/ottertrail`. Every server that pulls a release runs the identical image, and building needs no memory or toolchain on the server. Images are tagged with the version (`0.1.0`) and the commit (`sha-1a2b3c4`), never `latest`. While the repository is private, so is the image ([First start](#first-start) shows the login).
+**From the registry.** Each release is built once in CI (`.github/workflows/release.yml`), for `linux/amd64` and `linux/arm64`, and pushed to the GitHub Container Registry as `ghcr.io/ottertrail/ottertrail`. Every server that pulls a release runs the identical image, and building needs no memory or toolchain on the server. Images are tagged with the version (`0.1.0`) and the commit (`sha-1a2b3c4`), never `latest`. The repository and the image are public: downloading the files and pulling the image need no sign-in.
 
 **Stack traces.** The API, the worker, and the commands run with `--enable-source-maps`, so an error's stack names the TypeScript file and line. Their source maps hold only the mappings, not the sources (`sourcemapExcludeSources` in `apps/api/vite.config.ts`): the image carries no copy of the TypeScript source or of the bundled packages' code, and the API's build is about half the size (11 MB instead of 21 MB on 22 November 2026).
 

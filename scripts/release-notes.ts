@@ -90,8 +90,6 @@ export function renderNotes(version: string, commits: Commit[], since: string | 
     "docker compose up -d",
     "```",
     "",
-    `While the repository is private, \`curl\` cannot download them: use \`gh release download v${version} -R ottertrail/ottertrail\` instead, and \`docker login ghcr.io\` with a token that can read packages.`,
-    "",
     "To update an install, back it up, replace its `compose.yaml` with this release's (or set `OTTERTRAIL_VERSION=" +
       version +
       "` in `.env`), then:",

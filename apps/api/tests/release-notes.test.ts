@@ -101,7 +101,8 @@ describe("renderNotes", () => {
   test("shows how to install or update this release", () => {
     expect(notes).toContain("releases/download/v1.2.0/compose.yaml");
     expect(notes).toContain("releases/download/v1.2.0/example.env");
-    expect(notes).toContain("gh release download v1.2.0");
+    // The repository is public: plain curl downloads, with no sign-in workaround.
+    expect(notes).not.toContain("gh release download");
     expect(notes).toContain("OTTERTRAIL_VERSION=1.2.0");
     expect(notes).toContain("docker compose pull\ndocker compose up -d");
     // The release ships no firewall script: the host's own firewall does that job.
