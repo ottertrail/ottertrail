@@ -17,10 +17,6 @@ import {
 
 const repo = join(import.meta.dirname, "../../..");
 
-function git(...args: string[]): string {
-  return execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
-}
-
 function commit(subject: string, body = "", hash = "abc1234"): Commit {
   return { hash, subject, body };
 }
@@ -124,67 +120,81 @@ describe("renderNotes", () => {
   });
 });
 
-// The repository's real history: v0.1.0 is its first tag.
-describe("this repository's history", () => {
-  test("v0.1.0 is a first release: its notes cover every commit but the release commit", () => {
-    expect(previousTag("v0.1.0", true)).toBeNull();
-    const commits = commitsBetween(null, "v0.1.0");
-    expect(commits).toHaveLength(Number(git("rev-list", "--count", "--no-merges", "v0.1.0")));
-    const notes = notesFor("0.1.0");
-    const items = notes.split("\n").filter((line) => line.startsWith("- "));
-    expect(items).toHaveLength(commits.length - 1);
+// A first release, then the next, in a repository of its own.
+describe("a first release and the one after it", () => {
+  let dir: string;
+  const hashes: Record<string, string> = {};
+  const run = (...args: string[]) =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgSign=false",
+        "-c",
+        "tag.gpgSign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        ...args,
+      ],
+      { cwd: dir, encoding: "utf8" },
+    ).trim();
+  const commitAndTag = (subject: string, tag?: string) => {
+    run("commit", "--allow-empty", "-q", "-m", subject);
+    hashes[subject] = run("rev-parse", "--short", "HEAD");
+    if (tag !== undefined) run("tag", tag);
+  };
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "ottertrail-notes-"));
+    run("init", "-q");
+    commitAndTag("feat: the first commit");
+    commitAndTag("feat!: a breaking change");
+    commitAndTag("fix: a fix");
+    commitAndTag("chore(release): 0.1.0", "v0.1.0");
+    commitAndTag("feat: after the first release");
+    commitAndTag("chore(release): 0.2.0");
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a first release's notes cover every commit but the release commit", () => {
+    expect(previousTag("v0.1.0", true, dir)).toBeNull();
+    expect(commitsBetween(null, "v0.1.0", dir)).toHaveLength(4);
+    const notes = notesFor("0.1.0", undefined, dir);
+    expect(notes.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(3);
     expect(notes).not.toContain("chore(release)");
-    // Its three breaking commits, under Breaking changes, by their hashes.
     const breaking = notes.slice(
       notes.indexOf("## Breaking changes"),
       notes.indexOf("## Features"),
     );
-    for (const subject of [
-      "refactor!: one customer",
-      "feat!: events go straight",
-      "feat!: organizations own",
-    ]) {
-      const hash = git("log", "--format=%h", "-F", `--grep=${subject}`, "v0.1.0");
-      expect(hash).toMatch(/^[0-9a-f]{7,}$/);
-      expect(breaking).toContain(`(${hash})`);
-    }
-    // The first commit is in it.
-    const first = git("rev-list", "--max-parents=0", "--abbrev-commit", "v0.1.0");
-    expect(notes).toContain(`(${first})`);
+    expect(breaking).toContain(`(${hashes["feat!: a breaking change"]})`);
+    expect(notes).toContain(`(${hashes["feat: the first commit"]})`);
   });
 
   test("the notes for HEAD cover the commits since the latest earlier release", () => {
-    const head = git("rev-parse", "HEAD");
-    // The newest final release tag before HEAD, found another way than
-    // previousTag does: every tag merged into HEAD's parent, highest
-    // version first. It changes with each release, so nothing here names
-    // a version.
-    const latest =
-      git("tag", "--list", "v[0-9]*", "--merged", "HEAD^", "--sort=-v:refname")
-        .split("\n")
-        .find((tag) => tag !== "" && !tag.includes("-")) ?? null;
-    const previous = previousTag(head, true);
-    expect(previous).toBe(latest);
-    if (previous === null) return;
-    const expected = Number(git("rev-list", "--count", "--no-merges", `${previous}..HEAD`));
-    expect(commitsBetween(previous, head)).toHaveLength(expected);
-    const notes = notesFor("9.9.9", head);
-    expect(notes).toContain(`Changes since ${previous}:`);
-    for (const line of git("log", "--no-merges", "--format=%h %s", `${previous}..HEAD`).split(
-      "\n",
-    )) {
-      const [hash = "", ...subject] = line.split(" ");
-      if (hash === "" || subject.join(" ").startsWith("chore(release): ")) continue;
-      expect(notes).toContain(`(${hash})`);
-    }
+    const head = run("rev-parse", "HEAD");
+    expect(previousTag(head, true, dir)).toBe("v0.1.0");
+    expect(commitsBetween("v0.1.0", head, dir)).toHaveLength(2);
+    const notes = notesFor("0.2.0", head, dir);
+    expect(notes).toContain("Changes since v0.1.0:");
+    expect(notes).toContain(
+      `- after the first release (${hashes["feat: after the first release"]})`,
+    );
+    expect(notes).not.toContain("a fix");
+    expect(notes).not.toContain("chore(release)");
   });
 
   test("the command prints the same notes", () => {
     const out = execFileSync("node", [join(repo, "scripts/release-notes.ts"), "0.1.0"], {
-      cwd: repo,
+      cwd: dir,
       encoding: "utf8",
     });
-    expect(out).toBe(notesFor("0.1.0"));
+    expect(out).toBe(notesFor("0.1.0", undefined, dir));
   });
 });
 
