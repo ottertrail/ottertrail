@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { installFakeApi, PROJECT } from "./fake-api.ts";
+import { installFakeApi, PROJECT, requestUrl } from "./fake-api.ts";
 import { currentPath, renderApp } from "./render.tsx";
 
 /*
@@ -9,7 +9,8 @@ import { currentPath, renderApp } from "./render.tsx";
  * splitting"). Here modules are replaced: the Speed page waits until the
  * test lets it load; the Members page's, the custom range dialog's and
  * the notifications panel's fail as a file an old tab asks for after a
- * deploy does (the browser's TypeError); the instance Settings page's throws while it runs,
+ * deploy does (the browser's TypeError); the product Events page's fails
+ * as one an ad blocker cancels; the instance Settings page's throws while it runs,
  * as a bug would. Reloading is replaced too, to see that Reload asks for it.
  */
 
@@ -49,6 +50,13 @@ vi.mock("../../src/features/notifications/notification-panel.tsx", () => {
   throw new TypeError(
     `${FAILED_FETCH}: https://ottertrail.example/assets/notification-panel-old.js`,
   );
+});
+
+// An ad blocker cancels this file: the test makes asking for it again fail too.
+const BLOCKED_PAGE = "/assets/events-page-blocked.js";
+
+vi.mock("../../src/features/product/events-page.tsx", () => {
+  throw new TypeError(`${FAILED_FETCH}: https://ottertrail.example${BLOCKED_PAGE}`);
 });
 
 vi.mock("../../src/features/settings/settings-page.tsx", () => {
@@ -119,6 +127,36 @@ describe("a page in a chunk of its own", () => {
     expect(logged.length).toBeGreaterThan(0);
     for (const args of logged) {
       expect(args.map(String).join(" ")).toMatch(/PageLoadError|could not be downloaded/);
+    }
+  });
+
+  test("whose code an extension blocks says so, not that Ottertrail was updated", async () => {
+    const logged = captureErrors();
+    installFakeApi();
+    const fakeFetch = globalThis.fetch;
+    const asked: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const path = requestUrl(input).pathname;
+      if (path === BLOCKED_PAGE) {
+        asked.push(init?.method ?? "GET");
+        throw new TypeError("Failed to fetch");
+      }
+      return fakeFetch(input, init);
+    };
+    try {
+      renderApp(`/projects/${PROJECT.id}/product/events`);
+      await expect
+        .element(page.getByRole("heading", { level: 2, name: "This page couldn't load" }))
+        .toBeVisible();
+      await expect
+        .element(page.getByText(/may be blocking it, or you may be offline/))
+        .toBeVisible();
+      await expect.element(page.getByText("Ottertrail was updated")).not.toBeInTheDocument();
+      // The file was asked for once more, without downloading it.
+      expect(asked).toEqual(["HEAD"]);
+      expect(logged.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = fakeFetch;
     }
   });
 

@@ -9,6 +9,7 @@ import {
   CircleArrowUpIcon,
   RotateCwIcon,
   ServerOffIcon,
+  ShieldAlertIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -20,7 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AuthLayout } from "@/features/auth/auth-layout";
 import { ApiError, isUnreachable } from "@/lib/api";
 import { useShowStatusTitle } from "@/lib/document-title";
-import { PageLoadError } from "@/lib/lazy-page";
+import { type DownloadFailure, PageLoadError, whyNotDownloaded } from "@/lib/lazy-page";
 import { hasNavigated } from "@/lib/navigations";
 import { reloadPage } from "@/lib/reload";
 
@@ -217,12 +218,30 @@ export function RouteNotFound() {
   return <NotFound />;
 }
 
-type ErrorKind = "unreachable" | "updated" | "other";
+type ErrorKind = "unreachable" | "updated" | "blocked" | "download" | "other";
 
-function errorKind(error: unknown): ErrorKind {
-  if (error instanceof PageLoadError) return "updated";
+function errorKind(error: unknown, failure: DownloadFailure | undefined): ErrorKind {
+  if (error instanceof PageLoadError) {
+    return failure === "updated" ? "updated" : failure === "blocked" ? "blocked" : "download";
+  }
   if (isUnreachable(error)) return "unreachable";
   return "other";
+}
+
+/** Why a page's code did not download, once the server has been asked; undefined until then. */
+function useDownloadFailure(error: unknown): DownloadFailure | undefined {
+  const [failure, setFailure] = React.useState<DownloadFailure>();
+  React.useEffect(() => {
+    if (!(error instanceof PageLoadError)) return undefined;
+    let current = true;
+    void whyNotDownloaded(error).then((found) => {
+      if (current) setFailure(found);
+    });
+    return () => {
+      current = false;
+    };
+  }, [error]);
+  return failure;
 }
 
 const ERROR_COPY: Record<
@@ -239,6 +258,17 @@ const ERROR_COPY: Record<
     title: "Ottertrail was updated",
     line: "Reload to get the new version.",
     icon: CircleArrowUpIcon,
+  },
+  // The file is on the server, but asking for it again failed as well.
+  blocked: {
+    title: "This page couldn't load",
+    line: "Its code didn't download. A browser extension, such as an ad blocker, may be blocking it, or you may be offline.",
+    icon: ShieldAlertIcon,
+  },
+  download: {
+    title: "This page couldn't load",
+    line: "Its code didn't download. Reload to try again.",
+    icon: TriangleAlertIcon,
   },
   other: {
     title: "Something went wrong",
@@ -268,7 +298,7 @@ function errorDetails(error: unknown): string {
 export function ErrorState({ error, placement }: { error: unknown; placement: Placement }) {
   const router = useRouter();
   const [retrying, setRetrying] = React.useState(false);
-  const kind = errorKind(error);
+  const kind = errorKind(error, useDownloadFailure(error));
   const copy = ERROR_COPY[kind];
   const retry = () => {
     setRetrying(true);

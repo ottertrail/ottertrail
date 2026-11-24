@@ -2,9 +2,10 @@ import { lazyRouteComponent } from "@tanstack/react-router";
 import type * as React from "react";
 
 /**
- * Deploys can remove chunks requested by older tabs. Browsers cache failed imports,
- * so recovery requires reload. A custom message prevents TanStack Router's automatic reload,
- * letting the user choose when to reload (docs/dashboard.md, "Code splitting").
+ * Deploys can remove chunks requested by older tabs, and browser extensions such as ad blockers
+ * can cancel them. Browsers cache failed imports, so recovery requires reload. A custom message
+ * prevents TanStack Router's automatic reload, letting the user choose when to reload
+ * (docs/dashboard.md, "Code splitting").
  */
 export class PageLoadError extends Error {
   constructor(cause: unknown) {
@@ -37,6 +38,30 @@ export function failedDownload(error: unknown): Error | undefined {
     current = current.cause;
   }
   return undefined;
+}
+
+/** Why a page's code did not download (whyNotDownloaded). */
+export type DownloadFailure = "updated" | "blocked" | "unknown";
+
+/**
+ * Why a page's code did not download, by asking for its file again. "updated": the server no
+ * longer has it (404), as after a deploy. "blocked": the second request fails too, as when a browser
+ * extension such as an ad blocker cancels it, or the browser is offline. "unknown": the file is
+ * there now, or the browser's message names no file (Safari's doesn't).
+ */
+export async function whyNotDownloaded(error: PageLoadError): Promise<DownloadFailure> {
+  const named = failedDownload(error)?.message.match(
+    /(?:https?:\/\/[^\s'"]+)?\/assets\/[^\s'"]+/,
+  )?.[0];
+  if (named === undefined) return "unknown";
+  // Only this server's files: the path, not whatever host the message names.
+  const path = new URL(named, window.location.origin).pathname;
+  try {
+    const response = await fetch(path, { method: "HEAD", cache: "no-store" });
+    return response.status === 404 ? "updated" : "unknown";
+  } catch {
+    return "blocked";
+  }
 }
 
 /** Wrap download failures in PageLoadError; propagate other errors unchanged. */
