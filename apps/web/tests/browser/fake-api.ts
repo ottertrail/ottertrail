@@ -514,6 +514,7 @@ export function fakeErrors(query: URLSearchParams, api: FakeApi): ErrorList {
     status,
     truncated: false,
     groups,
+    received: true,
   };
 }
 

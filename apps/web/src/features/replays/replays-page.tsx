@@ -331,6 +331,49 @@ function NoReplays({
   );
 }
 
+/**
+ * The page when the project has no replay stored: replays are off, or none arrived yet. As the
+ * Traces page says how traces arrive.
+ */
+function NoReplaysYet({ projectId, recordingOff }: { projectId: string; recordingOff: boolean }) {
+  return (
+    <Empty className="border border-dashed p-10">
+      <EmptyHeader className="max-w-xl">
+        <EmptyMedia variant="icon">
+          <FilmIcon />
+        </EmptyMedia>
+        <EmptyTitle>
+          {recordingOff ? "Replays are off for this project" : "No replays yet"}
+        </EmptyTitle>
+        <EmptyDescription>
+          {recordingOff ? (
+            "An admin can enable replays around errors in the project's settings. Pages then send recordings of the 30 to 60 seconds before an error. The visitor's browser masks the recordings."
+          ) : (
+            <>
+              Pages whose tracking snippet has{" "}
+              <code className="font-mono">data-replay=&quot;errors&quot;</code> send a recording of
+              the 30 to 60 seconds before an error. The visitor&apos;s browser masks the recordings.
+              Replays are kept 30 days.
+            </>
+          )}
+        </EmptyDescription>
+      </EmptyHeader>
+      <WhenAllowed permission="projects">
+        <EmptyContent>
+          <ButtonLink
+            variant="outline"
+            to="/projects/$projectId/settings"
+            params={{ projectId }}
+            search={{ tab: "replay" }}
+          >
+            Open the project&apos;s settings
+          </ButtonLink>
+        </EmptyContent>
+      </WhenAllowed>
+    </Empty>
+  );
+}
+
 /** Replays workbench, 50 rows at a time. Below 64rem, rows open their own pages (docs/design-system.md, "Workbench"; docs/session-replay.md). */
 export function ReplaysPage({
   projectId,
@@ -377,6 +420,8 @@ export function ReplaysPage({
     filters.fingerprint !== undefined ||
     filters.minDuration !== undefined;
   const recordingOff = overview.data?.mode === "off";
+  // No replay stored at all: the page says how replays arrive, without the list or its filters.
+  const noneStored = overview.data?.replays.count === 0;
 
   const filterBar = (
     <ReportFilterBar
@@ -389,7 +434,8 @@ export function ReplaysPage({
         show({ environment: next, filters: { ...filters, fingerprint: undefined } })
       }
       filters={
-        first?.configured !== false && (
+        first?.configured !== false &&
+        !noneStored && (
           <>
             <TextFilter
               label="Path contains"
@@ -431,7 +477,7 @@ export function ReplaysPage({
           </>
         )
       }
-      actions={first?.configured === true && <WorkbenchKeyHints />}
+      actions={first?.configured === true && !noneStored && <WorkbenchKeyHints />}
     />
   );
 
@@ -488,6 +534,18 @@ export function ReplaysPage({
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
+        </div>
+      </div>
+    );
+  }
+
+  if (noneStored && replays.length === 0) {
+    return (
+      <div className="flex flex-col">
+        {filterBar}
+        <div className="flex flex-col gap-3 px-gutter py-5">
+          {failure}
+          <NoReplaysYet projectId={projectId} recordingOff={recordingOff} />
         </div>
       </div>
     );

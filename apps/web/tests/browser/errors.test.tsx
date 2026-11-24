@@ -157,6 +157,23 @@ describe("the errors page", () => {
     await expect.element(page.getByText("No errors in this period")).toBeVisible();
   });
 
+  test("a project without any error yet says how errors arrive, without the list or its filters", async () => {
+    installFakeApi({
+      errors: (query, api) => ({ ...fakeErrors(query, api), groups: [], received: false }),
+    });
+    renderApp(ERRORS);
+
+    await expect.element(page.getByText("No errors yet")).toBeVisible();
+    await expect
+      .element(page.getByText(/exceptions arrive with their traces and logs/))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "Project settings" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings?tab=install`);
+    await expect.element(statusButton("Resolved")).not.toBeInTheDocument();
+    await expect.element(errorList()).not.toBeInTheDocument();
+  });
+
   test("says when the list is cut short", async () => {
     installFakeApi({
       errors: (query, api) => ({ ...fakeErrors(query, api), truncated: true }),

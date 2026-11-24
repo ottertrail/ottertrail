@@ -142,6 +142,25 @@ describe("GET /api/projects/:id/errors", () => {
     ]);
   });
 
+  test("says whether the project has any error at all, beyond the list's filters", async () => {
+    expect((await get("/errors?period=7d")).json()).toMatchObject({ received: true });
+    // None in this environment, or resolved, but the project has errors.
+    expect((await get("/errors?period=7d&environment=preview")).json()).toMatchObject({
+      groups: [],
+      received: true,
+    });
+    expect((await get("/errors?period=7d&status=resolved")).json()).toMatchObject({
+      groups: [],
+      received: true,
+    });
+    const quiet = (await insertProject(dashboard.db, { name: "Quiet" })).id;
+    const answer = await dashboard.app.inject({
+      url: `/api/projects/${quiet}/errors?period=7d`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(answer.json()).toMatchObject({ groups: [], received: false });
+  });
+
   test("refuses a bad range or status", async () => {
     expect((await get("/errors?period=7d&from=2026-11-01")).statusCode).toBe(400);
     expect((await get("/errors?period=7d&status=open")).statusCode).toBe(400);

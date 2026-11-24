@@ -81,6 +81,8 @@ export interface ErrorList {
   truncated: boolean;
   /** Latest seen first. */
   groups: ErrorGroup[];
+  /** Whether the project has any error at all, in any environment: false shows "No errors yet". */
+  received: boolean;
 }
 
 export interface ErrorDay {
@@ -261,6 +263,7 @@ const isErrorList = (value: unknown): value is ErrorList =>
   isText(value.lastDay) &&
   isStatusFilter(value.status) &&
   typeof value.truncated === "boolean" &&
+  typeof value.received === "boolean" &&
   isListOf(value.groups, isErrorGroup);
 
 const isErrorDay = (value: unknown): value is ErrorDay =>

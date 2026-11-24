@@ -35,6 +35,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { WhenAllowed } from "@/components/when-allowed";
 import {
   Workbench,
   type WorkbenchAction,
@@ -158,6 +159,44 @@ function NoErrors({
             : `No error arrived${where} in this period. Choose a longer one to see earlier errors.`}
         </EmptyDescription>
       </EmptyHeader>
+    </Empty>
+  );
+}
+
+/** The page when the project has no error at all: how errors arrive, as the Traces page says how traces do. */
+function NoErrorsYet({ projectId }: { projectId: string }) {
+  return (
+    <Empty className="border border-dashed p-10">
+      <EmptyHeader className="max-w-xl">
+        <EmptyMedia variant="icon">
+          <BugIcon />
+        </EmptyMedia>
+        <EmptyTitle>No errors yet</EmptyTitle>
+        <EmptyDescription>
+          The tracking snippet reports uncaught errors and unhandled promise rejections on its own.
+          Your servers&apos; exceptions arrive with their traces and logs over OpenTelemetry. To
+          report an error your code catches, call{" "}
+          <code className="font-mono">window.ottertrail.captureError(error)</code>.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="max-w-2xl text-left">
+        <CopyableCode text={CAPTURE_EXAMPLE} copyLabel="Copy the example" />
+        <p className="text-sm text-ink-subtle">
+          To turn the automatic reports off, add{" "}
+          <code className="font-mono">data-errors=&quot;off&quot;</code> to the snippet.
+        </p>
+        <WhenAllowed permission="projects">
+          <ButtonLink
+            variant="outline"
+            className="self-center"
+            to="/projects/$projectId/settings"
+            params={{ projectId }}
+            search={{ tab: "install" }}
+          >
+            Project settings
+          </ButtonLink>
+        </WhenAllowed>
+      </EmptyContent>
     </Empty>
   );
 }
@@ -467,42 +506,45 @@ export function ErrorsPage({
         />
       }
       filters={
-        <>
-          <ToggleGroup
-            value={[status]}
-            onValueChange={(value) => {
-              const [next] = value;
-              if (isStatusFilter(next)) show({ status: next });
-            }}
-            aria-label="Status"
-            variant="outline"
-            size="sm"
-            spacing={0}
-          >
-            {STATUS_FILTERS.map((item) => (
-              <ToggleGroupItem key={item.value} value={item.value}>
-                {item.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <ToggleGroup
-            value={[assignee]}
-            onValueChange={(value) => {
-              const [next] = value;
-              if (isAssigneeFilter(next)) show({ assignee: next });
-            }}
-            aria-label="Assignee"
-            variant="outline"
-            size="sm"
-            spacing={0}
-          >
-            {ASSIGNEE_FILTERS.map((item) => (
-              <ToggleGroupItem key={item.value} value={item.value}>
-                {item.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </>
+        // Status and assignee mean nothing until the project has an error.
+        data?.received !== false && (
+          <>
+            <ToggleGroup
+              value={[status]}
+              onValueChange={(value) => {
+                const [next] = value;
+                if (isStatusFilter(next)) show({ status: next });
+              }}
+              aria-label="Status"
+              variant="outline"
+              size="sm"
+              spacing={0}
+            >
+              {STATUS_FILTERS.map((item) => (
+                <ToggleGroupItem key={item.value} value={item.value}>
+                  {item.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <ToggleGroup
+              value={[assignee]}
+              onValueChange={(value) => {
+                const [next] = value;
+                if (isAssigneeFilter(next)) show({ assignee: next });
+              }}
+              aria-label="Assignee"
+              variant="outline"
+              size="sm"
+              spacing={0}
+            >
+              {ASSIGNEE_FILTERS.map((item) => (
+                <ToggleGroupItem key={item.value} value={item.value}>
+                  {item.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </>
+        )
       }
       range={
         data !== undefined && (
@@ -513,7 +555,7 @@ export function ErrorsPage({
           />
         )
       }
-      actions={<WorkbenchKeyHints action={action} />}
+      actions={data?.received !== false && <WorkbenchKeyHints action={action} />}
     />
   );
 
@@ -540,6 +582,18 @@ export function ErrorsPage({
       <div className="flex flex-col">
         {filterBar}
         {query.isError ? <div className="px-gutter py-5">{failure}</div> : <LoadingList />}
+      </div>
+    );
+  }
+
+  if (!data.received) {
+    return (
+      <div className="flex flex-col">
+        {filterBar}
+        <div className="flex flex-col gap-3 px-gutter py-5">
+          {failure}
+          <NoErrorsYet projectId={projectId} />
+        </div>
       </div>
     );
   }

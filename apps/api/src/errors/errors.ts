@@ -272,6 +272,24 @@ export async function listErrors(
   return { groups: wanted, truncated: read.length > MAX_GROUPS };
 }
 
+/**
+ * Whether the project has any error at all, in any environment, within retention: the list's
+ * "No errors yet" when not. One row is enough; events are ordered by project first.
+ */
+export async function anyError(reader: Reader, projectId: string): Promise<boolean> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found FROM events
+     WHERE project_id = ${params.add(projectId, "UUID")}
+       AND name = '${ERROR}'
+       AND error_fingerprint != ''
+     LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
 /** Whose groups the list shows: everyone's (null), one user's, or nobody's. */
 export type AssigneeFilter = { kind: "user"; userId: string } | { kind: "none" } | null;
 

@@ -30,6 +30,7 @@ import type { ObjectStore } from "../storage/object-store.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { assignError } from "./assignments.ts";
 import {
+  anyError,
   type AssigneeFilter,
   type ErrorRange,
   errorDetail,
@@ -162,6 +163,8 @@ export const errorRoutes: FastifyPluginCallback<{
         listErrors(reader, db, range, status, assignee),
         errorEnvironments(reader, range),
       ]);
+      // Asked only of an empty list: the page then says how errors arrive.
+      const received = groups.length > 0 || truncated || (await anyError(reader, range.projectId));
       return {
         timeZone: range.timeZone,
         environment: range.environment,
@@ -172,6 +175,7 @@ export const errorRoutes: FastifyPluginCallback<{
         assignee: request.query.assignee ?? null,
         groups,
         truncated,
+        received,
       };
     },
   );

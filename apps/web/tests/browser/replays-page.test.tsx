@@ -10,6 +10,7 @@ import {
   fakeReplay,
   fakeReplayId,
   fakeReplayList,
+  fakeReplays,
   fakeReplayTimeline,
   fakeUser,
   installFakeApi,
@@ -200,6 +201,33 @@ describe("the Replays page", () => {
     renderApp(REPLAYS);
     await expect.element(page.getByText("No replays in this period")).toBeVisible();
     await expect.element(page.getByText(/Replays are kept 30 days/)).toBeVisible();
+  });
+
+  test("with no replay stored and replays off, says so across the page, without the list or its filters", async () => {
+    installFakeApi({ replayList: emptyList, replays: { ...fakeReplays(), count: 0, bytes: 0 } });
+    renderApp(REPLAYS);
+    await expect.element(page.getByText("Replays are off for this project")).toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "Open the project's settings" }))
+      .toHaveAttribute("href", `/projects/${PROJECT.id}/settings?tab=replay`);
+    await expect.element(page.getByText("No replays in this period.")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("searchbox", { name: "Path contains" }))
+      .not.toBeInTheDocument();
+  });
+
+  test("with no replay stored and replays on, says how they arrive", async () => {
+    installFakeApi({
+      projects: [{ ...PROJECT, replayMode: "errors" }],
+      replayList: emptyList,
+      replays: { ...fakeReplays(), count: 0, bytes: 0 },
+    });
+    renderApp(REPLAYS);
+    await expect.element(page.getByText("No replays yet")).toBeVisible();
+    await expect.element(page.getByText(/data-replay="errors"/)).toBeVisible();
+    await expect
+      .element(page.getByRole("searchbox", { name: "Path contains" }))
+      .not.toBeInTheDocument();
   });
 
   test("says when the install has no object store", async () => {

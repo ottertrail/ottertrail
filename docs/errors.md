@@ -96,7 +96,7 @@ GET   /api/projects/:id/errors/:fingerprint?period=7d&environment=production
 PATCH /api/projects/:id/errors/:fingerprint   { "status": "resolved" | "unresolved" }
 ```
 
-The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`); the status and assignee filters apply to those. Like every project route, these run the access check first; the PATCH also needs the dashboard's origin.
+The list reads at most 1,000 groups, the most recently seen, and says when there were more (`truncated`); the status and assignee filters apply to those. `received` says whether the project has any error at all, in any environment, within retention; it is asked of ClickHouse only when the list is empty, and false makes the page show "No errors yet". Like every project route, these run the access check first; the PATCH also needs the dashboard's origin.
 
 ### Assignment
 
