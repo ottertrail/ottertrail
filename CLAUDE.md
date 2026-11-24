@@ -1,12 +1,12 @@
 # Ottertrail
 
-Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. A self-hosted install serves one customer. The hosted service moves to one shared deployment with organizations (decided 21 November 2026, replacing one instance per customer): follow the plan and its step order in `docs/multi-tenancy.md`. Features ship in stages: see `docs/roadmap.md`.
+Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. A self-hosted install serves one customer. Organizations, several on one deployment, are planned: their plan and its step order are private, in `docs/multi-tenancy.md` of the ottertrail-pro repository. Features ship in stages: see `docs/roadmap.md`.
 
 If `docs/private/product-spec.md` exists, read it before work on product scope or deployment. It holds the full spec and is not in git. Hosting, pricing, and final branding are undecided; do not invent business commitments.
 
 ## Architecture
 
-- Today one customer per instance; organizations are coming ([multi-tenancy plan](docs/multi-tenancy.md)). An instance holds projects (sites and apps), and everything it stores belongs to a project (`project_id`). New work must not add anything an organization would have to untangle later: no new deployment-wide customer data, no references between rows that could cross organizations.
+- Today one customer per instance; organizations are coming (the private plan above). An instance holds projects (sites and apps), and everything it stores belongs to a project (`project_id`). New work must not add anything an organization would have to untangle later: no new deployment-wide customer data, no references between rows that could cross organizations.
 - Check access on the server, in one place (`apps/api/src/access/access.ts`, `docs/access.md`): every project route runs `requireProjectAccess` with the area and level it needs, and every other dashboard route `requirePermission`; both read the user's role and grants from the database on each request. A test fails for any route that declares neither and is not listed as public. A project ID sent by the browser is never enough on its own.
 - Settings that differ between instances, such as the timezone, live in the instance settings (`instance_settings`), not in the deployment's environment, unless they are infrastructure.
 - Stack: Fastify API, React dashboard (Vite), a separate Node.js worker, PostgreSQL, ClickHouse, Docker Compose. PostgreSQL holds accounts, projects, settings, and jobs. ClickHouse holds the high-volume data: analytics events, and later logs, traces, and metrics (`docs/storage-benchmark.md`). Events and telemetry go straight to ClickHouse, and reports read them there (`docs/clickhouse.md`). No Redis, Kafka, or Kubernetes without a measured need.

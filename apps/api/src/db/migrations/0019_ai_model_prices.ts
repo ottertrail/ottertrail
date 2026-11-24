@@ -5,8 +5,8 @@ import { type Kysely, sql } from "kysely";
  * ai/custom-prices.ts), set in Settings → AI models by the owner and
  * admins over the bundled table (ai/price-table.ts). Like
  * instance_settings, it is the customer's, deployment-wide today: it
- * moves to an organization with the other instance settings
- * (docs/multi-tenancy.md), when the key becomes (organization, model,
+ * moves to an organization with the other instance settings, when
+ * organizations exist and the key becomes (organization, model,
  * effective_from). No row names another row: `price_as` names a model,
  * matched when calls are read.
  *
