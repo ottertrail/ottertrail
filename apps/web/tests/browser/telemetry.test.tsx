@@ -60,6 +60,8 @@ describe("the traces page", () => {
     await sidebarLink("Traces").click();
 
     await expect.poll(() => router.state.location.pathname).toBe(TRACES);
+    // The page's code loads on first use, which on CI's runner can take longer than a poll's 5 seconds.
+    await expect.element(tracesTable(), { timeout: 15_000 }).toBeInTheDocument();
     await expect.poll(traceRows).toBe(100);
     expect(lastQuery(api, "/traces")).toEqual({ period: "7d" });
     await expect.element(sidebarLink("Traces")).toHaveAttribute("data-active");
@@ -277,6 +279,10 @@ describe("the logs page", () => {
     await sidebarLink("Logs").click();
 
     await expect.poll(() => router.state.location.pathname).toBe(LOGS);
+    // The page's code loads on first use, which on CI's runner can take longer than a poll's 5 seconds.
+    await expect
+      .element(page.getByRole("list", { name: "Log records, newest first" }), { timeout: 15_000 })
+      .toBeInTheDocument();
     await expect.poll(() => logEntries("Log records, newest first").length).toBe(50);
     expect(lastQuery(api, "/logs")).toEqual({ period: "7d" });
 
