@@ -18,7 +18,7 @@ The browser tracker is about 5 KB gzipped and stores nothing on the visitor's de
 
 ## Run it on your server
 
-Ottertrail runs on one Linux server with Docker Compose and about 8 GB of memory. The documentation at [docs.ottertrail.app](https://docs.ottertrail.app) covers [installing it](https://docs.ottertrail.app/get-started/install/), [its settings](https://docs.ottertrail.app/self-hosting/configuration/), [backups](https://docs.ottertrail.app/self-hosting/backups/), and [updating](https://docs.ottertrail.app/self-hosting/updating/).
+Ottertrail runs on one Linux server with Docker Compose 2.23.1 or later and about 8 GB of memory. The documentation at [docs.ottertrail.app](https://docs.ottertrail.app) covers [installing it](https://docs.ottertrail.app/get-started/install/), [its settings](https://docs.ottertrail.app/self-hosting/configuration/), [backups](https://docs.ottertrail.app/self-hosting/backups/), and [updating](https://docs.ottertrail.app/self-hosting/updating/).
 
 ## Run it locally
 
@@ -37,7 +37,7 @@ The commands, tests, settings, and commit rules are in [docs/development.md](doc
 
 ## License
 
-Ottertrail is licensed under the [GNU Affero General Public License, version 3 only](LICENSE). If you modify it and let people use it over a network, you must offer those users the modified source code. The browser tracker (`packages/tracker`) is licensed under the [MIT License](packages/tracker/LICENSE), so any site can include it.
+Ottertrail is licensed under the [GNU Affero General Public License, version 3 only](LICENSE). If you modify it and let people use it over a network, you must offer those users the modified source code. The browser tracker (`packages/tracker`) and the source map upload command (`packages/sourcemaps`) are licensed under the [MIT License](packages/tracker/LICENSE), so any site can include the tracker and any build can run the command.
 
 Third-party code, data, and fonts are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
