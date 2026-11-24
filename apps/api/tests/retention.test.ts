@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import { removeDeletedRows } from "../src/clickhouse/delete-events.ts";
-import { fromClickHouseTime } from "../src/clickhouse/query.ts";
+import { TELEMETRY_TABLES } from "../src/clickhouse/migrations.ts";
+import { clickHouseTime, fromClickHouseTime } from "../src/clickhouse/query.ts";
 import { storeEvents } from "../src/collection/event-store.ts";
-import { deleteExpiredEvents } from "../src/retention/retention.ts";
+import { effectiveTelemetryRetentionDays } from "../src/projects/telemetry-retention.ts";
+import { deleteExpiredEvents, deleteExpiredTelemetry } from "../src/retention/retention.ts";
 import { insertProject, setInstanceTimeZone } from "./helpers/projects.ts";
 import { createTestClickHouse, type TestClickHouse } from "./helpers/test-clickhouse.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/test-database.ts";
@@ -202,5 +204,113 @@ describe("deleteExpiredEvents", { timeout: 60_000 }, () => {
   test("the database refuses a retention under 30 days or over 10 years", async () => {
     await expect(project(29)).rejects.toThrow(/check/);
     await expect(project(3651)).rejects.toThrow(/check/);
+  });
+});
+
+/** One row in each telemetry table at each time, as a project's own. */
+async function telemetry(projectId: string, times: Date[]) {
+  for (const table of TELEMETRY_TABLES) {
+    await clickhouse().insert({
+      table,
+      values: times.map((time) => ({
+        project_id: projectId,
+        timestamp: clickHouseTime(time),
+        id: randomUUID(),
+        ...(table === "spans" || table === "logs" ? {} : { name: "requests" }),
+      })),
+      format: "JSONEachRow",
+    });
+  }
+}
+
+/** The project's rows left in each telemetry table, as pages see them. */
+async function telemetryLeft(projectId: string): Promise<Record<string, string[]>> {
+  const left: Record<string, string[]> = {};
+  for (const table of TELEMETRY_TABLES) {
+    const result = await clickhouse().query({
+      query: `SELECT toString(timestamp) AS at FROM ${table}
+              WHERE project_id = {project:UUID} ORDER BY timestamp`,
+      query_params: { project: projectId },
+      format: "JSONEachRow",
+    });
+    const rows = await result.json<{ at: string }>();
+    left[table] = rows.map((row) => fromClickHouseTime(row.at).toISOString());
+  }
+  return left;
+}
+
+const inEveryTable = (times: Date[]) =>
+  Object.fromEntries(
+    TELEMETRY_TABLES.map((table) => [table, times.map((time) => time.toISOString())]),
+  );
+
+/** A project that keeps its telemetry `days` days; null for the instance's maximum. */
+async function keepingTelemetry(days: number | null) {
+  const { id } = await insertProject(db(), {
+    name: "Telemetry retention test",
+    telemetry_retention_days: days,
+  });
+  return id;
+}
+
+// ClickHouse's TTL keeps 30 days in tests and counts from the real time, so
+// these rows are recent: the cut-off is the midnight UTC 7 days before today.
+describe("deleteExpiredTelemetry", { timeout: 60_000 }, () => {
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const cutOff = new Date(today - 7 * 86_400_000);
+  const justBefore = new Date(cutOff.getTime() - 1);
+  const older = new Date(cutOff.getTime() - 3 * 86_400_000);
+  const recent = new Date(today);
+
+  test("deletes a shorter-keeping project's old traces, logs, and metrics by whole UTC days, and no other project's", async () => {
+    const week = await keepingTelemetry(7);
+    const atMaximum = await keepingTelemetry(null);
+    const sameAsMaximum = await keepingTelemetry(30);
+    const all = [older, justBefore, cutOff, recent];
+    for (const id of [week, atMaximum, sameAsMaximum]) await telemetry(id, all);
+
+    const results = await deleteExpiredTelemetry(db(), clickhouse(), { maxDays: 30, now });
+
+    expect(results.find((result) => result.projectId === week)).toEqual({
+      projectId: week,
+      before: cutOff,
+      deleted: 2 * TELEMETRY_TABLES.length,
+    });
+    // Projects at the maximum are left to ClickHouse's TTL.
+    const touched = results.map((result) => result.projectId);
+    expect(touched).not.toContain(atMaximum);
+    expect(touched).not.toContain(sameAsMaximum);
+    expect(await telemetryLeft(week)).toEqual(inEveryTable([cutOff, recent]));
+    expect(await telemetryLeft(atMaximum)).toEqual(inEveryTable(all));
+    expect(await telemetryLeft(sameAsMaximum)).toEqual(inEveryTable(all));
+
+    // Running it again deletes nothing more.
+    const again = await deleteExpiredTelemetry(db(), clickhouse(), { maxDays: 30, now });
+    expect(again.find((result) => result.projectId === week)).toMatchObject({ deleted: 0 });
+  });
+
+  test("a lower maximum caps a longer setting, and leaves the project to the TTL", async () => {
+    const longer = await keepingTelemetry(30);
+    await telemetry(longer, [justBefore, recent]);
+
+    // The operator lowered TELEMETRY_RETENTION_DAYS to 7: the project counts
+    // as 7, which ClickHouse's TTL then drops for every project.
+    const results = await deleteExpiredTelemetry(db(), clickhouse(), { maxDays: 7, now });
+
+    expect(results.map((result) => result.projectId)).not.toContain(longer);
+  });
+
+  test("the database refuses a telemetry retention under 1 day or over 365", async () => {
+    await expect(keepingTelemetry(0)).rejects.toThrow(/check/);
+    await expect(keepingTelemetry(366)).rejects.toThrow(/check/);
+  });
+});
+
+describe("effectiveTelemetryRetentionDays", () => {
+  test("the project's days, the maximum without them, and never more than the maximum", () => {
+    expect(effectiveTelemetryRetentionDays(7, 30)).toBe(7);
+    expect(effectiveTelemetryRetentionDays(null, 30)).toBe(30);
+    expect(effectiveTelemetryRetentionDays(90, 30)).toBe(30);
   });
 });

@@ -22,6 +22,10 @@ export interface Project extends ProjectSummary {
   allowedHostnames: string[];
   /** Days of events kept; null keeps them forever. */
   retentionDays: number | null;
+  /** Days of traces, logs, and metrics kept; null keeps the instance's maximum. */
+  telemetryRetentionDays: number | null;
+  /** The instance's maximum (TELEMETRY_RETENTION_DAYS), which also caps a larger setting. */
+  telemetryRetentionMaxDays: number;
   /** For the site's own server only: sends server-side events and signs user IDs. */
   secretKey: string;
   /** A browser's user ID counts only with a valid signature from the site's server. */
@@ -94,6 +98,10 @@ export function isFullProject(value: unknown): value is Project {
     value.allowedHostnames.every((hostname) => typeof hostname === "string") &&
     "retentionDays" in value &&
     (value.retentionDays === null || typeof value.retentionDays === "number") &&
+    "telemetryRetentionDays" in value &&
+    (value.telemetryRetentionDays === null || typeof value.telemetryRetentionDays === "number") &&
+    "telemetryRetentionMaxDays" in value &&
+    typeof value.telemetryRetentionMaxDays === "number" &&
     "secretKey" in value &&
     typeof value.secretKey === "string" &&
     "requireSignedUserIds" in value &&
@@ -162,6 +170,7 @@ export async function updateProject(
     name?: string;
     allowedHostnames?: string[];
     retentionDays?: number | null;
+    telemetryRetentionDays?: number | null;
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";

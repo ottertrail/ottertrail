@@ -28,6 +28,11 @@ export interface CollectingProject {
   blockedReferrers: ReadonlySet<string> | null;
   /** Where visitor locations come from (location-headers.ts). */
   location: ProjectLocation;
+  /**
+   * Days of traces, logs, and metrics kept; null for the instance's maximum
+   * (projects/telemetry-retention.ts). Older records are refused.
+   */
+  telemetryRetentionDays: number | null;
 }
 
 interface CacheEntry<T> {
@@ -189,6 +194,7 @@ export class ProjectKeyCache {
         "projects.location_country_header",
         "projects.location_region_header",
         "projects.location_city_header",
+        "projects.telemetry_retention_days",
       ])
       .where(`projects.${column}`, "=", key)
       .executeTakeFirst();
@@ -206,6 +212,7 @@ export class ProjectKeyCache {
           blockedReferrers:
             row.blocked_referrers.length === 0 ? null : new Set(row.blocked_referrers),
           location: projectLocationOf(row),
+          telemetryRetentionDays: row.telemetry_retention_days,
         };
   }
 

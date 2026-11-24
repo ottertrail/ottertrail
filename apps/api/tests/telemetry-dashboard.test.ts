@@ -1660,6 +1660,74 @@ describe("the charts' and live view's access", () => {
   });
 });
 
+/** A new project that keeps its telemetry `days` days; null for the instance's maximum. */
+async function keeping(name: string, days: number | null) {
+  const project = await newProject(name);
+  await dashboard.db
+    .updateTable("projects")
+    .set({ telemetry_retention_days: days })
+    .where("id", "=", project.id)
+    .execute();
+  return project;
+}
+
+describe("a project's own telemetry retention", () => {
+  test("pages say the days the project keeps, capped at the instance's maximum", async () => {
+    const week = await keeping("Keeps a week", 7);
+    const longer = await keeping("Keeps longer than allowed", 90);
+    expect((await getJson(week.id, "/traces?period=30d")).retentionDays).toBe(7);
+    expect((await getJson(week.id, "/logs?period=30d")).retentionDays).toBe(7);
+    expect((await getJson(week.id, "/metrics?period=30d")).retentionDays).toBe(7);
+    expect((await getJson(week.id, `/traces/${hex(16)}`)).retentionDays).toBe(7);
+    // The instance keeps 30 days: a project's larger setting counts as 30.
+    expect((await getJson(longer.id, "/traces?period=30d")).retentionDays).toBe(30);
+    expect((await getJson(shop.id, "/traces?period=30d")).retentionDays).toBe(30);
+  });
+
+  test("ingestion refuses records older than the project keeps", async () => {
+    const week = await keeping("Refuses old spans", 7);
+    const response = await dashboard.app.inject({
+      method: "POST",
+      url: "/v1/traces",
+      headers: { "content-type": "application/json", authorization: `Bearer ${week.secretKey}` },
+      payload: JSON.stringify({
+        resourceSpans: [
+          {
+            resource: resource("web"),
+            scopeSpans: [
+              {
+                spans: [
+                  jsonSpan({
+                    traceId: hex(16),
+                    spanId: hex(8),
+                    name: "GET /old",
+                    start: minutesAgo(10 * 24 * 60),
+                    durationMs: 5,
+                  }),
+                  jsonSpan({
+                    traceId: hex(16),
+                    spanId: hex(8),
+                    name: "GET /new",
+                    start: minutesAgo(5),
+                    durationMs: 5,
+                  }),
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      partialSuccess: {
+        rejectedSpans: "1",
+        errorMessage: "1 of 2 spans refused: times older than the 7 days telemetry is kept.",
+      },
+    });
+  });
+});
+
 describe("access", () => {
   test("a project that does not exist gets 404; another project reads nothing of this one's", async () => {
     const missing = randomUUID();

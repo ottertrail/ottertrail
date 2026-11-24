@@ -2512,6 +2512,8 @@ export const PROJECT: Project = {
   createdAt: "2026-10-01T00:00:00.000Z",
   lastEventAt: "2026-11-16T09:00:00.000Z",
   retentionDays: null,
+  telemetryRetentionDays: null,
+  telemetryRetentionMaxDays: 30,
   secretKey: "sk_00000000000000000000000000000001",
   requireSignedUserIds: false,
   ignoreDataCenters: true,

@@ -171,6 +171,55 @@ describe("project routes", () => {
     }
   });
 
+  test("keep traces, logs, and metrics the instance's maximum by default, or fewer days once set", async () => {
+    const created = (await request("POST", "/api/projects", { name: "Telemetry kept" })).json()
+      .project;
+    // TELEMETRY_RETENTION_DAYS, 30 by default, is the maximum.
+    expect(created).toMatchObject({ telemetryRetentionDays: null, telemetryRetentionMaxDays: 30 });
+
+    const week = await request("PATCH", `/api/projects/${created.id}`, {
+      telemetryRetentionDays: 7,
+    });
+    expect(week.json().project).toMatchObject({
+      telemetryRetentionDays: 7,
+      telemetryRetentionMaxDays: 30,
+    });
+    const read = await request("GET", `/api/projects/${created.id}`);
+    expect(read.json().project.telemetryRetentionDays).toBe(7);
+    const most = await request("PATCH", `/api/projects/${created.id}`, {
+      telemetryRetentionDays: 30,
+    });
+    expect(most.json().project.telemetryRetentionDays).toBe(30);
+    const back = await request("PATCH", `/api/projects/${created.id}`, {
+      telemetryRetentionDays: null,
+    });
+    expect(back.json().project.telemetryRetentionDays).toBeNull();
+
+    const tooLong = await request("PATCH", `/api/projects/${created.id}`, {
+      telemetryRetentionDays: 31,
+    });
+    expect({ status: tooLong.statusCode, body: tooLong.json() }).toEqual({
+      status: 400,
+      body: {
+        error: "telemetry_retention_too_long",
+        message:
+          "This instance keeps traces, logs, and metrics at most 30 days. Choose 30 days or fewer.",
+      },
+    });
+    for (const telemetryRetentionDays of [0, 366, 7.5, "a week"]) {
+      const refused = await request("PATCH", `/api/projects/${created.id}`, {
+        telemetryRetentionDays,
+      });
+      expect({ telemetryRetentionDays, status: refused.statusCode }).toEqual({
+        telemetryRetentionDays,
+        status: 400,
+      });
+    }
+    // Nothing refused was saved.
+    const after = await request("GET", `/api/projects/${created.id}`);
+    expect(after.json().project.telemetryRetentionDays).toBeNull();
+  });
+
   test("give each project a secret key for its server; replacing it stops the old one at once", async () => {
     const created = (await request("POST", "/api/projects", { name: "API" })).json().project;
     expect(created.secretKey).toMatch(/^sk_[0-9a-f]{32}$/);

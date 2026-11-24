@@ -14,6 +14,7 @@ import type { Auth } from "../auth/auth.ts";
 import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import { parseLocationHeaderName } from "../collection/location-headers.ts";
+import { DEFAULT_TELEMETRY_RETENTION_DAYS } from "../config.ts";
 import type { Database, LocationSource } from "../db/schema.ts";
 import { MAX_BLOCKED_ADDRESSES, ownAddress, parseBlockedAddresses } from "./blocked-addresses.ts";
 import { MAX_BLOCKED_REFERRERS, parseBlockedReferrers } from "./blocked-referrers.ts";
@@ -33,6 +34,10 @@ import {
   updateProject,
 } from "./projects.ts";
 import { listStarredProjects, starProject, unstarProject } from "./stars.ts";
+import {
+  MAX_TELEMETRY_RETENTION_DAYS,
+  MIN_TELEMETRY_RETENTION_DAYS,
+} from "./telemetry-retention.ts";
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -106,8 +111,14 @@ function problem(code: string, message: string) {
   return { error: code, message };
 }
 
+/**
+ * A project in full, with the instance's maximum for its telemetry
+ * retention, which its settings offer up to (telemetry-retention.ts).
+ */
+type FullProject = Project & { telemetryRetentionMaxDays: number };
+
 /** Hide keys and settings from users without project management access (docs/access.md). */
-function shownTo(access: UserAccess, project: Project) {
+function shownTo(access: UserAccess, project: FullProject) {
   if (can(access, "projects")) {
     return project;
   }
@@ -132,7 +143,24 @@ export const projectRoutes: FastifyPluginCallback<{
    * or drops the location file at once (enrichment/reload.ts). Never throws.
    */
   onLocationSourcesChange?: () => void;
-}> = (app, { db, auth, trustedOrigins, projectKeys, onLocationSourcesChange }, done) => {
+  /** TELEMETRY_RETENTION_DAYS: the most days a project may keep traces, logs, and metrics. */
+  telemetryMaxDays?: number;
+}> = (
+  app,
+  {
+    db,
+    auth,
+    trustedOrigins,
+    projectKeys,
+    onLocationSourcesChange,
+    telemetryMaxDays = DEFAULT_TELEMETRY_RETENTION_DAYS,
+  },
+  done,
+) => {
+  const full = (project: Project): FullProject => ({
+    ...project,
+    telemetryRetentionMaxDays: telemetryMaxDays,
+  });
   const signedIn = requireSession(auth);
   const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const anyUser = requirePermission(db, "signed_in");
@@ -145,7 +173,7 @@ export const projectRoutes: FastifyPluginCallback<{
     return {
       projects: (await listProjects(db))
         .filter((project) => canReachProject(access, project.id))
-        .map((project) => shownTo(access, project)),
+        .map((project) => shownTo(access, full(project))),
     };
   });
 
@@ -156,7 +184,7 @@ export const projectRoutes: FastifyPluginCallback<{
       const project = await findProject(db, request.params.id);
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
-        : { project: shownTo(userAccessOf(request), project) };
+        : { project: shownTo(userAccessOf(request), full(project)) };
     },
   );
 
@@ -184,7 +212,7 @@ export const projectRoutes: FastifyPluginCallback<{
       });
       // A new project looks up locations in the database by default.
       onLocationSourcesChange?.();
-      return reply.code(201).send({ project });
+      return reply.code(201).send({ project: full(project) });
     },
   );
 
@@ -194,6 +222,7 @@ export const projectRoutes: FastifyPluginCallback<{
       name?: string;
       allowedHostnames?: string[];
       retentionDays?: number | null;
+      telemetryRetentionDays?: number | null;
       requireSignedUserIds?: boolean;
       ignoreDataCenters?: boolean;
       replayMode?: "off" | "errors";
@@ -223,6 +252,12 @@ export const projectRoutes: FastifyPluginCallback<{
               minimum: MIN_RETENTION_DAYS,
               maximum: MAX_RETENTION_DAYS,
             },
+            // null keeps the instance's maximum, TELEMETRY_RETENTION_DAYS, checked below.
+            telemetryRetentionDays: {
+              type: ["integer", "null"],
+              minimum: MIN_TELEMETRY_RETENTION_DAYS,
+              maximum: MAX_TELEMETRY_RETENTION_DAYS,
+            },
             requireSignedUserIds: { type: "boolean" },
             ignoreDataCenters: { type: "boolean" },
             // Session replays around errors (docs/session-replay.md); off by default.
@@ -246,6 +281,7 @@ export const projectRoutes: FastifyPluginCallback<{
         name,
         allowedHostnames,
         retentionDays,
+        telemetryRetentionDays,
         requireSignedUserIds,
         ignoreDataCenters,
         replayMode,
@@ -256,6 +292,20 @@ export const projectRoutes: FastifyPluginCallback<{
         locationSource,
         locationHeaders,
       } = request.body;
+      if (
+        telemetryRetentionDays !== undefined &&
+        telemetryRetentionDays !== null &&
+        telemetryRetentionDays > telemetryMaxDays
+      ) {
+        return reply
+          .code(400)
+          .send(
+            problem(
+              "telemetry_retention_too_long",
+              `This instance keeps traces, logs, and metrics at most ${telemetryMaxDays} days. Choose ${telemetryMaxDays} days or fewer.`,
+            ),
+          );
+      }
       let hostnames: string[] | undefined;
       if (allowedHostnames !== undefined) {
         const parsed = parseHostnames(allowedHostnames);
@@ -307,6 +357,7 @@ export const projectRoutes: FastifyPluginCallback<{
         ...(name === undefined ? {} : { name: name.trim() }),
         ...(hostnames === undefined ? {} : { allowedHostnames: hostnames }),
         ...(retentionDays === undefined ? {} : { retentionDays }),
+        ...(telemetryRetentionDays === undefined ? {} : { telemetryRetentionDays }),
         ...(requireSignedUserIds === undefined ? {} : { requireSignedUserIds }),
         ...(ignoreDataCenters === undefined ? {} : { ignoreDataCenters }),
         ...(replayMode === undefined ? {} : { replayMode }),
@@ -336,14 +387,15 @@ export const projectRoutes: FastifyPluginCallback<{
         blocked !== undefined ||
         referrers !== undefined ||
         locationSource !== undefined ||
-        headers !== undefined
+        headers !== undefined ||
+        telemetryRetentionDays !== undefined
       ) {
         projectKeys?.forgetProject(request.params.id);
       }
       if (locationSource !== undefined && project !== null) onLocationSourcesChange?.();
       return project === null
         ? reply.code(404).send(problem("not_found", "No project has this ID."))
-        : { project };
+        : { project: full(project) };
     },
   );
 
@@ -399,7 +451,7 @@ export const projectRoutes: FastifyPluginCallback<{
         return reply.code(404).send(problem("not_found", "No project has this ID."));
       }
       projectKeys?.forget(replaced.oldKey);
-      return { project: replaced.project };
+      return { project: full(replaced.project) };
     },
   );
 
@@ -413,7 +465,7 @@ export const projectRoutes: FastifyPluginCallback<{
         return reply.code(404).send(problem("not_found", "No project has this ID."));
       }
       projectKeys?.forgetProject(project.id);
-      return { project };
+      return { project: full(project) };
     },
   );
 

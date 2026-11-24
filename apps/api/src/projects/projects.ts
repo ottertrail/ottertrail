@@ -22,6 +22,11 @@ export interface Project {
   lastEventAt: Date | null;
   /** Days of events kept; null keeps them forever. The worker deletes older ones. */
   retentionDays: number | null;
+  /**
+   * Days of traces, logs, and metrics kept, 1 to 365; null keeps the
+   * instance's maximum, which also caps a larger value (telemetry-retention.ts).
+   */
+  telemetryRetentionDays: number | null;
   /** Server-side events and user-ID signatures only. Never expose in a page. */
   secretKey: string;
   requireSignedUserIds: boolean;
@@ -105,6 +110,7 @@ function baseQuery(db: Kysely<Database>) {
       "projects.allowed_hostnames",
       "projects.created_at",
       "projects.retention_days",
+      "projects.telemetry_retention_days",
       "projects.last_event_at",
       "projects.secret_key",
       "projects.require_signed_user_ids",
@@ -134,6 +140,7 @@ function toProject(row: ProjectRow): Project {
     createdAt: row.created_at,
     lastEventAt: row.last_event_at,
     retentionDays: row.retention_days,
+    telemetryRetentionDays: row.telemetry_retention_days,
     secretKey: row.secret_key,
     requireSignedUserIds: row.require_signed_user_ids,
     ignoreDataCenters: row.ignore_data_centers,
@@ -227,6 +234,7 @@ export async function updateProject(
     name?: string;
     allowedHostnames?: string[];
     retentionDays?: number | null;
+    telemetryRetentionDays?: number | null;
     requireSignedUserIds?: boolean;
     ignoreDataCenters?: boolean;
     replayMode?: "off" | "errors";
@@ -247,6 +255,9 @@ export async function updateProject(
       ? {}
       : { allowed_hostnames: changes.allowedHostnames }),
     ...(changes.retentionDays === undefined ? {} : { retention_days: changes.retentionDays }),
+    ...(changes.telemetryRetentionDays === undefined
+      ? {}
+      : { telemetry_retention_days: changes.telemetryRetentionDays }),
     ...(changes.requireSignedUserIds === undefined
       ? {}
       : { require_signed_user_ids: changes.requireSignedUserIds }),

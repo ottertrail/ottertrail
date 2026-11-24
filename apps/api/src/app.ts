@@ -314,6 +314,8 @@ export function buildApp({
   timeouts = {},
   ...fastifyOptions
 }: AppOptions) {
+  /** TELEMETRY_RETENTION_DAYS: the most days a project keeps traces, logs, and metrics. */
+  const telemetryMaxDays = telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS;
   const app = Fastify({
     // A user ID in a path may be 200 characters, 400 UTF-16 units; Fastify allows 100.
     routerOptions: { maxParamLength: 512 },
@@ -422,7 +424,7 @@ export function buildApp({
       activity,
       budget,
       keyLookups,
-      retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      retentionDays: telemetryMaxDays,
       ...(collection.now === undefined ? {} : { now: collection.now }),
     });
     app.register(aiCallIngestRoutes, {
@@ -530,6 +532,7 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
       projectKeys,
+      telemetryMaxDays,
       // The reply does not wait: loading the file takes seconds, and checkNeeded never throws.
       onLocationSourcesChange: () => void locationData?.checkNeeded?.(),
     });
@@ -597,7 +600,7 @@ export function buildApp({
       db,
       clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
       auth: dashboard.auth,
-      retentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      maxRetentionDays: telemetryMaxDays,
       limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
@@ -614,7 +617,7 @@ export function buildApp({
       db,
       clickhouse: telemetry.clickhouse ?? dashboard.clickhouse,
       auth: dashboard.auth,
-      traceRetentionDays: telemetry.retentionDays ?? DEFAULT_TELEMETRY_RETENTION_DAYS,
+      maxTraceRetentionDays: telemetryMaxDays,
       limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
@@ -755,10 +758,7 @@ export function buildApp({
               ? null
               : { kind: "other", bucket: "" },
         budgets: { replayBytes: replays.limitBytes, sourceMapBytes: sourceMaps.limitBytes },
-        telemetryRetentionDays:
-          storage.telemetryRetentionDays ??
-          telemetry.retentionDays ??
-          DEFAULT_TELEMETRY_RETENTION_DAYS,
+        telemetryRetentionDays: storage.telemetryRetentionDays ?? telemetryMaxDays,
         garage: storage.garage ?? null,
         readDisk: storage.readDisk,
       },

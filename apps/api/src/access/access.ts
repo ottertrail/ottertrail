@@ -30,6 +30,11 @@ export interface UserAccess {
 export interface ProjectAccess {
   projectId: string;
   timeZone: string;
+  /**
+   * The project's own telemetry retention, null for the instance's maximum
+   * (projects/telemetry-retention.ts).
+   */
+  telemetryRetentionDays: number | null;
   /** The user's role and grants, for a route that shows less to some users. */
   user: UserAccess;
 }
@@ -242,7 +247,7 @@ export async function checkProjectAccess(
   }
   const project = await db
     .selectFrom("projects")
-    .select("id")
+    .select(["id", "telemetry_retention_days"])
     .where("id", "=", projectId)
     .executeTakeFirst();
   if (project === undefined || !canReachProject(access, project.id)) {
@@ -252,7 +257,15 @@ export async function checkProjectAccess(
     return { ok: false, status: 403, body: FORBIDDEN };
   }
   const { timeZone } = await readInstanceSettings(db);
-  return { ok: true, access: { projectId: project.id, timeZone, user: access } };
+  return {
+    ok: true,
+    access: {
+      projectId: project.id,
+      timeZone,
+      telemetryRetentionDays: project.telemetry_retention_days,
+      user: access,
+    },
+  };
 }
 
 /**

@@ -291,7 +291,7 @@ ClickHouse refuses inserts while less than 5% of its disk is free: `min_free_dis
 
 ### Traces, logs, and metrics
 
-A server sends them to the instance's address over OTLP/HTTP, with its project's secret key ([telemetry](telemetry.md#receiving)); Caddy passes `/v1/traces`, `/v1/logs`, and `/v1/metrics` to the API like every other path, and nothing needs to be set. ClickHouse keeps them `TELEMETRY_RETENTION_DAYS`, 30 by default (1 to 365), and drops whole days past it on its own. After changing it, run `docker compose up -d`, as for an [update](https://docs.ottertrail.app/self-hosting/updating/): `migrate` applies it to ClickHouse's tables, and the API, which refuses records older than it, restarts with it.
+A server sends them to the instance's address over OTLP/HTTP, with its project's secret key ([telemetry](telemetry.md#receiving)); Caddy passes `/v1/traces`, `/v1/logs`, and `/v1/metrics` to the API like every other path, and nothing needs to be set. ClickHouse keeps them at most `TELEMETRY_RETENTION_DAYS`, 30 by default (1 to 365), and drops whole days past it on its own. It is each project's default and the most a project may choose: a project can keep fewer days in its settings, and the worker deletes its older days. After changing it, run `docker compose up -d`, as for an [update](https://docs.ottertrail.app/self-hosting/updating/): `migrate` applies it to ClickHouse's tables, and the API, which refuses records older than it, restarts with it.
 
 ### Logs
 

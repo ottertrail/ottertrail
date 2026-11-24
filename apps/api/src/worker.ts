@@ -32,7 +32,7 @@ import { DELIVERY_TICK_MS, DeliverySender, PRUNE_INTERVAL_MS } from "./notificat
 import { addressPolicy, systemLookup } from "./outbound/addresses.ts";
 import { linkReplays } from "./replays/link.ts";
 import { deleteExpiredReplays, deleteJoinedChunks, joinReplays } from "./replays/replays.ts";
-import { deleteExpiredEvents } from "./retention/retention.ts";
+import { deleteExpiredEvents, deleteExpiredTelemetry } from "./retention/retention.ts";
 import { redactRecord } from "./server-log/redact.ts";
 import { WorkerLogRelay } from "./server-log/relay.ts";
 import { probeOpenAdminApi } from "./storage/garage-admin.ts";
@@ -312,10 +312,17 @@ const stopRetention = every(RETENTION_INTERVAL_MS, async () => {
     }
     const results = await deleteExpiredEvents(db, clickhouse);
     const deleted = results.reduce((sum, result) => sum + result.deleted, 0);
+    // Projects that keep fewer days of telemetry than the TTL's maximum.
+    const telemetry = await deleteExpiredTelemetry(db, clickhouse, {
+      maxDays: config.telemetryRetentionDays,
+    });
+    const telemetryDeleted = telemetry.reduce((sum, result) => sum + result.deleted, 0);
     const cleanup = await removeDeletedRows(clickhouse);
     log("info", "retention ran", {
       projects: results.length,
       deleted,
+      telemetryProjects: telemetry.length,
+      telemetryDeleted,
       rewriting: cleanup.started,
     });
     if (cleanup.waitingFor?.failReason) {

@@ -124,6 +124,44 @@ export async function deleteEventsBefore(
 }
 
 /**
+ * Deletes each project's traces, logs, and metrics from before its cut-off,
+ * a thousand projects per statement, and returns how many rows each had
+ * (the four tables together). For projects that keep fewer days than the
+ * instance's maximum; ClickHouse's TTL drops the rest (retention/retention.ts).
+ */
+export async function deleteTelemetryBefore(
+  clickhouse: ClickHouseClient,
+  cutOffs: readonly { projectId: string; before: Date }[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const chunk of chunks(cutOffs)) {
+    const params = new QueryParams();
+    const ids = params.add(
+      chunk.map((cutOff) => cutOff.projectId),
+      "Array(UUID)",
+    );
+    const befores = params.add(
+      chunk.map((cutOff) => clickHouseTime(cutOff.before)),
+      "Array(DateTime64(3, 'UTC'))",
+    );
+    for (const table of TELEMETRY_TABLES) {
+      // As for events: the project_id test first, for the index.
+      const deleted = await deleteWhere(
+        clickhouse,
+        table,
+        `project_id IN ${ids}
+         AND timestamp < transform(project_id, ${ids}, ${befores}, toDateTime64(0, 3, 'UTC'))`,
+        params,
+      );
+      for (const [projectId, count] of deleted) {
+        counts.set(projectId, (counts.get(projectId) ?? 0) + count);
+      }
+    }
+  }
+  return counts;
+}
+
+/**
  * Works the projects' first-seen times out again from the events they
  * still have, after old events were deleted: a user whose early events are
  * gone is first seen at their earliest event kept, and a user with none

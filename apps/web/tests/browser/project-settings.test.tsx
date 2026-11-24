@@ -336,3 +336,86 @@ describe("keeping events", () => {
       .toMatchTextContent(/^90 days/);
   });
 });
+
+const keepTelemetry = () => page.getByRole("combobox", { name: "Keep traces, logs, and metrics" });
+
+describe("keeping traces, logs, and metrics", () => {
+  test("keeps the instance's maximum by default; fewer days warn before saving, then are saved", async () => {
+    const api = installFakeApi();
+    renderApp(tab("general"));
+    const keep = keepTelemetry();
+    await expect.element(keep).toMatchTextContent(/^30 days \(the instance's maximum\)/);
+    await expect
+      .element(page.getByText("Older records are permanently deleted, one whole day at a time."))
+      .toBeVisible();
+
+    await keep.click();
+    // Only the days up to the instance's 30.
+    const options = page.getByRole("option");
+    await expect
+      .poll(() => options.elements().map((option) => option.textContent))
+      .toEqual(["7 days", "14 days", "30 days (the instance's maximum)"]);
+    await page.getByRole("option", { name: "7 days" }).click();
+    await expect
+      .element(
+        page.getByText(
+          "Records older than 7 days will be permanently deleted within a few hours of saving.",
+        ),
+      )
+      .toBeVisible();
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({
+        method: "PATCH",
+        path: `/api/projects/${PROJECT.id}`,
+        body: { telemetryRetentionDays: 7 },
+      });
+    await expect.element(saveStatus()).toHaveTextContent("No unsaved changes");
+    await expect.element(keep).toMatchTextContent(/^7 days/);
+
+    // Back to the maximum: saved as null, and it deletes nothing, so no warning.
+    await keep.click();
+    await page.getByRole("option", { name: "30 days (the instance's maximum)" }).click();
+    await expect
+      .element(page.getByText(/will be permanently deleted within a few hours/))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({ body: { telemetryRetentionDays: null } });
+  });
+
+  test("a larger maximum offers more days, up to it", async () => {
+    installFakeApi({ projects: [{ ...PROJECT, telemetryRetentionMaxDays: 90 }] });
+    renderApp(tab("general"));
+
+    await keepTelemetry().click();
+    await expect
+      .poll(() =>
+        page
+          .getByRole("option")
+          .elements()
+          .map((option) => option.textContent),
+      )
+      .toEqual(["7 days", "14 days", "30 days", "90 days (the instance's maximum)"]);
+  });
+
+  test("a setting above a lowered maximum shows as capped, and other changes leave it alone", async () => {
+    const api = installFakeApi({
+      projects: [{ ...PROJECT, telemetryRetentionDays: 90, telemetryRetentionMaxDays: 30 }],
+    });
+    renderApp(tab("general"));
+    await expect.element(keepTelemetry()).toMatchTextContent(/^90 days \(capped at 30\)/);
+
+    await page.getByRole("textbox", { name: "Name" }).fill("Main site, renamed");
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect
+      .poll(() => api.bodies.at(-1))
+      .toMatchObject({ method: "PATCH", body: { name: "Main site, renamed" } });
+    // Sending 90 again would be refused: it is above the maximum.
+    expect(api.bodies.at(-1)?.body).not.toHaveProperty("telemetryRetentionDays");
+  });
+});

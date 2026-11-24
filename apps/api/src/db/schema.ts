@@ -40,6 +40,12 @@ export interface ProjectsTable {
   /** Days of events to keep, 30 to 3650; null keeps them forever. */
   retention_days: ColumnType<number | null, number | null | undefined, number | null>;
   /**
+   * Days of traces, logs, and metrics to keep, 1 to 365; null keeps the
+   * instance's maximum (TELEMETRY_RETENTION_DAYS), which also caps a larger
+   * value (projects/telemetry-retention.ts).
+   */
+  telemetry_retention_days: ColumnType<number | null, number | null | undefined, number | null>;
+  /**
    * "sk_" + 32 hex characters, for the site's own server only: it sends
    * server-side events and telemetry, and signs user IDs.
    */

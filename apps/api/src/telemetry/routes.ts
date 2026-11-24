@@ -19,6 +19,7 @@ import {
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import { DEFAULT_SERVER_IP_LIMIT } from "../collection/server-events.ts";
+import { effectiveTelemetryRetentionDays } from "../projects/telemetry-retention.ts";
 import { BUSY, SecretKeyLookups } from "./key-lookups.ts";
 import {
   type NormalizeContext,
@@ -132,7 +133,10 @@ export interface TelemetryOptions {
   projects: ProjectKeyCache;
   /** Activity tab counts (activity/activity.ts). */
   activity: IngestActivity;
-  /** Rejects older records (Config.telemetryRetentionDays). */
+  /**
+   * The instance's maximum (Config.telemetryRetentionDays). Records older
+   * than their project keeps are refused (projects/telemetry-retention.ts).
+   */
   retentionDays: number;
   ipLimit?: RateLimit;
   /** Project and instance record budgets, also charged by bytes (BYTES_PER_UNIT). */
@@ -388,7 +392,10 @@ export const telemetryRoutes: FastifyPluginCallback<TelemetryOptions> = (app, op
             outcome = signal.normalize(decodeRequest(signal.messages, body, encoding), {
               projectId: project.id,
               receivedAtNs: BigInt(receivedAt) * 1_000_000n,
-              retentionDays,
+              retentionDays: effectiveTelemetryRetentionDays(
+                project.telemetryRetentionDays,
+                retentionDays,
+              ),
             });
           } catch (error) {
             if (error instanceof MalformedError) return invalid(400, error.message);

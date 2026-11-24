@@ -9,6 +9,7 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
+import { effectiveTelemetryRetentionDays } from "../projects/telemetry-retention.ts";
 import { localDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
@@ -125,8 +126,12 @@ export const aiCallListRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-  /** How long spans are kept: a call older has no trace left to open. */
-  traceRetentionDays: number;
+  /**
+   * The instance's maximum for spans (TELEMETRY_RETENTION_DAYS); a project
+   * may keep fewer (projects/telemetry-retention.ts). A call older than its
+   * project keeps spans has no trace left to open.
+   */
+  maxTraceRetentionDays: number;
   now?: () => Date;
   limiter?: DashboardQueryLimiter;
 }> = (
@@ -135,7 +140,7 @@ export const aiCallListRoutes: FastifyPluginCallback<{
     db,
     clickhouse,
     auth,
-    traceRetentionDays,
+    maxTraceRetentionDays,
     now = () => new Date(),
     limiter = new DashboardQueryLimiter(),
   },
@@ -264,7 +269,11 @@ export const aiCallListRoutes: FastifyPluginCallback<{
       },
     },
     async (request, reply) => {
-      const { projectId, timeZone, user } = accessOf(request);
+      const { projectId, timeZone, user, telemetryRetentionDays } = accessOf(request);
+      const traceRetentionDays = effectiveTelemetryRetentionDays(
+        telemetryRetentionDays,
+        maxTraceRetentionDays,
+      );
       const withUsers = canUse(user, "users", "view");
       const moment = now();
       const at = request.query.at === undefined ? undefined : new Date(request.query.at);

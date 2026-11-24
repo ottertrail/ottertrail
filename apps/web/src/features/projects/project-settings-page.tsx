@@ -183,10 +183,39 @@ const NO_GOAL = "none";
 const retentionValue = (days: number | null) => (days === null ? "forever" : String(days));
 const retentionDays = (value: string) => (value === "forever" ? null : Number(value));
 
+/** Days a project may keep traces, logs, and metrics, up to the instance's maximum. */
+const TELEMETRY_RETENTION_STEPS = [7, 14, 30, 90, 180, 365];
+
+/** The project's null setting: the instance's maximum. */
+const TELEMETRY_MAXIMUM = "maximum";
+
+const telemetryValue = (days: number | null) => (days === null ? TELEMETRY_MAXIMUM : String(days));
+const telemetryDays = (value: string) => (value === TELEMETRY_MAXIMUM ? null : Number(value));
+
+/**
+ * The steps below the maximum, then the maximum itself, plus a saved number
+ * that is not among them (set through the API, or above a lowered maximum).
+ */
+function telemetryChoices(max: number, saved: number | null) {
+  const choices = TELEMETRY_RETENTION_STEPS.filter((days) => days < max).map((days) => ({
+    value: String(days),
+    label: `${days} days`,
+  }));
+  if (saved !== null && !choices.some((choice) => choice.value === String(saved))) {
+    choices.push({
+      value: String(saved),
+      label: saved > max ? `${saved} days (capped at ${max})` : `${saved} days`,
+    });
+    choices.sort((a, b) => Number(a.value) - Number(b.value));
+  }
+  return [...choices, { value: TELEMETRY_MAXIMUM, label: `${max} days (the instance's maximum)` }];
+}
+
 interface GeneralValues {
   name: string;
   hostnames: string;
   retention: string;
+  telemetryRetention: string;
   mainGoal: string;
   avatar: string | null;
 }
@@ -196,6 +225,7 @@ const generalValues = (project: Project): GeneralValues => ({
   name: project.name,
   hostnames: project.allowedHostnames.join("\n"),
   retention: retentionValue(project.retentionDays),
+  telemetryRetention: telemetryValue(project.telemetryRetentionDays),
   mainGoal: project.mainGoalId ?? NO_GOAL,
 });
 
@@ -229,6 +259,12 @@ function GeneralSettings({
   // Warn before shortening retention because it deletes events.
   const deletes =
     chosenDays !== null && (project.retentionDays === null || chosenDays < project.retentionDays);
+  const telemetryMax = project.telemetryRetentionMaxDays;
+  const telemetryOptions = telemetryChoices(telemetryMax, project.telemetryRetentionDays);
+  const keptTelemetry = (days: number | null) => Math.min(days ?? telemetryMax, telemetryMax);
+  const chosenTelemetryDays = keptTelemetry(telemetryDays(form.values.telemetryRetention));
+  // Warn before shortening telemetry retention because it deletes records.
+  const deletesTelemetry = chosenTelemetryDays < keptTelemetry(project.telemetryRetentionDays);
   const uploads = useQuery(meQuery()).data?.avatarUploads ?? false;
   const save = useMutation({
     mutationFn: async (values: GeneralValues) => {
@@ -245,6 +281,10 @@ function GeneralSettings({
         name: values.name,
         allowedHostnames: hostnamesFromText(values.hostnames),
         retentionDays: retentionDays(values.retention),
+        // Only when changed: a saved setting above a lowered maximum would be refused.
+        ...(values.telemetryRetention === before.telemetryRetention
+          ? {}
+          : { telemetryRetentionDays: telemetryDays(values.telemetryRetention) }),
         ...(goals.isSuccess
           ? { mainGoalId: values.mainGoal === NO_GOAL ? null : values.mainGoal }
           : {}),
@@ -335,6 +375,38 @@ function GeneralSettings({
             {deletes
               ? `Events older than ${choices.find((choice) => choice.value === form.values.retention)?.label.toLowerCase()} will be permanently deleted within a few hours of saving, one whole day at a time.`
               : "Older events are permanently deleted, one whole day at a time. Forever keeps all events."}
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="settings-telemetry-retention">
+            Keep traces, logs, and metrics
+          </FieldLabel>
+          <Select
+            items={telemetryOptions}
+            value={form.values.telemetryRetention}
+            onValueChange={(value) => {
+              if (typeof value === "string") form.set("telemetryRetention", value);
+            }}
+          >
+            <SelectTrigger
+              id="settings-telemetry-retention"
+              className="w-72 max-w-full"
+              aria-describedby="settings-telemetry-retention-hint"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {telemetryOptions.map((choice) => (
+                <SelectItem key={choice.value} value={choice.value}>
+                  {choice.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FieldDescription id="settings-telemetry-retention-hint">
+            {deletesTelemetry
+              ? `Records older than ${chosenTelemetryDays} days will be permanently deleted within a few hours of saving.`
+              : "Older records are permanently deleted, one whole day at a time."}
           </FieldDescription>
         </Field>
         <Field>
