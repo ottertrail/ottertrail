@@ -13,7 +13,7 @@ import { formText } from "@/lib/form";
 import { createOwner, fetchSetupStatus } from "@/lib/setup-api";
 
 import { AuthLayout } from "./auth-layout";
-import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
+import { MIN_PASSWORD_LENGTH, newPasswordProblem, useLinkToken } from "./link-token";
 
 const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -36,8 +36,9 @@ export function SetupPage() {
     const form = new FormData(event.currentTarget);
     const email = formText(form, "email");
     const password = formText(form, "password");
-    if (password !== formText(form, "confirm-password")) {
-      setError("The passwords do not match. Enter the same password in both fields.");
+    const problem = newPasswordProblem(password, formText(form, "confirm-password"));
+    if (problem !== null) {
+      setError(problem);
       return;
     }
     setPending(true);

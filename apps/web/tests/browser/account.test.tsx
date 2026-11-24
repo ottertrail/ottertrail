@@ -253,6 +253,31 @@ describe("Account settings", () => {
       .toMatchTextContent("Too many attempts. Retry after 60 seconds.");
   });
 
+  test("a new password a password manager filled in still needs 12 characters", async () => {
+    const api = installFakeApi();
+    renderApp("/account?tab=password");
+    await form("Password").getByLabelText("Current password").fill(FAKE_PASSWORD);
+    // Set by script, as a password manager fills it in: the browser's minLength check skips it.
+    for (const label of ["New password", "Confirm new password"]) {
+      const input = form("Password")
+        .getByLabelText(label, { exact: true })
+        .element() as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "eleven char",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await form("Password").getByRole("button", { name: "Change password" }).click();
+    await expect
+      .element(form("Password").getByText("Use at least 12 characters for the password."))
+      .toBeVisible();
+    await expect
+      .element(form("Password").getByLabelText("New password", { exact: true }))
+      .toHaveAttribute("aria-invalid", "true");
+    expect(api.bodies.filter((body) => body.path === "/api/account/password")).toEqual([]);
+  });
+
   test("the password needs a match and the current one, then signs out the other devices", async () => {
     const api = installFakeApi();
     renderApp("/account?tab=password");

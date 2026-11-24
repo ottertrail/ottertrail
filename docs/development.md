@@ -8,6 +8,8 @@ A Fastify API serves the React dashboard, the tracker, and the endpoints that co
 
 The design notes and the decisions behind them are in `docs/`: [web analytics](web-analytics.md), [product analytics](product-analytics.md), [errors](errors.md), [session replay](session-replay.md), [telemetry](telemetry.md), [AI usage](ai-usage.md), [uptime and alerts](uptime-alerts.md), [webhooks](webhooks.md), [the dashboard](dashboard.md), [access](access.md), [ClickHouse](clickhouse.md), [deployment](deployment.md), and [the design system](design-system.md). [CLAUDE.md](../CLAUDE.md) holds the architecture rules that every change follows.
 
+A request that fails its route's schema answers 400 with Fastify's code, `FST_ERR_VALIDATION`, and a sentence written for people, such as "The password must have at least 12 characters." (`apps/api/src/validation-message.ts`), since the dashboard shows the message as it is. Forms still check what they can before sending: a browser's `minLength` applies only to typed text, not to a value a password manager fills in.
+
 ## Repository layout
 
 - `apps/api`: the Fastify API, the worker, and the command-line scripts.

@@ -127,7 +127,7 @@ export function answerAccount(
   if (path === "/api/account" && init?.method === "PATCH") {
     const { name } = bodyOf(init);
     if (typeof name !== "string" || name.trim() === "") {
-      return problem("Bad Request", "body/name must match pattern", 400);
+      return problem("Bad Request", "The name must not be blank.", 400);
     }
     account.name = name.trim();
     return json({ user: user() });

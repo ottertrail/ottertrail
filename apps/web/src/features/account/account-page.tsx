@@ -40,12 +40,15 @@ import { saveAvatarFirst } from "@/lib/avatars";
 import { initialsOf } from "@/lib/initials";
 import { setupStatusQuery } from "@/lib/setup-api";
 
-import { MIN_PASSWORD_LENGTH } from "../auth/link-token";
+import {
+  longEnough,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_TOO_SHORT,
+  PASSWORDS_DIFFER,
+} from "../auth/link-token";
 import { SectionFailed, SectionSkeleton } from "../settings/section-states";
 import { formatDay, formatMoment } from "../users/format";
 import { AppearanceTab } from "./appearance-tab";
-
-const PASSWORDS_DIFFER = "The passwords do not match. Enter the same password in both fields.";
 
 /** Keep the live region mounted so changes are announced. */
 function Notice({ children }: { children: React.ReactNode }) {
@@ -254,6 +257,7 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
   const queryClient = useQueryClient();
   const [notice, setNotice] = React.useState("");
   const [differ, setDiffer] = React.useState(false);
+  const [tooShort, setTooShort] = React.useState(false);
   // Toggling session revocation alone must not mark the form dirty.
   const form = useDirtyForm(NO_PASSWORDS, { normalize: { revokeOtherSessions: () => true } });
   React.useEffect(() => onDirty(form.dirty), [onDirty, form.dirty]);
@@ -278,6 +282,10 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
       description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       form={form}
       onSave={(values) => {
+        if (!longEnough(values.password)) {
+          setTooShort(true);
+          return;
+        }
         if (values.password !== values.confirmPassword) {
           setDiffer(true);
           return;
@@ -307,7 +315,7 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
             <FieldError id="account-current-password-error">{save.error?.message}</FieldError>
           )}
         </Field>
-        <Field>
+        <Field data-invalid={tooShort || undefined}>
           <FieldLabel htmlFor="account-new-password">New password</FieldLabel>
           <Input
             id="account-new-password"
@@ -316,13 +324,19 @@ function PasswordTab({ onDirty }: { onDirty: (dirty: boolean) => void }) {
             value={form.values.password}
             onChange={(event) => {
               setDiffer(false);
+              setTooShort(false);
               form.set("password", event.target.value);
             }}
             required
             minLength={MIN_PASSWORD_LENGTH}
             maxLength={128}
             autoComplete="new-password"
+            aria-invalid={tooShort || undefined}
+            aria-describedby={tooShort ? "account-new-password-error" : undefined}
           />
+          {tooShort && (
+            <FieldError id="account-new-password-error">{PASSWORD_TOO_SHORT}</FieldError>
+          )}
         </Field>
         <Field data-invalid={differ || undefined}>
           <FieldLabel htmlFor="account-confirm-password">Confirm new password</FieldLabel>

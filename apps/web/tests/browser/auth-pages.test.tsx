@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser/context";
+import { type Locator, page, userEvent } from "vite-plus/test/browser/context";
 
 import { GOOD_INVITE, GOOD_RESET, installFakeApi, requestUrl } from "./fake-api.ts";
 import { unmountAll } from "./mounted.ts";
@@ -36,6 +36,16 @@ function refuse(path: string, status: number, message: string) {
   return () => {
     globalThis.fetch = realFetch;
   };
+}
+
+/**
+ * Sets a field's value by script, as a password manager fills it in. The browser's minLength check
+ * applies only to typed text, so it lets such a value through.
+ */
+function fillByScript(field: Locator, value: string) {
+  const input = field.element() as HTMLInputElement;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 /** The page fits the screen: nothing scrolls sideways, and the panel stays inside it. */
@@ -167,6 +177,21 @@ describe("owner setup", () => {
     await page.getByRole("button", { name: "Create account" }).click();
     await expect.poll(() => router.state.location.pathname).not.toBe("/setup");
     expect(api.signedIn).toBe(true);
+  });
+
+  test("refuses a short password a password manager filled in, before sending it", async () => {
+    const api = installFakeApi({ signedIn: false });
+    open("/setup", "setup-token");
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Ada");
+    await page.getByRole("textbox", { name: "Email" }).fill("ada@example.com");
+    await page.getByRole("textbox", { name: "Instance name" }).fill("Ada's company");
+    fillByScript(page.getByLabelText("Password", { exact: true }), "eleven char");
+    fillByScript(page.getByLabelText("Confirm password"), "eleven char");
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Use at least 12 characters for the password.");
+    expect(api.bodies.filter((body) => body.path === "/api/setup")).toEqual([]);
   });
 
   test("without a link, says how to get one and links to sign-in", async () => {

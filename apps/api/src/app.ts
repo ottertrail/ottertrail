@@ -69,6 +69,7 @@ import { SecretKeyLookups } from "./telemetry/key-lookups.ts";
 import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
+import { validationMessage } from "./validation-message.ts";
 
 /**
  * How long a client has to send a whole request, its body included, and
@@ -316,6 +317,8 @@ export function buildApp({
   const app = Fastify({
     // A user ID in a path may be 200 characters, 400 UTF-16 units; Fastify allows 100.
     routerOptions: { maxParamLength: 512 },
+    // Schema failures read as sentences, which the dashboard shows as they are.
+    schemaErrorFormatter: (errors, dataVar) => new Error(validationMessage(errors, dataVar)),
     requestTimeout: timeouts.requestMs ?? REQUEST_TIMEOUT_MS,
     http: {
       headersTimeout: timeouts.headersMs ?? HEADERS_TIMEOUT_MS,

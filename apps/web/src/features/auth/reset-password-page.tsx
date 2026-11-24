@@ -14,7 +14,7 @@ import { formText } from "@/lib/form";
 import { previewReset, resetPassword } from "@/lib/links-api";
 
 import { AuthLayout } from "./auth-layout";
-import { MIN_PASSWORD_LENGTH, useLinkToken } from "./link-token";
+import { MIN_PASSWORD_LENGTH, newPasswordProblem, useLinkToken } from "./link-token";
 
 const LINK_GONE = "This reset link no longer works. Ask for a new one.";
 
@@ -48,8 +48,9 @@ export function ResetPasswordPage() {
     if (token === null) return;
     const form = new FormData(event.currentTarget);
     const password = formText(form, "password");
-    if (password !== formText(form, "confirm-password")) {
-      setError("The passwords do not match. Enter the same password in both fields.");
+    const problem = newPasswordProblem(password, formText(form, "confirm-password"));
+    if (problem !== null) {
+      setError(problem);
       return;
     }
     setPending(true);

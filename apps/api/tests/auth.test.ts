@@ -153,6 +153,20 @@ describe("owner setup", () => {
     ).toHaveLength(1);
   });
 
+  test("explains a refused field in a sentence, with the validator's code", async () => {
+    const link = await createSetupToken(current.db);
+    const refusals: [object, string][] = [
+      [{ ...OWNER, password: "too short" }, "The password must have at least 12 characters."],
+      [{ ...OWNER, name: "   " }, "The name must not be blank."],
+      [{ ...OWNER, timeZone: undefined }, "Add the time zone."],
+    ];
+    for (const [body, message] of refusals) {
+      const response = await setUp(current.app, { token: link?.token, ...body });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "FST_ERR_VALIDATION", message });
+    }
+  });
+
   test("replaces an earlier link with a new one", async () => {
     const first = await createSetupToken(current.db);
     await createSetupToken(current.db);
