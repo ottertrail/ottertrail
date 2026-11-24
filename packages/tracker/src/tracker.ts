@@ -99,13 +99,16 @@ export interface Tracker {
   /**
    * Queues an event, with the signed-in user (setUser), or `extra.user`
    * when given: the user when the page was viewed, for its engagement
-   * report. `extra.error` goes with an "error" event. Never throws.
+   * report. `extra.error` goes with an "error" event. `extra.now` sends
+   * at once instead of after FLUSH_DELAY_MS, as for a site's own event,
+   * which often comes just before the visitor leaves the page (a click on
+   * a link). Never throws.
    */
   track(
     name: unknown,
     page: Page,
     properties?: unknown,
-    extra?: { user?: SignedUser | undefined; error?: ErrorDetails },
+    extra?: { user?: SignedUser | undefined; error?: ErrorDetails; now?: boolean },
   ): void;
   /** Sends one batch now unless a send is in flight. Never rejects. */
   flush(): Promise<void>;
@@ -273,7 +276,12 @@ export function createTracker({
         };
         fitError(event);
         queue.push(event);
-        if (queue.length >= MAX_EVENTS_PER_BATCH && Date.now() >= retryAt) {
+        // flush() starts its request before it returns, so an event sent now is on its way
+        // before a click's navigation begins. While a send is in flight, the event goes next.
+        if (
+          (extra?.now === true || queue.length >= MAX_EVENTS_PER_BATCH) &&
+          Date.now() >= retryAt
+        ) {
           void flush();
         } else {
           schedule(FLUSH_DELAY_MS);

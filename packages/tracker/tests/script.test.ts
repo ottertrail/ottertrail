@@ -112,6 +112,7 @@ function fakePage(
           reset(): void;
           captureError(error: unknown, properties?: object): void;
           replay(on: boolean): void;
+          flush(): Promise<void>;
         }
       | undefined,
   };
@@ -1575,6 +1576,49 @@ describe("the heatmap overlay", () => {
       ["pageview", 5001],
       ["signup", 3001],
     ]);
+  });
+
+  test("a site's track() goes at once, before a link's navigation can begin", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { vitals: "off" } });
+    await runScript();
+    // No timer has run: the request starts inside track(), as in a link's click handler.
+    page.window.ottertrail?.track("store_click", { store: "app_store", placement: "hero" });
+    expect(page.events.map((event) => [event.name, event.properties])).toEqual([
+      ["pageview", undefined],
+      ["store_click", { store: "app_store", placement: "hero" }],
+    ]);
+  });
+
+  test("leaving the page right after a click sends the rest, engagement too, by keepalive fetch", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { vitals: "off" } });
+    const keepalive: unknown[] = [];
+    const recorded = globalThis.fetch;
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+      keepalive.push(init.keepalive);
+      return recorded(url, init);
+    });
+    const beacons = vi.fn<() => boolean>(() => true);
+    Object.assign(globalThis.navigator, { sendBeacon: beacons });
+    await runScript();
+    await vi.advanceTimersByTimeAsync(3000);
+    page.window.ottertrail?.track("store_click", { store: "app_store" });
+    page.fire("pagehide");
+    await page.settle();
+    // store_click's request may still be in flight as the page hides, so it may go twice, with the
+    // same ID: the API stores it once.
+    const byId = new Map(page.events.map((event) => [event.id, event.name]));
+    expect([...byId.values()]).toEqual(["pageview", "store_click", "engagement"]);
+    expect(page.events.at(-1)?.properties).toEqual({ engagedMs: 3000 });
+    expect(keepalive.length).toBeGreaterThan(0);
+    expect(keepalive.every((flag) => flag === true)).toBe(true);
+    expect(beacons).not.toHaveBeenCalled();
+  });
+
+  test("window.ottertrail.flush() sends what waits now", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { vitals: "off" } });
+    await runScript();
+    await page.window.ottertrail?.flush();
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
   });
 
   test("leaving sends by keepalive fetch, never by beacon, which block lists class as a ping", async () => {

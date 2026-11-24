@@ -89,6 +89,41 @@ afterEach(() => {
 });
 
 describe("batching", () => {
+  test("an event tracked with now goes at once, with what waits; others still wait", async () => {
+    const { transport, sent } = fakeTransport();
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+
+    tracker.track("pageview", page);
+    // Sent before track() returns: before a click's navigation can begin.
+    tracker.track("store_click", page, { store: "app_store" }, { now: true });
+    expect(sent.map((batch) => batch.events.map((event) => event.name))).toEqual([
+      ["pageview", "store_click"],
+    ]);
+
+    // While that send is in flight, the next one goes as soon as it is done.
+    tracker.track("store_click", page, { store: "google_play" }, { now: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toHaveLength(2);
+
+    tracker.track("engagement", page);
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS - 1);
+    expect(sent).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent).toHaveLength(3);
+  });
+
+  test("now waits for a retry's backoff, as other events do", async () => {
+    const { transport, sent } = fakeTransport([{ type: "retry", retryAfterMs: 5000 }]);
+    const tracker = createTracker({ key: "pk_test", transport, randomId });
+    tracker.track("signup", page, undefined, { now: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toHaveLength(1);
+    tracker.track("store_click", page, undefined, { now: true });
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sent.at(-1)?.events.map((event) => event.name)).toEqual(["signup", "store_click"]);
+  });
+
   test("waits briefly so events share one request", async () => {
     const { transport, sent } = fakeTransport();
     const tracker = createTracker({ key: "pk_test", transport, randomId });

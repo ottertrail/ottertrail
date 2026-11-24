@@ -404,7 +404,7 @@ The first pageview's referrer is `document.referrer`, the site the visitor came 
 
 ### Batching
 
-New events wait up to a second and leave together in one request. Fifty waiting events, or a backlog after an outage, are sent at once. A request body holds at most 50 events and 60,000 bytes, JSON envelope included, under the API's 64 KB. In the playground run, four events from quick clicks shared one request.
+The tracker's own events wait up to a second and leave together in one request. A site's custom event (`track()`) leaves at once, with whatever waits: it often comes from a click on a link that leaves the page, and a request started before the navigation begins outlives the page (`keepalive`). `window.ottertrail.flush()` sends what waits on request. Fifty waiting events, or a backlog after an outage, are sent at once. A request body holds at most 50 events and 60,000 bytes, JSON envelope included, under the API's 64 KB. In the playground run, four events from quick clicks shared one request.
 
 The API rejects a whole batch when one event breaks its rules (step 2), so the tracker never sends such an event: a page whose cleaned URL is over 8,192 characters or whose path is over 2,048 sends none, a longer referrer is left out, and text PostgreSQL cannot store is cleaned out of names and properties.
 
@@ -426,7 +426,7 @@ The queue holds at most 200 events. If the API is unreachable for long, the olde
 
 ### Leaving the page
 
-When the tab is hidden (switched away, phone locked) or the page unloads, the tracker sends every queued event with `fetch` and `keepalive`, which the browser finishes even after the page is gone. The page never sees the response, so such a send cannot be retried. It doesn't use `navigator.sendBeacon`: block lists class a beacon as a "ping", and uBlock Origin's privacy list blocks pings to `/api/events` from a site's own pages. Only a browser whose `fetch` has no `keepalive` (Firefox before 133) gets a beacon, with `fetch` as its fallback. Mobile browsers often skip unload events, so `visibilitychange` is the signal relied on.
+When the tab is hidden (switched away, phone locked) or the page unloads, the tracker sends every queued event with `fetch` and `keepalive`, which the browser finishes even after the page is gone. The page never sees the response, so such a send cannot be retried. It doesn't use `navigator.sendBeacon`: block lists and privacy settings class a beacon as a "ping" and drop it while letting `fetch` through, and uBlock Origin's privacy list blocks pings to `/api/events` from a site's own pages. A beacon goes only where `fetch` has no `keepalive` (Firefox before 133), or when the browser refuses the `fetch`, at once when it throws or as soon as it rejects. With beacons dropped, version 0.4.0 lost a click's custom event and the page's engagement when the click left the page; a browser test against both versions showed it. Mobile browsers often skip unload events, so `visibilitychange` is the signal relied on.
 
 A batch that is in flight when the page hides may be sent twice: once by the first `fetch` and once as the page hides. The API stores it once.
 

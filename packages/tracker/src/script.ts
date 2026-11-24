@@ -45,6 +45,12 @@ export interface OttertrailApi {
   /** Reports an error the site caught itself, with custom event properties if given. */
   captureError(error: unknown, properties?: Record<string, unknown>): void;
   /**
+   * Sends what is waiting now. track() already sends at once; this is for
+   * the tracker's own events, which wait up to a second. Resolves when the
+   * send is done, whatever its outcome; never rejects.
+   */
+  flush(): Promise<void>;
+  /**
    * replay(true) starts session replay, with the snippet's settings, when
    * the snippet has data-replay (for data-replay-consent="wait"). replay(false)
    * stops it and drops what was recorded; replay(true) after it starts a
@@ -476,8 +482,10 @@ const REAL = Symbol.for("ottertrail.tracker");
           console.warn(`Ottertrail: "${name}" is reserved. Use a different event name.`);
           return;
         }
-        tracker.track(name, current ?? landing(), properties);
+        // At once: a site's event often comes just before the page is left.
+        tracker.track(name, current ?? landing(), properties, { now: true });
       },
+      flush: () => tracker.flush(),
     };
     Object.defineProperty(api, REAL, { value: true });
     window.ottertrail = api;

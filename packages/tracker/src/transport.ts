@@ -57,6 +57,13 @@ export function browserTransport(endpoint: string): Transport {
       keepalive: true,
       credentials: "omit",
     });
+  const sendBeacon = (body: string) => {
+    try {
+      return navigator.sendBeacon(endpoint, new Blob([body], { type: "text/plain" }));
+    } catch {
+      return false;
+    }
+  };
   return {
     async send(body) {
       try {
@@ -68,18 +75,20 @@ export function browserTransport(endpoint: string): Transport {
       }
     },
     beacon(body) {
-      // A keepalive fetch, not sendBeacon: block lists class a beacon as a "ping", and uBlock
-      // Origin's privacy list blocks pings to /api/events from a site's own pages. sendBeacon only
-      // where fetch has no keepalive.
+      // A keepalive fetch, not sendBeacon: block lists and privacy settings class a beacon as a
+      // "ping" and drop it, and uBlock Origin's privacy list blocks pings to /api/events from a
+      // site's own pages. A beacon only where fetch has no keepalive, or refuses the request (such
+      // as more than 64 KB of keepalive bodies in flight): at once when it throws, or as soon as it
+      // rejects, while the page lasts. Not awaited: the page is going.
       if (hasKeepalive()) {
-        post(body).catch(() => undefined);
-        return true;
+        try {
+          post(body).catch(() => sendBeacon(body));
+          return true;
+        } catch {
+          // The beacon below.
+        }
       }
-      try {
-        return navigator.sendBeacon(endpoint, new Blob([body], { type: "text/plain" }));
-      } catch {
-        return false;
-      }
+      return sendBeacon(body);
     },
   };
 }
