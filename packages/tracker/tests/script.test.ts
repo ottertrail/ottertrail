@@ -1577,7 +1577,19 @@ describe("the heatmap overlay", () => {
     ]);
   });
 
-  test("a browser refusing beacons: a fetch carries the batch, for any visitor and after a release", async () => {
+  test("leaving sends by keepalive fetch, never by beacon, which block lists class as a ping", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { vitals: "off" } });
+    const beacons = vi.fn<() => boolean>(() => true);
+    Object.assign(globalThis.navigator, { sendBeacon: beacons });
+    await runScript();
+    await leave(page);
+    expect(beacons).not.toHaveBeenCalled();
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+  });
+
+  test("where fetch has no keepalive, a beacon carries the batch; refused, a fetch does", async () => {
+    // A browser too old for keepalive (Firefox before 133).
+    vi.stubGlobal("Request", function Request() {});
     for (const path of ["/plain", "/held"]) {
       const page =
         path === "/plain"

@@ -40,22 +40,27 @@ export function outcomeForStatus(status: number, retryAfter: string | null): Sen
   return { type: "drop" };
 }
 
+/** Whether fetch can outlive the page (`keepalive`): every current browser, Firefox from 133. */
+const hasKeepalive = () => typeof Request === "function" && "keepalive" in Request.prototype;
+
 /**
- * Sends batches with fetch and sendBeacon as text/plain, a "simple"
- * cross-site request that needs no preflight. `keepalive` lets a fetch
- * finish even if the page closes while it is in flight. No cookies are sent.
+ * Sends batches with fetch as text/plain, a "simple" cross-site request
+ * that needs no preflight. `keepalive` lets a fetch finish even if the page
+ * closes while it is in flight. No cookies are sent.
  */
 export function browserTransport(endpoint: string): Transport {
+  const post = (body: string) =>
+    fetch(endpoint, {
+      method: "POST",
+      body,
+      headers: { "content-type": "text/plain" },
+      keepalive: true,
+      credentials: "omit",
+    });
   return {
     async send(body) {
       try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          body,
-          headers: { "content-type": "text/plain" },
-          keepalive: true,
-          credentials: "omit",
-        });
+        const response = await post(body);
         return outcomeForStatus(response.status, response.headers.get("retry-after"));
       } catch {
         // Offline, DNS failure, server down, or a response the browser hid.
@@ -63,6 +68,13 @@ export function browserTransport(endpoint: string): Transport {
       }
     },
     beacon(body) {
+      // A keepalive fetch, not sendBeacon: block lists class a beacon as a "ping", and uBlock
+      // Origin's privacy list blocks pings to /api/events from a site's own pages. sendBeacon only
+      // where fetch has no keepalive.
+      if (hasKeepalive()) {
+        post(body).catch(() => undefined);
+        return true;
+      }
       try {
         return navigator.sendBeacon(endpoint, new Blob([body], { type: "text/plain" }));
       } catch {
