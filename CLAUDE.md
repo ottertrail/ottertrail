@@ -2,8 +2,6 @@
 
 Web analytics, product analytics, error tracking, and monitoring (logs, metrics, traces) for small software teams, in one connected tool. A self-hosted install serves one customer. Organizations, several on one deployment, are planned: their plan and its step order are private, in `docs/multi-tenancy.md` of the ottertrail-pro repository. Features ship in stages: see `docs/roadmap.md`.
 
-If `docs/private/product-spec.md` exists, read it before work on product scope or deployment. It holds the full spec and is not in git. Hosting, pricing, and final branding are undecided; do not invent business commitments.
-
 ## Architecture
 
 - Today one customer per instance; organizations are coming (the private plan above). An instance holds projects (sites and apps), and everything it stores belongs to a project (`project_id`). New work must not add anything an organization would have to untangle later: no new deployment-wide customer data, no references between rows that could cross organizations.
