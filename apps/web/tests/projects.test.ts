@@ -9,27 +9,27 @@ import {
 
 describe("installSnippet", () => {
   test("loads the tracker from the instance and sends events back to it", () => {
-    expect(installSnippet("https://analytics.example.com", "pk_0123")).toBe(
-      '<script defer src="https://analytics.example.com/t.js" data-key="pk_0123" data-host="https://analytics.example.com"></script>',
+    expect(installSnippet("https://ottertrail.example.com", "pk_0123")).toBe(
+      '<script defer src="https://ottertrail.example.com/t.js" data-key="pk_0123" data-host="https://ottertrail.example.com"></script>',
     );
   });
 
   test("asks the tracker for heatmaps when the project has them on", () => {
-    expect(installSnippet("https://analytics.example.com", "pk_0123", { heatmaps: true })).toBe(
-      '<script defer src="https://analytics.example.com/t.js" data-key="pk_0123" data-host="https://analytics.example.com" data-heatmaps="on"></script>',
+    expect(installSnippet("https://ottertrail.example.com", "pk_0123", { heatmaps: true })).toBe(
+      '<script defer src="https://ottertrail.example.com/t.js" data-key="pk_0123" data-host="https://ottertrail.example.com" data-heatmaps="on"></script>',
     );
-    expect(installSnippet("https://analytics.example.com", "pk_0123", { heatmaps: false })).toBe(
-      '<script defer src="https://analytics.example.com/t.js" data-key="pk_0123" data-host="https://analytics.example.com"></script>',
+    expect(installSnippet("https://ottertrail.example.com", "pk_0123", { heatmaps: false })).toBe(
+      '<script defer src="https://ottertrail.example.com/t.js" data-key="pk_0123" data-host="https://ottertrail.example.com"></script>',
     );
   });
 });
 
 describe("setupPrompt", () => {
   test("asks for heatmaps and readable element names only when the project has them on", () => {
-    const off = setupPrompt("https://analytics.example.com", "pk_0123");
+    const off = setupPrompt("https://ottertrail.example.com", "pk_0123");
     expect(off).not.toContain("data-heatmaps");
     expect(off).not.toContain("data-ottertrail-name");
-    const on = setupPrompt("https://analytics.example.com", "pk_0123", { heatmaps: true });
+    const on = setupPrompt("https://ottertrail.example.com", "pk_0123", { heatmaps: true });
     expect(on.startsWith(off)).toBe(true);
     expect(on).toContain('add data-heatmaps="on" to the tracker\'s script tag');
     expect(on).toContain("data-ottertrail-name");

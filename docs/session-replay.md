@@ -84,9 +84,9 @@ For sites that ask visitors before recording. Add `data-replay-consent="wait"` b
 ```html
 <script
   defer
-  src="https://analytics.example.com/tracker.js"
+  src="https://ottertrail.example.com/tracker.js"
   data-key="pk_00000000000000000000000000000000"
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
   data-replay="errors"
   data-replay-consent="wait"
 ></script>
@@ -154,9 +154,9 @@ A plain HTML banner, for a site without a consent tool, that asks on each page l
 </script>
 <script
   defer
-  src="https://analytics.example.com/tracker.js"
+  src="https://ottertrail.example.com/tracker.js"
   data-key="pk_00000000000000000000000000000000"
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
   data-replay="errors"
   data-replay-consent="wait"
 ></script>

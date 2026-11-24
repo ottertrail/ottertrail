@@ -62,7 +62,7 @@ function setup(
     return true;
   });
   const recorder = createRecorder({
-    endpoint: "https://analytics.example.com/api/replays",
+    endpoint: "https://ottertrail.example.com/api/replays",
     key: "pk_test",
     showText: false,
     showMedia: false,

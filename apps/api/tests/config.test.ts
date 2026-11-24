@@ -31,7 +31,7 @@ const PRODUCTION = {
   DATABASE_URL: "postgresql://app@db.internal:5432/ottertrail",
   CLICKHOUSE_URL: "http://clickhouse:8123",
   CLICKHOUSE_PASSWORD: "c".repeat(40),
-  PUBLIC_URL: "https://analytics.example.com",
+  PUBLIC_URL: "https://ottertrail.example.com",
   AUTH_SECRET: "x".repeat(32),
 };
 
@@ -80,7 +80,7 @@ describe("loadConfig", () => {
         GEO_DATABASE_PATH: "/var/lib/ottertrail/geo.mmdb",
         DATA_CENTERS_PATH: "/var/lib/ottertrail/data-centers.json",
         INSTANCE_EVENTS_PER_SECOND: "2000",
-        PUBLIC_URL: "https://analytics.example.com/",
+        PUBLIC_URL: "https://ottertrail.example.com/",
         AUTH_SECRET: "s".repeat(44),
         TRACKER_SCRIPT_PATH: "/srv/ottertrail/tracker.js",
         DASHBOARD_PATH: "/srv/ottertrail/dashboard",
@@ -114,8 +114,12 @@ describe("loadConfig", () => {
       geoDatabasePath: "/var/lib/ottertrail/geo.mmdb",
       dataCentersPath: "/var/lib/ottertrail/data-centers.json",
       instanceEventsPerSecond: 2000,
-      publicUrl: "https://analytics.example.com",
-      trustedOrigins: ["https://analytics.example.com", "http://localhost:*", "http://127.0.0.1:*"],
+      publicUrl: "https://ottertrail.example.com",
+      trustedOrigins: [
+        "https://ottertrail.example.com",
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+      ],
       authSecret: "s".repeat(44),
       trackerScriptPath: "/srv/ottertrail/tracker.js",
       dashboardPath: "/srv/ottertrail/dashboard",
@@ -235,7 +239,7 @@ describe("loadConfig", () => {
 
   test("trusts only the public URL in production", () => {
     const config = loadConfig(PRODUCTION);
-    expect(config.trustedOrigins).toEqual(["https://analytics.example.com"]);
+    expect(config.trustedOrigins).toEqual(["https://ottertrail.example.com"]);
     expect(config.authSecret).toBe("x".repeat(32));
   });
 
@@ -249,13 +253,13 @@ describe("loadConfig", () => {
   );
 
   test("requires https for PUBLIC_URL in production", () => {
-    expect(() => loadConfig({ ...PRODUCTION, PUBLIC_URL: "http://analytics.example.com" })).toThrow(
-      /must use https/,
-    );
+    expect(() =>
+      loadConfig({ ...PRODUCTION, PUBLIC_URL: "http://ottertrail.example.com" }),
+    ).toThrow(/must use https/);
   });
 
   test.each([
-    "analytics.example.com",
+    "ottertrail.example.com",
     "ftp://example.com",
     "https://example.com/dashboard",
     "https://example.com/?a=1",

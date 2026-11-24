@@ -450,6 +450,7 @@ Releases as an install gets them (18 and 19 November 2026), on macOS with Podman
 
 ## Known limitations
 
+- Ad blockers block requests to hosts whose names start with `analytics.`: EasyPrivacy's rule `://analytics.*/event` covers the tracker's `/api/events`, the product Events page's code, and its reports. The docs and `example.env` advise another name, with `ottertrail.example.com` as the example.
 - The Storage tab's totals and the Garage bucket quota count replays and source maps, not avatars and favicons, which are small (an upload is at most 512 KiB; a favicon 256 KiB) and fit in the quota's 10% margin.
 - Scheduled backups were tested against the development Garage standing in for an off-site store (apps/api/tests/backup-run.test.ts), and `restore.sh --from-s3` with a stand-in for Docker Compose; not yet against Amazon S3, R2, or B2, nor in a deployed stack, whose `backup-folder` service and shared volume are untested on Docker. A scheduled backup copies the object store's objects one at a time, which is slow with many small replays.
 - The Storage section has no history yet: no growth per day, no estimate of when the disk is full, and no size per project.

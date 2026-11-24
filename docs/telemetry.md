@@ -15,7 +15,7 @@ POST /v1/metrics
 ```
 
 ```sh
-OTEL_EXPORTER_OTLP_ENDPOINT=https://analytics.example.com
+OTEL_EXPORTER_OTLP_ENDPOINT=https://ottertrail.example.com
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20sk_…
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
@@ -456,7 +456,7 @@ processors:
 
 exporters:
   otlp_http:
-    endpoint: https://analytics.example.com
+    endpoint: https://ottertrail.example.com
     headers:
       Authorization: Bearer sk_…
 

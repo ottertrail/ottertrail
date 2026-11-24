@@ -74,7 +74,7 @@ export interface Config {
    * project budgets (collection/rate-limiter.ts, EventBudget).
    */
   instanceEventsPerSecond: number;
-  /** The instance's address, such as "https://analytics.example.com": an origin, no path. */
+  /** The instance's address, such as "https://ottertrail.example.com": an origin, no path. */
   publicUrl: string;
   /**
    * Origins the dashboard's sign-in accepts requests from: the public URL, and
@@ -603,7 +603,9 @@ function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   const raw = env.PUBLIC_URL?.trim();
   if (raw === undefined || raw === "") {
     if (env.NODE_ENV === "production") {
-      throw new ConfigError("PUBLIC_URL is required in production (https://analytics.example.com)");
+      throw new ConfigError(
+        "PUBLIC_URL is required in production (https://ottertrail.example.com)",
+      );
     }
     return DEVELOPMENT_PUBLIC_URL;
   }
@@ -613,7 +615,7 @@ function parsePublicUrl(env: NodeJS.ProcessEnv): string {
   }
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || url.username !== "") {
     throw new ConfigError(
-      `PUBLIC_URL must be an origin without a path (https://analytics.example.com), received "${raw}"`,
+      `PUBLIC_URL must be an origin without a path (https://ottertrail.example.com), received "${raw}"`,
     );
   }
   // Session cookies are marked Secure, which browsers only keep over HTTPS.

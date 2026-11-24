@@ -454,11 +454,11 @@ describe("the seed command", () => {
   test("asks for --yes when a setting points elsewhere", () => {
     const elsewhere = {
       ...local,
-      publicUrl: "https://analytics.example.com",
+      publicUrl: "https://ottertrail.example.com",
       databaseUrl: "postgres://ottertrail@db.internal:5432/ottertrail",
     };
     const refusal = refusalOf({}, elsewhere, { yes: false });
-    expect(refusal).toContain("PUBLIC_URL is https://analytics.example.com");
+    expect(refusal).toContain("PUBLIC_URL is https://ottertrail.example.com");
     expect(refusal).toContain("DATABASE_URL");
     expect(refusal).toContain("--yes");
     expect(refusalOf({}, elsewhere, { yes: true })).toBeNull();

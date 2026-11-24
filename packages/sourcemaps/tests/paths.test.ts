@@ -69,7 +69,7 @@ describe("the default concurrency", () => {
         "--release",
         "1.0",
         "--host",
-        "https://analytics.example.com",
+        "https://ottertrail.example.com",
       ],
       { OTTERTRAIL_SECRET_KEY: `sk_${"0".repeat(32)}` },
     );

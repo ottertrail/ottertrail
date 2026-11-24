@@ -48,7 +48,7 @@ The body, version 1:
     "ruleName": "API down"
   },
   "message": "Shop: the check \"API health\" (https://api.shop.example/health) is down. It answered 503, which does not count as up.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
 }
 ```
 
@@ -120,7 +120,7 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
     "ruleName": "API down"
   },
   "message": "Shop: the check \"API health\" (https://api.shop.example/health) is down. It answered 503, which does not count as up.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
 }
 ```
 
@@ -150,7 +150,7 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
     "ruleName": "Certificates"
   },
   "message": "Shop: the TLS certificate of api.shop.example, checked by \"API health\", expires on 2026-11-28, in 10 days.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/uptime/c0ffee00-0000-4000-8000-000000000001"
 }
 ```
 
@@ -178,7 +178,7 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
     "ruleName": "New errors"
   },
   "message": "Shop: a new error in production. TypeError: Cannot read properties of undefined (reading 'total')",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors/1-3f2a9c1d0b7e6a5f4c3d?env=%22production%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors/1-3f2a9c1d0b7e6a5f4c3d?env=%22production%22"
 }
 ```
 
@@ -205,7 +205,7 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
     "ruleName": "Regressions"
   },
   "message": "Shop: an error resolved on 2026-11-17 happened again, in staging. TypeError: Cannot read properties of undefined (reading 'total')",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors/1-3f2a9c1d0b7e6a5f4c3d?env=%22staging%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors/1-3f2a9c1d0b7e6a5f4c3d?env=%22staging%22"
 }
 ```
 
@@ -232,7 +232,7 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
     "ruleName": "Error spike"
   },
   "message": "Shop: 27 errors in production in the last 10 minutes, at or above the rule's threshold of 20.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors?env=%22production%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/errors?env=%22production%22"
 }
 ```
 
@@ -264,7 +264,7 @@ With one group, `fingerprint` is its ID, the message names its type and message 
     "ruleName": "Cart latency"
   },
   "message": "Shop: the 95th percentile duration of GET /cart in checkout in production was 812.4 ms over the last 10 minutes, above the rule's 500 ms, across 1,204 requests.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22&route=%22GET+%2Fcart%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22&route=%22GET+%2Fcart%22"
 }
 ```
 
@@ -296,7 +296,7 @@ With one group, `fingerprint` is its ID, the message names its type and message 
     "ruleName": "Checkout failing"
   },
   "message": "Shop: 6.458% of requests of checkout in production failed over the last 5 minutes, above the rule's 5%: 31 of 480 requests.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/services?env=%22production%22&service=%22checkout%22"
 }
 ```
 
@@ -332,7 +332,7 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
     "ruleName": "Pages answer too fast"
   },
   "message": "Shop: the 95th percentile of http.server.request.duration on host web-1 in production was 1.2 ms over the last 10 minutes, below the rule's 2 ms.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/metrics/http.server.request.duration?kind=%22histogram%22&env=%22production%22&host=%22web-1%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/metrics/http.server.request.duration?kind=%22histogram%22&env=%22production%22&host=%22web-1%22"
 }
 ```
 
@@ -365,7 +365,7 @@ A request failed when its span's status is Error. `route.failures_resolved` has 
     "ruleName": "Support chat spend"
   },
   "message": "Shop: the estimated AI cost for the feature support-chat in production was $61.25 over the last 24 hours, above the rule's $50. The cost is an estimate, from token counts and model prices. 12 calls of models without a price are not counted.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/ai?env=%22production%22&feature=%22support-chat%22"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/ai?env=%22production%22&feature=%22support-chat%22"
 }
 ```
 
@@ -399,7 +399,7 @@ The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`,
     "cap": 20
   },
   "message": "Shop: the alert rule \"New errors\" held back 35 more notifications after sending 20 in an hour, which is its limit. The rule's alert history in the dashboard lists every alert.",
-  "url": "https://analytics.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/alerts"
+  "url": "https://ottertrail.example.com/projects/0d6e5f80-0c4f-4b8e-9d3a-3f8f6a1c2b7e/alerts"
 }
 ```
 
@@ -423,7 +423,7 @@ About the instance, not a project: `project` is `null`.
     "freeBytes": 20401094656
   },
   "message": "The disk is 81% full. 19.0 GiB of 100 GiB is free. PostgreSQL, ClickHouse, Garage, and backups share this disk. Free space now: copy old backups off the server and delete them, shorten retention, lower the replay and source map budgets, or move to a larger disk.",
-  "url": "https://analytics.example.com/settings?tab=storage"
+  "url": "https://ottertrail.example.com/settings?tab=storage"
 }
 ```
 

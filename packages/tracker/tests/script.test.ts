@@ -41,7 +41,7 @@ function fakePage(
   {
     maxTouchPoints = 0,
     attributes = {},
-    src = "https://analytics.example.com/t.js",
+    src = "https://ottertrail.example.com/t.js",
     nonce = "",
   }: {
     maxTouchPoints?: number;
@@ -72,7 +72,7 @@ function fakePage(
     currentScript: {
       src,
       nonce,
-      dataset: { key: "pk_test", host: "https://analytics.example.com", ...attributes } as Record<
+      dataset: { key: "pk_test", host: "https://ottertrail.example.com", ...attributes } as Record<
         string,
         string | undefined
       >,
@@ -687,14 +687,14 @@ const recorder = (page: ReturnType<typeof fakePage>) => {
 describe("Web Vitals", () => {
   test("loads v.js from beside the tracker, with its nonce, unless turned off or pinned", async () => {
     const page = fakePage("https://example.com/", "", {
-      src: "https://analytics.example.com/t.js?v=2",
+      src: "https://ottertrail.example.com/t.js?v=2",
       nonce: "abc123",
     });
     await runScript();
     expect(page.added).toMatchObject([
       {
         tagName: "script",
-        src: "https://analytics.example.com/v.js",
+        src: "https://ottertrail.example.com/v.js",
         async: true,
         nonce: "abc123",
       },
@@ -866,22 +866,22 @@ const fakeRecorder = (replayId: string | undefined) => ({
 describe("session replay", () => {
   test('loads r.js beside the tracker, with its nonce, only with data-replay="errors"', async () => {
     const page = fakePage("https://example.com/", "", {
-      src: "https://analytics.example.com/t.js?v=2",
+      src: "https://ottertrail.example.com/t.js?v=2",
       nonce: "abc123",
       attributes: { replay: "errors", replayText: "show" },
     });
     await runScript();
     expect(page.added).toMatchObject([
-      { tagName: "script", src: "https://analytics.example.com/v.js" },
+      { tagName: "script", src: "https://ottertrail.example.com/v.js" },
       {
         tagName: "script",
-        src: "https://analytics.example.com/r.js",
+        src: "https://ottertrail.example.com/r.js",
         async: true,
         nonce: "abc123",
       },
     ]);
     expect(replayConfig(page)).toMatchObject({
-      endpoint: "https://analytics.example.com/api/replays",
+      endpoint: "https://ottertrail.example.com/api/replays",
       key: "pk_test",
       text: true,
       media: false,
@@ -892,7 +892,7 @@ describe("session replay", () => {
     });
     await runScript();
     expect(media.added.map((element) => element.src)).toEqual([
-      "https://analytics.example.com/r.js",
+      "https://ottertrail.example.com/r.js",
     ]);
     expect(replayConfig(media)).toMatchObject({ text: false, media: true });
 
@@ -1018,7 +1018,7 @@ describe("session replay after consent", () => {
     await runScript();
     // Web Vitals load, pageviews and errors are sent: only the recorder waits.
     expect(page.added.map((element) => element.src)).toEqual([
-      "https://analytics.example.com/v.js",
+      "https://ottertrail.example.com/v.js",
     ]);
     uncaught(page, failure("before consent"));
     const errors = await errorsSent(page);
@@ -1031,7 +1031,7 @@ describe("session replay after consent", () => {
     expect(recorders(page)).toHaveLength(1);
     // The snippet's privacy settings, as without waiting.
     expect(replayConfig(page)).toMatchObject({
-      endpoint: "https://analytics.example.com/api/replays",
+      endpoint: "https://ottertrail.example.com/api/replays",
       key: "pk_test",
       text: true,
       media: true,
@@ -1326,10 +1326,10 @@ describe("heatmaps", () => {
     });
     await runScript();
     expect(page.added).toMatchObject([
-      { src: "https://analytics.example.com/h.js", async: true, nonce: "abc123" },
+      { src: "https://ottertrail.example.com/h.js", async: true, nonce: "abc123" },
     ]);
     expect(heatmapConfig(page)).toMatchObject({
-      endpoint: "https://analytics.example.com/api/heatmaps",
+      endpoint: "https://ottertrail.example.com/api/heatmaps",
       key: "pk_test",
       environment: "staging",
       release: "1.4.2",
@@ -1484,7 +1484,7 @@ describe("the heatmap overlay", () => {
     // Only o.js while it asks: no v.js, r.js, or h.js.
     expect(page.added).toEqual([
       expect.objectContaining({
-        src: "https://analytics.example.com/o.js",
+        src: "https://ottertrail.example.com/o.js",
         async: true,
         nonce: "abc123",
       }),
@@ -1495,7 +1495,7 @@ describe("the heatmap overlay", () => {
     expect(JSON.stringify(script)).not.toContain(TOKEN);
     expect(handoff()).toBeUndefined();
     expect(configOf(page)).toEqual({
-      host: "https://analytics.example.com",
+      host: "https://ottertrail.example.com",
       token: TOKEN,
       environment: "staging",
       settled: expect.any(Function),
@@ -1537,11 +1537,11 @@ describe("the heatmap overlay", () => {
     page.window.location.href = "https://example.com/welcome";
     page.window.history.pushState();
     expect(page.added.map((element) => element.src)).toEqual([
-      "https://analytics.example.com/o.js",
+      "https://ottertrail.example.com/o.js",
     ]);
     expect(configOf(page).settled(false)).toBe(true);
     expect(page.added.map((element) => element.src)).toContain(
-      "https://analytics.example.com/h.js",
+      "https://ottertrail.example.com/h.js",
     );
     await leave(page);
     expect(
@@ -1626,7 +1626,7 @@ describe("the heatmap overlay", () => {
     expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
     // Neither h.js nor r.js: they waited for the answer, which was a real link.
     expect(page.added.map((element) => element.src)).toEqual([
-      "https://analytics.example.com/o.js",
+      "https://ottertrail.example.com/o.js",
     ]);
   });
 
@@ -1638,9 +1638,9 @@ describe("the heatmap overlay", () => {
     await vi.advanceTimersByTimeAsync(5001);
     await page.settle();
     expect(page.added.map((element) => element.src)).toEqual([
-      "https://analytics.example.com/o.js",
-      "https://analytics.example.com/r.js",
-      "https://analytics.example.com/h.js",
+      "https://ottertrail.example.com/o.js",
+      "https://ottertrail.example.com/r.js",
+      "https://ottertrail.example.com/h.js",
     ]);
     const started = fakeRecorder("8a1c4d2e-0f3b-4c5d-9e6f-7a8b9c0d1e2f");
     replayConfig(page)?.register(started);
@@ -1708,7 +1708,7 @@ describe("the heatmap overlay", () => {
     await runScript();
     configOf(page).settled(false);
     expect(page.added.map((element) => element.src)).toContain(
-      "https://analytics.example.com/r.js",
+      "https://ottertrail.example.com/r.js",
     );
     early.track("from-kept-reference");
     await leave(page);

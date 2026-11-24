@@ -10,11 +10,11 @@ It finds every `*.js.map`, `*.mjs.map`, and `*.cjs.map` file in a build director
 
 ```sh
 export OTTERTRAIL_SECRET_KEY=sk_...   # the project's secret key, from its settings
-ottertrail-sourcemaps upload dist --release 1.4.2 --host https://analytics.example.com
+ottertrail-sourcemaps upload dist --release 1.4.2 --host https://ottertrail.example.com
 ```
 
 ```text
-Uploading 2 source maps for release 1.4.2 to https://analytics.example.com
+Uploading 2 source maps for release 1.4.2 to https://ottertrail.example.com
 stored    /assets/index-4f3a.js   assets/index-4f3a.js.map
 replaced  /assets/vendor-9c1e.js  assets/vendor-9c1e.js.map
 Release 1.4.2: 1 stored, 1 replaced, 0 failed.
@@ -23,7 +23,7 @@ Release 1.4.2: 1 stored, 1 replaced, 0 failed.
 | Option                  | Meaning                                                                                                                                                                                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--release <release>`   | Required. The release, the same as the tracker's `data-release` (below).                                                                                                                                                                                    |
-| `--host <url>`          | Required. The Ottertrail address, such as `https://analytics.example.com`, with no path.                                                                                                                                                                    |
+| `--host <url>`          | Required. The Ottertrail address, such as `https://ottertrail.example.com`, with no path.                                                                                                                                                                   |
 | `--url-prefix <path>`   | Where the build directory is served on the site. Default `/`.                                                                                                                                                                                               |
 | `--concurrency <n>`     | Uploads at the same time, 1 to 8. Default 2, the server's limit for one project: it stores 2 of a project's maps at once and asks the rest to wait (429), and the command sends them again. Those waits are not failures, but each one sends its map again. |
 | `--dry-run`             | List what would be uploaded, with each file's URL path, and send nothing.                                                                                                                                                                                   |
@@ -49,7 +49,7 @@ export default defineConfig({
 Then upload them and delete them before the build is deployed, so they are not served at all:
 
 ```sh
-ottertrail-sourcemaps upload dist --release "$RELEASE" --host https://analytics.example.com --delete-after-upload
+ottertrail-sourcemaps upload dist --release "$RELEASE" --host https://ottertrail.example.com --delete-after-upload
 ```
 
 `--delete-after-upload` deletes only `.map` files that were uploaded. A map that failed stays, so you can try again, and the command exits with `1`: let that stop the deploy. Nothing is deleted on a dry run.
@@ -76,7 +76,7 @@ An error is mapped with the maps of its own release, so `--release` must be exac
   defer
   src=".../tracker.js"
   data-key="pk_..."
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
   data-release="1.4.2"
 ></script>
 ```
@@ -96,7 +96,7 @@ A GitHub Actions job, with the secret key stored as a repository secret:
   run: >
     node tools/ottertrail-sourcemaps.js upload dist
     --release "${{ github.sha }}"
-    --host https://analytics.example.com
+    --host https://ottertrail.example.com
     --delete-after-upload
 - name: Deploy
   run: ./deploy.sh dist
@@ -110,7 +110,7 @@ From the root of the Ottertrail repository, Node.js runs the TypeScript source d
 
 ```sh
 OTTERTRAIL_SECRET_KEY=sk_... node packages/sourcemaps/src/cli.ts upload /path/to/site/dist \
-  --release 1.4.2 --host https://analytics.example.com --dry-run
+  --release 1.4.2 --host https://ottertrail.example.com --dry-run
 ```
 
 Or build it into one file with no dependencies, which can be copied into a site's repository:

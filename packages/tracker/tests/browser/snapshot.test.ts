@@ -17,7 +17,7 @@ import {
 } from "../../src/snapshot-names.ts";
 import { takeSnapshot } from "../../src/snapshot-take.ts";
 
-const HOST = "https://analytics.example.com";
+const HOST = "https://ottertrail.example.com";
 const PROJECT = "0b7c6a1e-1f2a-4c3d-8e9f-0a1b2c3d4e5f";
 const LINK = "L".repeat(43);
 const SESSION = "S".repeat(43);

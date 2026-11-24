@@ -364,9 +364,9 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 ```html
 <script
   defer
-  src="https://analytics.example.com/tracker.js"
+  src="https://ottertrail.example.com/tracker.js"
   data-key="pk_00000000000000000000000000000000"
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
 ></script>
 ```
 
@@ -904,9 +904,9 @@ Two switches, both needed, as for session replay:
 ```html
 <script
   defer
-  src="https://analytics.example.com/t.js"
+  src="https://ottertrail.example.com/t.js"
   data-key="pk_…"
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
   data-heatmaps="on"
 ></script>
 ```

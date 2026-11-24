@@ -941,7 +941,7 @@ describe("the worker's backups", () => {
           broken: false,
         }),
       },
-      publicUrl: "https://analytics.example.com",
+      publicUrl: "https://ottertrail.example.com",
       log: () => undefined,
       now: () => clock,
     });
@@ -955,7 +955,7 @@ describe("the worker's backups", () => {
     expect(delivery.payload).toMatchObject({
       type: "storage.low",
       subject: { type: "storage", warning: "backup_failed", level: "warning" },
-      url: "https://analytics.example.com/settings?tab=backups",
+      url: "https://ottertrail.example.com/settings?tab=backups",
     });
     expect((delivery.payload as { message: string }).message).toMatch(
       /^The last backup failed\. The backup that ended 29 Mar 2026, 02:30 UTC failed: Not enough free disk space/,

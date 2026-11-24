@@ -12,7 +12,7 @@ import { describe as keyOf, resolve, resolveKeys } from "../../src/heatmap-path.
 import { OVERLAY_PROPERTY } from "../../src/overlay-names.ts";
 import { MESSAGES, type OverlayState, startOverlay } from "../../src/overlay-view.ts";
 
-const HOST = "https://analytics.example.com";
+const HOST = "https://ottertrail.example.com";
 const PROJECT = "0b7c6a1e-1f2a-4c3d-8e9f-0a1b2c3d4e5f";
 const LINK = "L".repeat(43);
 const SESSION = "S".repeat(43);

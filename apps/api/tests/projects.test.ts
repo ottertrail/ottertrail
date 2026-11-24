@@ -41,17 +41,17 @@ describe("parseHostname", () => {
 });
 
 describe("isTrustedOrigin", () => {
-  const trusted = ["https://analytics.example.com", "http://localhost:*"];
+  const trusted = ["https://ottertrail.example.com", "http://localhost:*"];
   test.each([
-    ["https://analytics.example.com", true],
+    ["https://ottertrail.example.com", true],
     ["http://localhost:5174", true],
-    ["https://analytics.example.com.attacker.example", false],
-    ["http://analytics.example.com", false],
+    ["https://ottertrail.example.com.attacker.example", false],
+    ["http://ottertrail.example.com", false],
     ["http://localhost", false],
     ["http://localhost.attacker.example:5174", false],
     ["https://localhost:5174", false],
     ["null", false],
-    ["https://analytics.example.com/path", false],
+    ["https://ottertrail.example.com/path", false],
   ])("%s is trusted: %s", (origin, expected) => {
     expect(isTrustedOrigin(origin, trusted)).toBe(expected);
   });

@@ -22,7 +22,7 @@ import {
 } from "../../src/heatmap-capture.ts";
 import { type HeatmapConfig, HEATMAP_PROPERTY, type HeatmapPage } from "../../src/heatmap-names.ts";
 
-const ENDPOINT = "https://analytics.example.com/api/heatmaps";
+const ENDPOINT = "https://ottertrail.example.com/api/heatmaps";
 /** A click is held for the dead-click window, then waits to batch. */
 const BATCHED = DEAD_WINDOW_MS + FLUSH_DELAY_MS;
 const PAGE: HeatmapPage = { url: "https://example.com/pricing", at: 1_000 };
@@ -1074,10 +1074,10 @@ async function runTrackerWithHeatmaps(attributes: Record<string, string>) {
     history.replaceState(null, "", path);
   });
   const tag = document.createElement("script");
-  tag.src = "https://analytics.example.com/t.js";
+  tag.src = "https://ottertrail.example.com/t.js";
   Object.assign(tag.dataset, {
     key,
-    host: "https://analytics.example.com",
+    host: "https://ottertrail.example.com",
     vitals: "off",
     errors: "off",
     ...attributes,
@@ -1112,7 +1112,7 @@ describe("with the tracker", () => {
     const off = await runTrackerWithHeatmaps({});
     expect(off.heatmapScript).toBeUndefined();
     const on = await runTrackerWithHeatmaps({ heatmaps: "on" });
-    expect(on.heatmapScript?.src).toBe("https://analytics.example.com/h.js");
+    expect(on.heatmapScript?.src).toBe("https://ottertrail.example.com/h.js");
     expect(Reflect.get(on.heatmapScript ?? {}, HEATMAP_PROPERTY)).toMatchObject({
       endpoint: ENDPOINT,
     });

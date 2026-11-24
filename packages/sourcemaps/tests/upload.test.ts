@@ -314,7 +314,7 @@ describe("upload", () => {
 });
 
 const KEY_ENV = { OTTERTRAIL_SECRET_KEY: SECRET_KEY };
-const BASE = ["upload", "<dir>", "--release", "1.0", "--host", "https://analytics.example.com"];
+const BASE = ["upload", "<dir>", "--release", "1.0", "--host", "https://ottertrail.example.com"];
 const withHost = (release: string, host: string) => [
   "upload",
   "<dir>",
@@ -358,7 +358,7 @@ describe("input validation", () => {
     ["a host with a path", withHost("1.0", "https://example.com/api"), KEY_ENV, "without a path"],
     [
       "a host that is not a URL",
-      withHost("1.0", "analytics.example.com"),
+      withHost("1.0", "ottertrail.example.com"),
       KEY_ENV,
       "--host is not a URL",
     ],

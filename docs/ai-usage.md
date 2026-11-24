@@ -288,7 +288,7 @@ Retry on 429 and 503 with the same body. A call's row is its project, the day of
 ### Examples
 
 ```sh
-curl https://analytics.example.com/api/ai-calls \
+curl https://ottertrail.example.com/api/ai-calls \
   -H "Authorization: Bearer $OTTERTRAIL_SECRET_KEY" \
   -H "Content-Type: application/json" \
   -d '{"v": 1, "calls": [{"id": "'"$(uuidgen)"'", "occurredAt": '"$(date +%s)000"',
@@ -317,7 +317,7 @@ const call = {
   feature: "support-chat",
   userId: user.id,
 };
-await fetch("https://analytics.example.com/api/ai-calls", {
+await fetch("https://ottertrail.example.com/api/ai-calls", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${process.env.OTTERTRAIL_SECRET_KEY}`,
@@ -336,7 +336,7 @@ import requests
 started_at = time.time()
 completion = client.chat.completions.create(model="gpt-4o-mini", messages=messages)
 requests.post(
-    "https://analytics.example.com/api/ai-calls",
+    "https://ottertrail.example.com/api/ai-calls",
     headers={"Authorization": f"Bearer {os.environ['OTTERTRAIL_SECRET_KEY']}"},
     json={"v": 1, "calls": [{
         "id": str(uuid.uuid4()),

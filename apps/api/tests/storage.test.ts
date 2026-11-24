@@ -83,7 +83,7 @@ function job(budgets = BUDGETS, room?: { freeRatio: () => Promise<number> }) {
   const check = new StorageWarningJob({
     db: dashboard.db,
     sources,
-    publicUrl: "https://analytics.example.com",
+    publicUrl: "https://ottertrail.example.com",
     log: (level, msg, fields) => logs.push({ level, msg, ...(fields ? { fields } : {}) }),
     ...(room === undefined ? {} : { room }),
   });
@@ -479,7 +479,7 @@ describe("the worker's storage check", () => {
       type: "storage.low",
       project: null,
       subject: { type: "storage", warning: "disk_used", level: "warning", usedPercent: 81 },
-      url: "https://analytics.example.com/settings?tab=storage",
+      url: "https://ottertrail.example.com/settings?tab=storage",
     });
     expect(payload.message).toMatch(/^The disk is 81% full\. /);
     expect(sent.some((d) => d.channel_id === other)).toBe(false);

@@ -174,9 +174,9 @@ describe("the built dashboard", () => {
   });
 
   test.each([
-    ["https://analytics.example.com", true],
-    ["https://analytics.example.com:8443", true],
-    ["http://analytics.example.com", false],
+    ["https://ottertrail.example.com", true],
+    ["https://ottertrail.example.com:8443", true],
+    ["http://ottertrail.example.com", false],
     ["https://localhost", false],
     ["https://localhost:8443", false],
     ["https://ottertrail.localhost", false],

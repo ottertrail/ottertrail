@@ -27,7 +27,7 @@ docker compose exec api node dist/setup.mjs
 
 In development, the same command is `vp run setup`. The sign-in page, while no owner exists, and the setup page, opened without a link, say to run it, in both forms.
 
-The command prints a link such as `https://analytics.example.com/setup#token=…`. The pages before signing in (sign-in, Forgot password, setup, an invitation, a reset link) share one layout (`features/auth/auth-layout.tsx`): the canvas the app sits on, the logo with the name, and one panel holding the page's title, a line on what it does, and its form. On a phone the panel drops its frame, so the fields take the screen's width. `auth-pages.test.tsx` checks each page's fields, errors and success at 390 wide, the token staying in the fragment, and the panel at 1440.
+The command prints a link such as `https://ottertrail.example.com/setup#token=…`. The pages before signing in (sign-in, Forgot password, setup, an invitation, a reset link) share one layout (`features/auth/auth-layout.tsx`): the canvas the app sits on, the logo with the name, and one panel holding the page's title, a line on what it does, and its form. On a phone the panel drops its frame, so the fields take the screen's width. `auth-pages.test.tsx` checks each page's fields, errors and success at 390 wide, the token staying in the fragment, and the panel at 1440.
 
 **Forgot password.** With SMTP set up (`GET /api/setup` says `emailConfigured`), the sign-in page has a "Forgot password?" link at the right of the Password label's row, which opens `/forgot-password`: "Reset your password", one Email field, and "Send reset link". Its answer is the same for every address ("If an account uses that email, we'll send a reset link. Check your inbox and spam folder."), with "Back to sign in"; past the limit it says "Too many reset requests. Wait a little, then try again." Without SMTP, "Forgot password?" opens a dialog: "Email isn't set up on this instance. Ask the person who runs it for a reset link." Close returns focus to the trigger. The forgot-password page, opened directly, shows the same message instead of its form. The emailed link opens the reset page, which is unchanged ([access](access.md#account-email)). `account-email.test.tsx` covers both sign-in pages, the answer, the limit, and the page without email.
 
@@ -78,10 +78,10 @@ Settings that differ from Better Auth's defaults, and why:
 
 ### Configuration
 
-| Variable      | Development default     | In production                                                                   |
-| ------------- | ----------------------- | ------------------------------------------------------------------------------- |
-| `PUBLIC_URL`  | `http://localhost:5173` | Required: the instance's HTTPS address, such as `https://analytics.example.com` |
-| `AUTH_SECRET` | A fixed, public value   | Required: at least 32 random characters (`openssl rand -base64 32`)             |
+| Variable      | Development default     | In production                                                                    |
+| ------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| `PUBLIC_URL`  | `http://localhost:5173` | Required: the instance's HTTPS address, such as `https://ottertrail.example.com` |
+| `AUTH_SECRET` | A fixed, public value   | Required: at least 32 random characters (`openssl rand -base64 32`)              |
 
 `AUTH_SECRET` signs the session cookies. In development, the dashboard dev server may run on another port; any `http://localhost` port is trusted then.
 
@@ -187,9 +187,9 @@ A page that cannot show takes a state of its own in its place (`components/route
 ```html
 <script
   defer
-  src="https://analytics.example.com/t.js"
+  src="https://ottertrail.example.com/t.js"
   data-key="pk_…"
-  data-host="https://analytics.example.com"
+  data-host="https://ottertrail.example.com"
 ></script>
 ```
 

@@ -191,7 +191,7 @@ const startDirectly: Start = async (settings, fetch, overrides) => {
   let registered: unknown;
   const recorder = startReplay(
     {
-      endpoint: "https://analytics.example.com/api/replays",
+      endpoint: "https://ottertrail.example.com/api/replays",
       key: "pk_test",
       text: settings.text ?? false,
       media: settings.media ?? false,
@@ -502,10 +502,10 @@ async function runTracker(
   });
 
   const tag = document.createElement("script");
-  tag.src = "https://analytics.example.com/t.js";
+  tag.src = "https://ottertrail.example.com/t.js";
   Object.assign(tag.dataset, {
     key: "pk_test",
-    host: "https://analytics.example.com",
+    host: "https://ottertrail.example.com",
     vitals: "off",
     ...attributes,
   });
@@ -522,7 +522,7 @@ async function runTracker(
 
 /** Runs r.js's entry point (replay.ts) as the script the tracker added for it. */
 async function runRecorderScript(script: HTMLScriptElement) {
-  expect(script.src).toBe("https://analytics.example.com/r.js");
+  expect(script.src).toBe("https://ottertrail.example.com/r.js");
   Object.defineProperty(document, "currentScript", { configurable: true, get: () => script });
   try {
     const url = `../../src/replay.ts?run=${(runs += 1)}`;
@@ -569,9 +569,9 @@ describe("a recording started by replay(true)", () => {
     expect(scripts).toEqual([]);
     api().replay(true);
     api().replay(true);
-    expect(scripts.map((script) => script.src)).toEqual(["https://analytics.example.com/r.js"]);
+    expect(scripts.map((script) => script.src)).toEqual(["https://ottertrail.example.com/r.js"]);
     expect(Reflect.get(scripts[0] ?? {}, REPLAY_PROPERTY)).toMatchObject({
-      endpoint: "https://analytics.example.com/api/replays",
+      endpoint: "https://ottertrail.example.com/api/replays",
       key: "pk_test",
       text: true,
       media: false,
@@ -586,7 +586,7 @@ describe("a recording started by replay(true)", () => {
     api().captureError(new Error("before the tracker"));
 
     const scripts = await runTracker({ replay: "errors", replayConsent: "wait" });
-    expect(scripts.map((script) => script.src)).toEqual(["https://analytics.example.com/r.js"]);
+    expect(scripts.map((script) => script.src)).toEqual(["https://ottertrail.example.com/r.js"]);
     expect(Reflect.get(window, "ottertrail")).not.toHaveProperty("q");
   });
 

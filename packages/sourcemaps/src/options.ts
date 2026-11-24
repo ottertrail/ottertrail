@@ -24,7 +24,7 @@ the ${SECRET_KEY_VARIABLE} environment variable.
 
 Options:
   --release <release>     The release, the same as the tracker's data-release.
-  --host <url>            The Ottertrail address, such as https://analytics.example.com.
+  --host <url>            The Ottertrail address, such as https://ottertrail.example.com.
   --url-prefix <path>     Where <directory> is served on the site (default: /).
                           Example: --url-prefix /static/ when dist/app.js is
                           loaded from /static/app.js.
@@ -39,7 +39,7 @@ export interface UploadOptions {
   /** Absolute path of the build directory. */
   directory: string;
   release: string;
-  /** The Ottertrail origin, such as https://analytics.example.com. */
+  /** The Ottertrail origin, such as https://ottertrail.example.com. */
   origin: string;
   /** A URL path that starts and ends with "/". */
   urlPrefix: string;
@@ -97,7 +97,7 @@ function parseHost(raw: string): { origin: string; insecure: boolean } | string 
   try {
     url = new URL(raw);
   } catch {
-    return `--host is not a URL: give the Ottertrail address, such as https://analytics.example.com.`;
+    return `--host is not a URL: give the Ottertrail address, such as https://ottertrail.example.com.`;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     return "--host must start with https:// (or http:// for a local install).";
@@ -106,7 +106,7 @@ function parseHost(raw: string): { origin: string; insecure: boolean } | string 
     return "--host may not contain a user name or password.";
   }
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || /[?#]/u.test(raw)) {
-    return "--host is the Ottertrail address only, without a path, query, or fragment, such as https://analytics.example.com.";
+    return "--host is the Ottertrail address only, without a path, query, or fragment, such as https://ottertrail.example.com.";
   }
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   return { origin: url.origin, insecure: url.protocol === "http:" && !local };
@@ -169,7 +169,7 @@ export function parseCommand(
   if (badRelease !== null) return error(badRelease);
 
   if (values.host === undefined)
-    return error("Missing --host: the Ottertrail address, such as https://analytics.example.com.");
+    return error("Missing --host: the Ottertrail address, such as https://ottertrail.example.com.");
   const host = parseHost(values.host);
   if (typeof host === "string") return error(host);
 
