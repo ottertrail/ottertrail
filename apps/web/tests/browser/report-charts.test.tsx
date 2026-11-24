@@ -604,14 +604,21 @@ describe("the charts fit", () => {
         renderApp(path);
         await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
         const chart = chartOf(title);
-        const right = document
-          .querySelector("[data-slot=app-content]")
-          ?.getBoundingClientRect().right;
-        const toggle = chart?.querySelector("[aria-label='What to chart']");
-        expect({
-          chart: (chart?.getBoundingClientRect().right ?? Infinity) <= (right ?? 0) + 1,
-          toggle: (toggle?.getBoundingClientRect().right ?? Infinity) <= (right ?? 0) + 1,
-        }).toEqual({ chart: true, toggle: true });
+        // Polled: the toggle can draw after the heading (on CI's slower runner it did), and a toggle not
+        // there yet measures as sticking out.
+        await expect
+          .poll(() => {
+            const right = document
+              .querySelector("[data-slot=app-content]")
+              ?.getBoundingClientRect().right;
+            const drawn = chartOf(title);
+            const toggle = drawn?.querySelector("[aria-label='What to chart']");
+            return {
+              chart: (drawn?.getBoundingClientRect().right ?? Infinity) <= (right ?? 0) + 1,
+              toggle: (toggle?.getBoundingClientRect().right ?? Infinity) <= (right ?? 0) + 1,
+            };
+          })
+          .toEqual({ chart: true, toggle: true });
         // Short: a report's 140px plot with its axis labels, the full width of the content.
         await expect
           .poll(() => chart?.querySelector("svg")?.getBoundingClientRect().height)

@@ -118,6 +118,8 @@ describe("the sidebar's Notifications item", () => {
     const footer = document.querySelector("[data-slot=sidebar-footer]");
     expect(footer?.contains(bell().element())).toBe(true);
     const user = page.getByRole("button", { name: /Account menu$/ });
+    // The account menu can draw after the bell (on CI's slower runner it did): wait before measuring both.
+    await expect.element(user).toBeVisible();
     const item = bell().element().getBoundingClientRect();
     const below = user.element().getBoundingClientRect();
     expect(below.top - item.bottom).toBeGreaterThanOrEqual(0);
