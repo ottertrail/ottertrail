@@ -1,3 +1,4 @@
+import { CSPProvider } from "@base-ui/react/csp-provider";
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
@@ -1555,9 +1556,13 @@ export function createAppRouter({
     parseSearch: parseSearchWith(parseExactJson),
     stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
     Wrap: ({ children }: { children: React.ReactNode }) => (
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>{children}</TooltipProvider>
-      </QueryClientProvider>
+      // Base UI's own <style> elements stay off: the dashboard's Content Security Policy allows
+      // stylesheets only, and globals.css carries the one rule they add (base-ui-disable-scrollbar).
+      <CSPProvider disableStyleElements>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>{children}</TooltipProvider>
+        </QueryClientProvider>
+      </CSPProvider>
     ),
   });
   router.subscribe("onBeforeNavigate", ({ fromLocation }) => {

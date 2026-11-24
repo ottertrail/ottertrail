@@ -451,6 +451,15 @@
     caret-color: var(--brand);
   }
 
+  /* Base UI's class for its scroll containers. Its own <style> element is off (CSPProvider in router.tsx). */
+  .base-ui-disable-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .base-ui-disable-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   ::selection {
     background-color: color-mix(in oklab, var(--brand) 45%, transparent);
   }
