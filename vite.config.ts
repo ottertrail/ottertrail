@@ -72,15 +72,6 @@ export default defineConfig({
         },
       },
       {
-        // These tools cast JSON replies from external software.
-        files: ["tools/**/*.ts"],
-        plugins: ["node"],
-        env: { node: true },
-        rules: {
-          "typescript/no-unsafe-type-assertion": "off",
-        },
-      },
-      {
         files: ["**/*.test.ts", "**/*.test.tsx"],
         plugins: ["vitest"],
         rules: {
