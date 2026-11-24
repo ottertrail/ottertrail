@@ -117,10 +117,14 @@ describe("forced merges", () => {
       query: `ALTER TABLE ${plain} MODIFY SETTING min_age_to_force_merge_seconds = 0`,
     });
     const project = randomUUID();
+    // Yesterday, from midnight UTC: the spans run 14 hours, all in one day. The tables copy the spans
+    // table, which the test above left at 7 days, so a fixed date would lose rows to the TTL at
+    // merge time once it was a week old.
+    const day = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     const insert = (table: string, rows: number) =>
       clickhouse.client.command({
         query: `INSERT INTO ${table} (project_id, timestamp, id, name, kind, service, environment)
-                SELECT '${project}', toDateTime64('2026-11-17 00:00:00', 9, 'UTC') + intDiv(number, 20),
+                SELECT '${project}', toDateTime64('${day} 00:00:00', 9, 'UTC') + intDiv(number, 20),
                        toString(number), 'GET /', 'server', 'web', 'production'
                 FROM numbers(${rows})`,
       });
