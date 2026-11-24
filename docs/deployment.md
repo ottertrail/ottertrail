@@ -2,7 +2,7 @@
 
 How Ottertrail's deployment is built, and the decisions behind it. To install, update, or run an instance, follow the documentation site instead: [installing](https://docs.ottertrail.app/get-started/install/), [the first start](https://docs.ottertrail.app/get-started/first-start/), [settings](https://docs.ottertrail.app/self-hosting/configuration/), [domain, proxies, and the firewall lock](https://docs.ottertrail.app/self-hosting/domain-and-dns/), [updating](https://docs.ottertrail.app/self-hosting/updating/), [backups](https://docs.ottertrail.app/self-hosting/backups/), and [server commands](https://docs.ottertrail.app/self-hosting/server-commands/). Events, traces, logs, and metrics are stored in ClickHouse, where reports read them ([clickhouse.md](clickhouse.md)); PostgreSQL holds accounts, projects, and settings.
 
-Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Nothing runs in production yet. Backups run on a schedule, encrypted to S3-compatible storage, once the owner turns them on ([Backups](#backups)).
+Status: tested on one machine with Podman (see [What has been tested](#what-has-been-tested)). Backups run on a schedule, encrypted to S3-compatible storage, once the owner turns them on ([Backups](#backups)).
 
 ## What runs
 

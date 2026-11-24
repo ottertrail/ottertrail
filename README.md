@@ -2,7 +2,7 @@
 
 Web analytics, product analytics, error tracking, and monitoring for small software teams, in one app you run on your own server.
 
-Ottertrail is new and has not run in production yet. Features ship in stages ([docs/roadmap.md](docs/roadmap.md)).
+Features ship in stages ([docs/roadmap.md](docs/roadmap.md)).
 
 ## What it does
 
