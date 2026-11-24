@@ -159,7 +159,12 @@ const ITEMS: ExampleItem[] = [
     message: "Cannot read properties of undefined (reading 'id')",
     occurrences: 1234,
   },
-  { id: "reference-error", name: "ReferenceError", message: "process is not defined", occurrences: 8 },
+  {
+    id: "reference-error",
+    name: "ReferenceError",
+    message: "process is not defined",
+    occurrences: 8,
+  },
   { id: "network-error", name: "NetworkError", message: "Failed to fetch", occurrences: 3 },
 ];
 

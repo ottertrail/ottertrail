@@ -603,9 +603,9 @@ describe("the charts fit", () => {
         installFakeApi();
         renderApp(path);
         await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
-        const chart = chartOf(title);
-        // Polled: the toggle can draw after the heading (on CI's slower runner it did), and a toggle not
-        // there yet measures as sticking out.
+        // Polled, and the chart looked up afresh each time: on CI's slower runner the toggle drew after
+        // the heading, and the chart was drawn again once its data came, so an element kept from before
+        // was no longer on the page. A toggle not there yet measures as sticking out.
         await expect
           .poll(() => {
             const right = document
@@ -621,7 +621,7 @@ describe("the charts fit", () => {
           .toEqual({ chart: true, toggle: true });
         // Short: a report's 140px plot with its axis labels, the full width of the content.
         await expect
-          .poll(() => chart?.querySelector("svg")?.getBoundingClientRect().height)
+          .poll(() => chartOf(title)?.querySelector("svg")?.getBoundingClientRect().height)
           .toBe(180);
         expectNoSidewaysScroll(width);
       });
