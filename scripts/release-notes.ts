@@ -78,7 +78,7 @@ export function renderNotes(version: string, commits: Commit[], since: string | 
     "",
     "## Install or update",
     "",
-    "A new install, in an empty folder ([docs/deployment.md](https://github.com/ottertrail/ottertrail/blob/main/docs/deployment.md) has the details):",
+    "A new install, in an empty folder ([the install guide](https://docs.ottertrail.app/get-started/install/) has the details):",
     "",
     "```sh",
     `curl -fLO ${RELEASES}/download/v${version}/compose.yaml`,

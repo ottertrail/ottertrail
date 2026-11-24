@@ -95,6 +95,7 @@ describe("renderNotes", () => {
   });
 
   test("shows how to install or update this release", () => {
+    expect(notes).toContain("(https://docs.ottertrail.app/get-started/install/)");
     expect(notes).toContain("releases/download/v1.2.0/compose.yaml");
     expect(notes).toContain("releases/download/v1.2.0/example.env");
     // The repository is public: plain curl downloads, with no sign-in workaround.
