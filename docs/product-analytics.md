@@ -40,7 +40,7 @@ The spec asks for these before any report: each report below counts by them.
 
 Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked by the same rules. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
 
-The web analytics page counts them, in the same visits and filters as the rest of the page: for each goal, the **visitors** who reached it (daily visitor IDs, as the summary counts them), how many **times** it happened, and its **conversion rate**, those visitors as a share of the page's visitors. A filtered page counts the goals among its own visits only. Counting by visitors means an event goal counts browser events only: an event from the site's server has no visitor.
+The web analytics page counts them, in the same visits and filters as the rest of the page: for each goal, the **visitors** who reached it (daily visitor IDs, as the summary counts them), how many **times** it happened, and its **conversion rate**, those visitors as a share of the page's visitors. A filtered page counts the goals among its own visits only. So filtering the page by a source or campaign shows each goal's conversions from it: a goal event on the visit's third page counts under the source of its first. Counting by visitors means an event goal counts browser events only: an event from the site's server has no visitor.
 
 ```text
 GET    /api/projects/:id/goals
@@ -54,7 +54,17 @@ The analytics answer carries them as `goals`, with their counts. Adding or delet
 
 Code: `apps/api/src/product/events.ts`. The product events of a range and environment, most frequent first (the top 100), each with its events, visitors, and users. One event adds its events per day and its properties: the 30 most frequent property names, each with its 10 most frequent values. Filters narrow all of it; one that matches nothing gives zeros, not an error.
 
+The event's page also counts it by its visit's source and campaign (`GET /api/projects/:id/events/:name/sources`, the same range and filters): the 10 values of each with the most events, `{ value, events }`, where `null` is an event without a visit and `""` a visit without a campaign. See [Source and campaign](#source-and-campaign). It is its own request, so the rest of the page does not wait for it, and its query runs through the dashboard's query limit.
+
 Properties are stored as each event's JSON (`properties`), so a breakdown reads every event of the range with that name and splits its properties (`JSONExtractKeysAndValuesRaw`), once for names and values together. A property that is an ID, different on every event, makes that count as large as the event count. Fine for what a small team sends; a project with millions of one event a month will want the properties in columns of their own, not built.
+
+## Source and campaign
+
+Code: `apps/api/src/visits/visit-source.ts`. An event's own referrer is the page before it in the site, and its UTM tags are those of its own page, so a signup on a visit's second page would read as "Direct / none". Instead, an event is credited to its **visit's** source and campaign: those of the visit's first page, as the Analytics page counts a visit. Nothing is stored for it: the visits are worked out when the report runs, by the same code and rules as the Analytics page (`visitsSql`, [web analytics](web-analytics.md)), and the source is named by the same expression as its Sources list (`visitSourceSql`): `utm_source`, else the referrer's host without `www.`, else "Direct / none", with a referrer on one of the project's own hostnames counting as direct. The campaign is `utm_campaign`, and a visit without one is "No campaign", as on the Analytics page. The values match that page's lists for the same period and environment, so they can be checked against each other.
+
+An event belongs to the visit of its visitor ID that started last at or before it, if the event came before that visit ended (an `ASOF LEFT JOIN` on visitor ID and time). An event without a visit has no source: a server's event without a visitor ID, an event counted by user on a device with no visit, or an error event (errors are not part of visits). Those count as Unknown.
+
+Cost: working out visits sorts every event of the visitors involved, so the query reads only what it needs. It filters by project and environment first, then time, and works out the visits of only the visitor IDs that sent a counted event in the range (for a funnel, a step 1; for the Events page, that event with its filters). A visit lasts at most 25 hours, because visitor IDs change daily, so it reads those visitors' events from 50 hours before the range (25 hours for a visit that started before the range, 25 more to find where it started) to 25 hours after. Its memory grows with those visitors' events, not the project's. When step 1 is something almost every visitor does, such as viewing the home page, that is close to the whole Analytics page's visit count for the period. Both reports run through the dashboard's query limit (at most 300 MB and 15 seconds a query, `DASHBOARD_SETTINGS`), so a project too large for it gets an error, not a slow instance. Not measured on a large project yet: the development machine is too small for the benchmark in [storage-benchmark.md](storage-benchmark.md).
 
 ## Funnel
 
@@ -66,11 +76,11 @@ The answer also counts the period before (`previous`: its days, `until`, and eac
 
 ### Breakdown
 
-A funnel can be split by one dimension (`GET /api/projects/:id/funnel/breakdown`, the funnel's own parameters and `by`): the device type, browser, operating system, country, or release, named as the Web analytics page names them (`deviceType`, `browser`, `os`, `country`, `release`), or, when step 1 is an event, a property of that event (`p.<name>`, checked as a step filter's name is: 1 to 100 characters, no NUL). Anything else answers 400. The columns come from a fixed list in `funnel.ts` (`BREAKDOWN_COLUMNS`) and a property name goes to ClickHouse as a parameter, so `by` never becomes SQL.
+A funnel can be split by one dimension (`GET /api/projects/:id/funnel/breakdown`, the funnel's own parameters and `by`): step 1's visit's source or campaign (`source`, `utmCampaign`, see [Source and campaign](#source-and-campaign)), the device type, browser, operating system, country, or release, named as the Web analytics page names them (`deviceType`, `browser`, `os`, `country`, `release`), or, when step 1 is an event, a property of that event (`p.<name>`, checked as a step filter's name is: 1 to 100 characters, no NUL). Anything else answers 400. The names come from a fixed list in `funnel.ts` (`BREAKDOWN_NAMES`) and a property name goes to ClickHouse as a parameter, so `by` never becomes SQL.
 
-Each person counts once, under the value on their first step 1 event in the range (`argMinIf` beside `windowFunnel`, in the same pass over the events), so the rows add up to the funnel. The answer is the five values with the most people at step 1 (ties by name), then Other for the rest of the values, then Unknown for no value (an unrecognized browser, no location, an event without the property): at most seven rows, `{ kind, value, reached[] }` each, whatever the dimension holds. A property is compared as text, as a step filter compares it. The query runs through the dashboard's query limit, like the saved funnels' results. There is no period before for a breakdown.
+Each person counts once, under the value on their first step 1 event in the range (`argMinIf` beside `windowFunnel`, in the same pass over the events), so the rows add up to the funnel. The answer is the five values with the most people at step 1 (ties by name), then Other for the rest of the values, then Unknown for no value (an unrecognized browser, no location, an event without the property, a step 1 without a visit): at most seven rows, `{ kind, value, reached[] }` each, whatever the dimension holds. A property is compared as text, as a step filter compares it. The query runs through the dashboard's query limit, like the saved funnels' results. There is no period before for a breakdown.
 
-The visit's source and campaign are not offered: an event's own referrer is the page before it in the site, and its UTM tags those of its own page, so on a step 1 that is not the visit's first page they would read as "Direct". Splitting by them needs the visit's first event, not built.
+By source or campaign, each person counts under the visit of their first step 1 in the range, wherever in the visit it happened. A visit without a campaign is the value `""` ("No campaign"), not Unknown: Unknown is a step 1 without a visit, such as a server's event in a funnel that counts users. The medium is not offered, as the Analytics page has no list of it.
 
 ### Conversion over time
 
@@ -129,7 +139,8 @@ Like every project route, each runs the access check first. Saving, changing, or
 - Goals by signed-in user instead of visitor, and a goal's trend over time.
 - Looser funnel steps (path patterns, "not equals" and "contains", goals as steps), order modes, and excluded steps.
 - A distribution of the time between funnel steps, beyond the median and 75th percentile.
-- A funnel's breakdown by the visit's source or campaign, and by more than one dimension.
+- A funnel's breakdown by more than one dimension, or by the visit's medium.
+- Filtering the Events page by a source or campaign.
 - Retention by a chosen event instead of any event, and by day or month.
 - Property filters on the web analytics page, and other comparisons than "equals".
 - A time limit for report queries, and stopping a query when the browser stops waiting: a long range on a large project runs to its end.
