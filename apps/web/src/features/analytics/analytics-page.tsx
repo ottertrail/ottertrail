@@ -425,7 +425,6 @@ function Reports({
   search: PageSearch;
 }) {
   const { breakdowns } = analytics;
-  const showGoals = useAccess().canUse("product_analytics");
   const link: FilterLinkFor = (name, value) => (
     <FilterLink projectId={projectId} search={search} name={name} value={value} />
   );
@@ -517,15 +516,24 @@ function Reports({
           />
         </div>
       </div>
-      {/* Goals belong to product analytics (docs/access.md). */}
-      {showGoals && (
-        <GoalsCard
-          goals={analytics.goals}
-          projectId={projectId}
-          eventNames={analytics.customEvents.map((event) => event.name)}
-        />
-      )}
+      <GoalsSection analytics={analytics} projectId={projectId} />
     </>
+  );
+}
+
+/**
+ * Goals belong to product analytics (docs/access.md). They show without data too, so a project
+ * can set its goals before its first event arrives.
+ */
+function GoalsSection({ analytics, projectId }: { analytics: Analytics; projectId: string }) {
+  const showGoals = useAccess().canUse("product_analytics");
+  if (!showGoals) return null;
+  return (
+    <GoalsCard
+      goals={analytics.goals}
+      projectId={projectId}
+      eventNames={analytics.customEvents.map((event) => event.name)}
+    />
   );
 }
 
@@ -781,12 +789,15 @@ export function AnalyticsPage({
             {hasData(data) ? (
               <Reports analytics={data} projectId={projectId} search={search} />
             ) : (
-              <NoData
-                projectId={projectId}
-                project={project.data}
-                search={search}
-                otherEnvironments={data.environments.some((name) => name !== environment)}
-              />
+              <>
+                <NoData
+                  projectId={projectId}
+                  project={project.data}
+                  search={search}
+                  otherEnvironments={data.environments.some((name) => name !== environment)}
+                />
+                <GoalsSection analytics={data} projectId={projectId} />
+              </>
             )}
           </div>
         )}

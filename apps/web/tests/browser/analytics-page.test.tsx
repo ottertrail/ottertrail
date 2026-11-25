@@ -355,6 +355,19 @@ describe("when there is nothing to show", () => {
       .toHaveAttribute("href", `/projects/${PROJECT.id}/settings`);
   });
 
+  test("lets goals be added before the first event arrives", async () => {
+    installFakeApi({
+      projects: [{ ...PROJECT, lastEventAt: null }],
+      analytics: () => emptyAnalytics(),
+    });
+    renderApp(ANALYTICS);
+
+    await expect.element(page.getByText("No events yet")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Goals" })).toBeVisible();
+    await page.getByRole("button", { name: "Add goal" }).click();
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+  });
+
   test("offers a longer period when this one is empty", async () => {
     const api = installFakeApi({ analytics: () => emptyAnalytics() });
     const router = renderApp(ANALYTICS);
