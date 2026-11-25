@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { previousReadEnd } from "../src/product/funnel.ts";
+import { averageOf } from "../src/product/retention.ts";
 import { parseSteps } from "../src/product/routes.ts";
 import { type Step, stepsOverlap } from "../src/product/steps.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
@@ -591,10 +592,59 @@ describe("GET /api/projects/:id/retention", () => {
       // Cy, back this week, which is not over.
       { week: "2026-11-09", users: 1, retained: [1, 1] },
     ]);
+    // Week 1 of Cy's cohort is this week, not over: only Ada and Bob count.
+    // No cohort has finished week 2 yet.
+    expect(body.average).toEqual([
+      { users: 3, retained: 3 },
+      { users: 2, retained: 1 },
+      { users: 0, retained: 0 },
+    ]);
+    expect(body.identifiesUsers).toBe(true);
   });
 
   test("leaves out users first seen before the range's weeks", async () => {
     const body = (await get(retentionProject, "/retention?from=2026-11-09&to=2026-11-17")).json();
     expect(body.cohorts.map((cohort: { week: string }) => cohort.week)).toEqual(["2026-11-09"]);
+  });
+
+  test("shows every cohort of a long range, not only the latest", async () => {
+    const body = (await get(retentionProject, "/retention?period=90d")).json();
+    expect(body.cohorts.map((cohort: { week: string }) => cohort.week)).toEqual([
+      "2026-09-28",
+      "2026-11-02",
+      "2026-11-09",
+    ]);
+  });
+
+  test("an empty range still says the project identifies users", async () => {
+    const body = (await get(retentionProject, "/retention?from=2026-06-01&to=2026-06-30")).json();
+    expect(body).toMatchObject({ cohorts: [], average: [], identifiesUsers: true });
+  });
+
+  test("a project that never identified a user says so", async () => {
+    // The compare project's events carry no user ID.
+    const none = (await get(compareProject, "/retention?period=30d")).json();
+    expect(none).toMatchObject({ cohorts: [], average: [], identifiesUsers: false });
+  });
+});
+
+describe("averageOf", () => {
+  test("pools users of the cohorts that finished each week", () => {
+    const cohorts = [
+      { week: "2026-10-19", users: 10, retained: [10, 4, 2, 1, 0] },
+      { week: "2026-10-26", users: 30, retained: [30, 6, 3, 1] },
+      { week: "2026-11-09", users: 5, retained: [5, 2] },
+      { week: "2026-11-16", users: 7, retained: [7] },
+    ];
+    expect(averageOf(cohorts, "2026-11-16")).toEqual([
+      // The current week's cohort has not finished week 0.
+      { users: 45, retained: 45 },
+      // The 9 November cohort's week 1 is this week.
+      { users: 40, retained: 10 },
+      { users: 40, retained: 5 },
+      // Only the 19 October cohort finished week 3; week 4 is this week.
+      { users: 10, retained: 1 },
+      { users: 0, retained: 0 },
+    ]);
   });
 });

@@ -7,7 +7,6 @@ import type { ProductRange } from "./events.ts";
  * (docs/product-analytics.md, "Retention").
  */
 
-export const MAX_COHORTS = 13;
 export const MAX_WEEKS = 12;
 
 export interface Cohort {
@@ -22,10 +21,27 @@ export interface Cohort {
   retained: number[];
 }
 
+/** Sums over the cohorts whose week at this offset is over. */
+export interface WeekAverage {
+  users: number;
+  retained: number;
+}
+
 export interface Retention {
+  /** Every cohort whose first week holds a day of the range, oldest first. */
   cohorts: Cohort[];
+  /**
+   * One entry per week offset shown. A week that is not over leaves its
+   * cohort out, since its count can only grow.
+   */
+  average: WeekAverage[];
   /** The Monday of the current week: a cohort's week with this date is not over. */
   currentWeek: string;
+  /**
+   * Whether any event of the project carries a user ID. Read only when no
+   * cohort shows, to tell a site that never identifies users from an empty range.
+   */
+  identifiesUsers: boolean;
 }
 
 function mondayOf(day: string): string {
@@ -37,10 +53,40 @@ function mondayOf(day: string): string {
 const weeksBetween = (from: string, to: string) =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (7 * 86_400_000));
 
+/** Pool the finished weeks of every cohort, so a larger cohort weighs more. */
+export function averageOf(cohorts: readonly Cohort[], currentWeek: string): WeekAverage[] {
+  const weeks = Math.max(0, ...cohorts.map((cohort) => cohort.retained.length));
+  return Array.from({ length: weeks }, (_, offset) => {
+    const finished = cohorts.filter(
+      (cohort) =>
+        offset < cohort.retained.length && offset < weeksBetween(cohort.week, currentWeek),
+    );
+    return {
+      users: finished.reduce((sum, cohort) => sum + cohort.users, 0),
+      retained: finished.reduce((sum, cohort) => sum + (cohort.retained[offset] ?? 0), 0),
+    };
+  });
+}
+
+async function identifiesUsers(reader: Reader, projectId: string): Promise<boolean> {
+  const params = new QueryParams();
+  const rows = await queryRows<{ found: number }>(
+    reader,
+    `SELECT 1 AS found
+     FROM events
+     WHERE project_id = ${params.add(projectId, "UUID")}
+       AND user_id IS NOT NULL
+     LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
 /**
  * Read all retained signed-in events in the environment to find each
- * user first week. Show the latest MAX_COHORTS intersecting the range,
- * with up to MAX_WEEKS following weeks, ending at the current week.
+ * user's first week. Show every cohort intersecting the range (at most
+ * 54, as a range is at most 366 days), with up to MAX_WEEKS following
+ * weeks, ending at the current week.
  */
 export async function retention(
   reader: Reader,
@@ -85,17 +131,19 @@ export async function retention(
     offsets.set(Number(row.offset), Number(row.users));
     byCohort.set(row.cohort, offsets);
   }
-  const cohorts = [...byCohort.keys()]
-    .toSorted()
-    .slice(-MAX_COHORTS)
-    .map((cohortWeek) => {
-      const offsets = byCohort.get(cohortWeek) ?? new Map<number, number>();
-      const weeks = Math.min(MAX_WEEKS, Math.max(0, weeksBetween(cohortWeek, currentWeek)));
-      return {
-        week: cohortWeek,
-        users: offsets.get(0) ?? 0,
-        retained: Array.from({ length: weeks + 1 }, (_, offset) => offsets.get(offset) ?? 0),
-      };
-    });
-  return { cohorts, currentWeek };
+  const cohorts = [...byCohort.keys()].toSorted().map((cohortWeek) => {
+    const offsets = byCohort.get(cohortWeek) ?? new Map<number, number>();
+    const weeks = Math.min(MAX_WEEKS, Math.max(0, weeksBetween(cohortWeek, currentWeek)));
+    return {
+      week: cohortWeek,
+      users: offsets.get(0) ?? 0,
+      retained: Array.from({ length: weeks + 1 }, (_, offset) => offsets.get(offset) ?? 0),
+    };
+  });
+  return {
+    cohorts,
+    average: averageOf(cohorts, currentWeek),
+    currentWeek,
+    identifiesUsers: cohorts.length > 0 || (await identifiesUsers(reader, range.projectId)),
+  };
 }
