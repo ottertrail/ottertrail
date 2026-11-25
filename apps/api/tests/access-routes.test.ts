@@ -147,6 +147,7 @@ const EXPECTED: Record<string, string> = {
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",
+  "GET /api/projects/:id/events/:name/sources": "product_analytics:view",
   "GET /api/projects/:id/funnel": "product_analytics:view",
   "GET /api/projects/:id/funnel/breakdown": "product_analytics:view",
   "GET /api/projects/:id/funnel/people": "product_analytics:view",

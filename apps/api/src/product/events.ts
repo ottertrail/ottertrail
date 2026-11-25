@@ -1,5 +1,11 @@
 import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
+import {
+  VISIT_SOURCE_COLUMNS,
+  VISIT_SOURCE_NAMES,
+  type VisitSourceName,
+  withVisitSourceSql,
+} from "../visits/visit-source.ts";
 import { analyticsEvent, ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
 
 /** Site-defined events and properties (docs/product-analytics.md, "Definitions"). */
@@ -224,4 +230,55 @@ export async function eventDetail(
         .map((value) => ({ value: value.value, events: count(value.events) })),
     })),
   };
+}
+
+/** One visit dimension's most frequent values; null is an event without a visit. */
+export interface VisitSourceValue {
+  value: string | null;
+  events: number;
+}
+
+export type EventSources = Record<VisitSourceName, VisitSourceValue[]>;
+
+/**
+ * The events by their visit's source and campaign (visits/visit-source.ts),
+ * PROPERTY_VALUES values each, most events first. Only the visits of the
+ * visitor IDs that sent a matching event are worked out. `ownHostnames`
+ * are the project's, whose referrers are not a source.
+ */
+export async function eventSources(
+  reader: Reader,
+  range: ProductRange,
+  name: string,
+  filters: readonly PropertyFilter[],
+  ownHostnames: readonly string[],
+): Promise<EventSources> {
+  const params = new QueryParams();
+  const where = () =>
+    `${scope(params, range)} AND name = ${params.add(name, "String")} ${filtersSql(params, filters)}`;
+  const credited = withVisitSourceSql(
+    { ...range, ownHostnames },
+    `SELECT visitor_id, occurred_at FROM events FINAL WHERE ${where()}`,
+    `SELECT visitor_id FROM events WHERE ${where()} AND visitor_id IS NOT NULL`,
+    params,
+  );
+  // The dimension names are constants, never input.
+  const pairs = VISIT_SOURCE_NAMES.map(
+    (dimension) => `tuple('${dimension}', ${VISIT_SOURCE_COLUMNS[dimension]})`,
+  );
+  const rows = await queryRows<{ dimension: string; value: string | null; events: string }>(
+    reader,
+    `SELECT pair.1 AS dimension, pair.2 AS value, count() AS events
+     FROM (${credited})
+     ARRAY JOIN [${pairs.join(", ")}] AS pair
+     GROUP BY dimension, value
+     ORDER BY dimension, events DESC, value ASC NULLS LAST
+     LIMIT ${PROPERTY_VALUES} BY dimension`,
+    params,
+  );
+  const valuesOf = (dimension: VisitSourceName) =>
+    rows
+      .filter((row) => row.dimension === dimension)
+      .map((row) => ({ value: row.value, events: count(row.events) }));
+  return { source: valuesOf("source"), utmCampaign: valuesOf("utmCampaign") };
 }

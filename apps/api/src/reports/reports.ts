@@ -4,6 +4,7 @@ import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
 import { type Step, stepSql } from "../product/steps.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
+import { visitSourceSql } from "../visits/visit-source.ts";
 import {
   ENGAGEMENT,
   analyticsEvent,
@@ -82,8 +83,6 @@ function countryCodesMatching(search: string): string[] {
       code.toLowerCase() === needle || (countryNames.of(code) ?? "").toLowerCase().includes(needle),
   );
 }
-
-const DIRECT = "Direct / none";
 
 /**
  * Resolve inclusive YYYY-MM-DD days through PostgreSQL to handle
@@ -453,24 +452,13 @@ const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
   release: "release",
 };
 
-/** Keep bracketed IPv6 hosts intact; otherwise stop at the port or path. */
-const REFERRER_HOST_PATTERN = String.raw`^[a-zA-Z][a-zA-Z0-9+.-]*://(\[[^\]]*\]|[^/:]+)`;
-
 /**
- * Prefer utm_source, then the referrer host without www., then direct.
- * Treat project hostnames as direct.
+ * A visit's source: utm_source, then the referrer host without www., then
+ * direct, with project hostnames as direct (visits/visit-source.ts).
  */
 function dimensionSql(dimension: VisitDimension, range: ReportRange, params: QueryParams): string {
   if (dimension !== "source") return VISIT_DIMENSIONS[dimension];
-  const host = `nullIf(lower(replaceRegexpOne(extract(ifNull(referrer, ''), ${params.add(
-    REFERRER_HOST_PATTERN,
-    "String",
-  )}), '^www\\\\.', '')), '')`;
-  const own = params.add(
-    range.ownHostnames.map((hostname) => hostname.toLowerCase().replace(/^www\./, "")),
-    "Array(String)",
-  );
-  return `coalesce(utm_source, if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL), ${params.add(DIRECT, "String")})`;
+  return visitSourceSql(range.ownHostnames, params);
 }
 
 export const FILTER_NAMES = ["page", ...VISIT_DIMENSION_NAMES] as const;

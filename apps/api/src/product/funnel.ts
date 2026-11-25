@@ -1,4 +1,10 @@
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
+import {
+  type AttributionRange,
+  VISIT_SOURCE_COLUMNS,
+  type VisitSourceName,
+  withVisitSourceSql,
+} from "../visits/visit-source.ts";
 import { type ProductRange, propertyText } from "./events.ts";
 import { type Step, stepOf, stepSql, stepsOverlap } from "./steps.ts";
 
@@ -156,10 +162,10 @@ function perPersonSql(
 
 /**
  * What a funnel can be broken down by: columns every event has, named as
- * the Web analytics page names them, or a property of step 1's event
- * (docs/product-analytics.md, "Breakdown"). The visit's source is left
- * out: an event's own referrer is the page before it in the site, not
- * where the visit came from.
+ * the Web analytics page names them, the source or campaign of step 1's
+ * visit, or a property of step 1's event (docs/product-analytics.md,
+ * "Breakdown"). An event's own referrer is the page before it in the
+ * site, so the source is its visit's (visits/visit-source.ts).
  */
 export const BREAKDOWN_COLUMNS = {
   deviceType: "device_type",
@@ -169,7 +175,9 @@ export const BREAKDOWN_COLUMNS = {
   release: "release",
 } as const;
 export type BreakdownColumn = keyof typeof BREAKDOWN_COLUMNS;
-export const BREAKDOWN_NAMES: readonly BreakdownColumn[] = [
+export const BREAKDOWN_NAMES: readonly (BreakdownColumn | VisitSourceName)[] = [
+  "source",
+  "utmCampaign",
   "deviceType",
   "browser",
   "os",
@@ -177,7 +185,10 @@ export const BREAKDOWN_NAMES: readonly BreakdownColumn[] = [
   "release",
 ];
 
-export type Breakdown = { column: BreakdownColumn } | { property: string };
+export type Breakdown =
+  | { column: BreakdownColumn }
+  | { visit: VisitSourceName }
+  | { property: string };
 
 /** Values shown by name; the rest add up to Other. */
 export const BREAKDOWN_VALUES = 5;
@@ -185,7 +196,7 @@ export const BREAKDOWN_VALUES = 5;
 export interface BreakdownRow {
   /** A value, the rest of the values ("other"), or no value ("unknown"). */
   kind: "value" | "other" | "unknown";
-  /** The value, for kind "value"; null otherwise. */
+  /** The value, for kind "value"; null otherwise. "" is a visit without a campaign. */
   value: string | null;
   /** People at each step, as in the funnel. */
   reached: number[];
@@ -198,6 +209,12 @@ const KIND_ORDER = { value: 0, other: 1, unknown: 2 } as const;
  * the value on their first step 1 event in the range, so the rows add up
  * to the funnel. The top BREAKDOWN_VALUES values by step 1, then Other,
  * then Unknown: at most seven rows, whatever the dimension holds.
+ *
+ * For the source or campaign, the value is that of the visit step 1's
+ * event belongs to (visit-source.ts), worked out only for the visitors
+ * who did step 1 in the range. A step 1 without a visit, such as a
+ * server's event, is Unknown. `ownHostnames` are the project's, whose
+ * referrers are not a source.
  */
 export async function funnelBreakdown(
   reader: Reader,
@@ -206,32 +223,59 @@ export async function funnelBreakdown(
   count: FunnelCount,
   windowSeconds: FunnelWindow,
   by: Breakdown,
+  ownHostnames: readonly string[] = [],
 ): Promise<BreakdownRow[]> {
   const params = new QueryParams();
-  // A column from the allow-list, or a property name as a parameter; "" is no value.
-  const valueSql =
-    "column" in by
-      ? `ifNull(${BREAKDOWN_COLUMNS[by.column]}, '')`
-      : propertyText(params.add(by.property, "String"));
-  const perPerson = perPersonSql(
-    params,
-    { range, steps, count, windowSeconds, until: readEnd(range, windowSeconds) },
-    ({ startsInRange }) => [
-      `argMinIf(${valueSql}, occurred_at, ${startsInRange}) AS dimension_value`,
-    ],
-  );
+  const reading = { range, steps, count, windowSeconds, until: readEnd(range, windowSeconds) };
+  let perPerson: string;
+  if ("visit" in by) {
+    // Each person's first step 1 in the range: its visitor ID and time.
+    let startsInRange = "false";
+    const people = perPersonSql(params, reading, (sql) => {
+      startsInRange = sql.startsInRange;
+      return [
+        `argMinIf(tuple(visitor_id, occurred_at), occurred_at, ${startsInRange}) AS first_start`,
+      ];
+    });
+    const starts = `
+      SELECT level, first_start.1 AS visitor_id, first_start.2 AS occurred_at
+      FROM (${people})
+      WHERE level > 0`;
+    // Only the visits of the visitor IDs that did step 1 in the range.
+    const visitors = `
+      SELECT visitor_id FROM events
+      WHERE project_id = ${params.add(range.projectId, "UUID")}
+        AND environment = ${params.add(range.environment, "String")}
+        AND occurred_at >= ${params.time(range.from)}
+        AND visitor_id IS NOT NULL
+        AND ${startsInRange}`;
+    const attribution: AttributionRange = { ...range, ownHostnames };
+    perPerson = `
+      SELECT level, ${VISIT_SOURCE_COLUMNS[by.visit]} AS dimension_value
+      FROM (${withVisitSourceSql(attribution, starts, visitors, params)})`;
+  } else {
+    // A column from the allow-list, or a property name as a parameter; "" is no value (NULL).
+    const valueSql =
+      "column" in by
+        ? `nullIf(${BREAKDOWN_COLUMNS[by.column]}, '')`
+        : `nullIf(${propertyText(params.add(by.property, "String"))}, '')`;
+    // A tuple keeps a NULL value: argMin skips bare NULL arguments.
+    perPerson = perPersonSql(params, reading, ({ startsInRange }) => [
+      `argMinIf(tuple(${valueSql}), occurred_at, ${startsInRange}).1 AS dimension_value`,
+    ]);
+  }
   // Step counts are constants from the validated steps, never input.
   const reached = steps.map((_, index) => `countIf(level > ${index}) AS r${index}`);
   const sums = steps.map((_, index) => `sum(r${index}) AS r${index}`);
   const rows = await queryRows<Record<string, string>>(
     reader,
-    `SELECT multiIf(dimension_value = '', 'unknown', place <= ${BREAKDOWN_VALUES}, 'value', 'other') AS kind,
+    `SELECT multiIf(dimension_value IS NULL, 'unknown', place <= ${BREAKDOWN_VALUES}, 'value', 'other') AS kind,
             if(kind = 'value', dimension_value, '') AS shown,
             ${sums.join(", ")}
      FROM (
        SELECT *,
               row_number() OVER (
-                PARTITION BY dimension_value = '' ORDER BY r0 DESC, dimension_value ASC
+                PARTITION BY dimension_value IS NULL ORDER BY r0 DESC, dimension_value ASC
               ) AS place
        FROM (
          SELECT dimension_value, ${reached.join(", ")}

@@ -15,9 +15,11 @@ import { localDays, previousDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
+import { isVisitSourceName } from "../visits/visit-source.ts";
 import {
   COUNTED,
   eventDetail,
+  eventSources,
   listEvents,
   MAX_FILTERS,
   type ProductRange,
@@ -80,6 +82,44 @@ function filtersOf(url: string): PropertyFilter[] | null {
   return filters;
 }
 
+/** An event's page: its name, the range, and p.<key> property filters. */
+const eventSchema = {
+  params: {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "string", pattern: UUID_PATTERN }, name: EVENT_NAME_SCHEMA },
+  },
+  querystring: {
+    type: "object",
+    additionalProperties: false,
+    properties: RANGE_PROPERTIES,
+    // filtersOf validates raw property filters; keep the schema from dropping them.
+    patternProperties: { "^p\\.": { type: "string" } },
+  },
+};
+
+/** An event page's property filters, or why they are refused. */
+function eventFiltersOf(
+  url: string,
+): { filters: PropertyFilter[] } | { problem: { error: string; message: string } } {
+  const filters = filtersOf(url);
+  if (filters === null) {
+    return {
+      problem: {
+        error: "invalid_filter",
+        message:
+          "A filter is p.<property>=<value>: a property name of 1 to 100 characters and a value up to 500, without NUL.",
+      },
+    };
+  }
+  if (filters.length > MAX_FILTERS) {
+    return {
+      problem: { error: "too_many_filters", message: `At most ${MAX_FILTERS} property filters.` },
+    };
+  }
+  return { filters };
+}
+
 /** Parse 2 to 5 page or event steps; return null on invalid input. */
 export function parseSteps(text: string): FunnelStep[] | null {
   try {
@@ -123,8 +163,19 @@ function breakdownOf(text: string): Breakdown | null {
     const property = text.slice(FILTER_PREFIX.length);
     return KEY.test(property) ? { property } : null;
   }
-  const column = BREAKDOWN_NAMES.find((name) => name === text);
-  return column === undefined ? null : { column };
+  const name = BREAKDOWN_NAMES.find((item) => item === text);
+  if (name === undefined) return null;
+  return isVisitSourceName(name) ? { visit: name } : { column: name };
+}
+
+/** The project's hostnames: a referrer on one is not a source (visits/visit-source.ts). */
+async function ownHostnames(db: Kysely<Database>, projectId: string): Promise<string[]> {
+  const project = await db
+    .selectFrom("projects")
+    .select("allowed_hostnames")
+    .where("id", "=", projectId)
+    .executeTakeFirst();
+  return project?.allowed_hostnames ?? [];
 }
 
 const answer = (range: ProductRange) => ({
@@ -139,7 +190,7 @@ export const productRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results, a breakdown, the trend, the times between steps, and a list of people. */
+  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for an event's sources, the saved funnels' results, a breakdown, the trend, the times between steps, and a list of people. */
   limiter?: DashboardQueryLimiter;
   now?: () => Date;
 }> = (
@@ -233,43 +284,43 @@ export const productRoutes: FastifyPluginCallback<{
     Querystring: RangeQuery & Record<string, string>;
   }>(
     "/projects/:id/events/:name",
-    {
-      preHandler: [signedIn, canView],
-      schema: {
-        params: {
-          type: "object",
-          required: ["id", "name"],
-          properties: { id: { type: "string", pattern: UUID_PATTERN }, name: EVENT_NAME_SCHEMA },
-        },
-        querystring: {
-          type: "object",
-          additionalProperties: false,
-          properties: RANGE_PROPERTIES,
-          // filtersOf validates raw property filters; keep the schema from dropping them.
-          patternProperties: { "^p\\.": { type: "string" } },
-        },
-      },
-    },
+    { preHandler: [signedIn, canView], schema: eventSchema },
     async (request, reply) => {
-      const filters = filtersOf(request.url);
-      if (filters === null) {
-        return reply.code(400).send({
-          error: "invalid_filter",
-          message:
-            "A filter is p.<property>=<value>: a property name of 1 to 100 characters and a value up to 500, without NUL.",
-        });
-      }
-      if (filters.length > MAX_FILTERS) {
-        return reply.code(400).send({
-          error: "too_many_filters",
-          message: `At most ${MAX_FILTERS} property filters.`,
-        });
-      }
+      const filters = eventFiltersOf(request.url);
+      if ("problem" in filters) return reply.code(400).send(filters.problem);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const detail = await eventDetail(reader, range, request.params.name, filters);
-      return { ...answer(range), filters, ...detail };
+      const detail = await eventDetail(reader, range, request.params.name, filters.filters);
+      return { ...answer(range), filters: filters.filters, ...detail };
+    },
+  );
+
+  /**
+   * The event by its visit's source and campaign (events.ts, eventSources):
+   * its own request, so the event's page does not wait for it, and its
+   * query within the dashboard's query limit.
+   */
+  app.get<{
+    Params: { id: string; name: string };
+    Querystring: RangeQuery & Record<string, string>;
+  }>(
+    "/projects/:id/events/:name/sources",
+    { preHandler: [signedIn, canView], schema: eventSchema },
+    async (request, reply) => {
+      const filters = eventFiltersOf(request.url);
+      if ("problem" in filters) return reply.code(400).send(filters.problem);
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const sources = await eventSources(
+        dashboardReader(clickhouse, limiter, reply),
+        range,
+        request.params.name,
+        filters.filters,
+        await ownHostnames(db, range.projectId),
+      );
+      return { ...answer(range), filters: filters.filters, ...sources };
     },
   );
 
@@ -351,6 +402,7 @@ export const productRoutes: FastifyPluginCallback<{
         count,
         window,
         by,
+        "visit" in by ? await ownHostnames(db, range.projectId) : [],
       );
       return { ...answer(range), count, window, by: request.query.by, rows };
     },

@@ -130,6 +130,12 @@ export interface VisitsQueryOptions {
    *   visits took 1.3 s instead of 3.5 s.
    */
   firstEventColumns?: "separately" | "together" | false;
+  /**
+   * Only these visitors: SQL that selects visitor IDs, such as those who
+   * did a funnel's step 1, so a report that needs the visits of a few
+   * events reads only their visitors' events (visit-source.ts).
+   */
+  visitorsIn?: string;
 }
 
 /**
@@ -139,7 +145,7 @@ export interface VisitsQueryOptions {
 export function visitsSql(
   { projectId, environment, from, to, until }: VisitRange,
   params: QueryParams,
-  { firstEventColumns = "separately" }: VisitsQueryOptions = {},
+  { firstEventColumns = "separately", visitorsIn }: VisitsQueryOptions = {},
 ): string {
   const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
   const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
@@ -173,6 +179,7 @@ export function visitsSql(
       WHERE project_id = ${params.add(projectId, "UUID")}
         AND environment = ${params.add(environment, "String")}
         AND visitor_id IS NOT NULL
+        ${visitorsIn === undefined ? "" : `AND visitor_id IN (${visitorsIn})`}
         AND ${analyticsEvent()}
         AND occurred_at >= ${params.time(readFrom)}
         AND occurred_at < ${params.time(readTo)}
