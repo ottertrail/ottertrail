@@ -80,15 +80,19 @@ const SCREENS = [
     phone: { scroll: ["plan: its most frequent values", "seats: its most frequent values"] },
   },
   {
+    name: "the saved funnels",
+    path: FUNNEL,
+    ready: () => page.getByRole("table", { name: "Saved funnels, by name" }),
+    tables: ["Saved funnels, by name"],
+    phone: { scroll: ["Saved funnels, by name"], end: ["Saved funnels, by name"] },
+  },
+  {
     name: "a funnel",
     path: funnelAddress(STEPS),
     ready: () =>
       page.getByRole("table", { name: "Funnel steps, with the visitors who reached each" }),
-    tables: ["Saved funnels, by name", "Funnel steps, with the visitors who reached each"],
-    phone: {
-      scroll: ["Saved funnels, by name", "Funnel steps, with the visitors who reached each"],
-      end: ["Saved funnels, by name"],
-    },
+    tables: ["Funnel steps, with the visitors who reached each"],
+    phone: { scroll: ["Funnel steps, with the visitors who reached each"] },
   },
   {
     name: "Retention",
@@ -430,22 +434,31 @@ describe("views", () => {
   });
 });
 
+/** Shows the funnel counted by `label`, through Edit steps. */
+async function showCountedBy(label: string) {
+  await page.getByRole("button", { name: "Edit steps" }).click();
+  await page.getByRole("combobox", { name: "Count by" }).click();
+  await page.getByRole("option", { name: label, exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Edit the funnel's steps" })
+    .getByRole("button", { name: "Show funnel" })
+    .click();
+}
+
 describe("the funnel's save rule", () => {
-  test("Save is disabled until a funnel is shown, and stays focusable", async () => {
-    const api = installFakeApi();
+  test("Save appears once a funnel is shown, ready to save", async () => {
+    const api = installFakeApi({ savedFunnels: [] });
     renderApp(FUNNEL);
-    const save = page.getByRole("button", { name: "Save funnel" });
-    await expect.element(save).toHaveAttribute("aria-disabled", "true");
-    // Focusable while disabled, as the Save bar's is; pressing it does nothing.
-    save.element().focus();
-    await expect.element(save).toHaveFocus();
-    await userEvent.keyboard("{Enter}");
-    await settle();
-    expect(page.getByRole("dialog").elements()).toEqual([]);
+    // The list shows no funnel: nothing to save.
+    await expect.element(page.getByRole("button", { name: "Try this example" })).toBeVisible();
+    expect(page.getByRole("button", { name: "Save funnel" }).elements()).toEqual([]);
 
     // Shown: something to save.
-    await page.getByRole("button", { name: "Use this example" }).click();
+    await page.getByRole("button", { name: "Try this example" }).click();
+    const save = page.getByRole("button", { name: "Save funnel" });
+    await expect.element(save).toBeVisible();
     await expect.element(save).not.toHaveAttribute("aria-disabled", "true");
+    await expect.element(save).toBeEnabled();
     expect(api.bodies.filter((body) => body.method !== "GET")).toEqual([]);
   });
 
@@ -454,14 +467,20 @@ describe("the funnel's save rule", () => {
     const router = renderApp(funnelAddress(STEPS, `&funnel=${PRICING_FUNNEL}`));
     const saveChanges = page.getByRole("button", { name: "Save changes" });
     await expect.element(saveChanges).toHaveAttribute("aria-disabled", "true");
+    // An outline button, not the filled one.
+    expect(saveChanges.element().classList.contains("bg-primary")).toBe(false);
+    expect(saveChanges.element().classList.contains("bg-background")).toBe(true);
     expect(page.getByRole("button", { name: "Save as new funnel" }).elements()).toEqual([]);
+    // Focusable while disabled, as the Save bar's is; pressing it does nothing.
+    saveChanges.element().focus();
+    await expect.element(saveChanges).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
     await saveChanges.click({ force: true });
     await settle();
     expect(api.bodies.some((body) => body.method === "PUT")).toBe(false);
 
     // Another count: it differs.
-    await page.getByRole("combobox", { name: "Count by" }).click();
-    await page.getByRole("option", { name: "Users", exact: true }).click();
+    await showCountedBy("Users");
     await expect.poll(() => router.state.location.search).toMatchObject({ count: "users" });
     await expect.element(saveChanges).not.toHaveAttribute("aria-disabled", "true");
     await expect.element(page.getByRole("button", { name: "Save as new funnel" })).toBeVisible();
@@ -472,8 +491,7 @@ describe("the funnel's save rule", () => {
     expect(api.bodies.filter((body) => body.method === "PUT")).toHaveLength(1);
 
     // Back to what was saved before: it differs from the new save, so it can be saved.
-    await page.getByRole("combobox", { name: "Count by" }).click();
-    await page.getByRole("option", { name: "Visitors", exact: true }).click();
+    await showCountedBy("Visitors");
     await expect.element(saveChanges).not.toHaveAttribute("aria-disabled", "true");
   });
 });

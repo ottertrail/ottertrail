@@ -60,6 +60,15 @@ async function choose(combobox: string, option: string) {
   await page.getByRole("option", { name: option, exact: true }).click();
 }
 
+const newFunnelDialog = () => page.getByRole("dialog", { name: "New funnel" });
+const editDialog = () => page.getByRole("dialog", { name: "Edit the funnel's steps" });
+
+/** Opens New funnel from the list, once it is there. */
+async function newFunnel() {
+  await page.getByRole("button", { name: "New funnel" }).click();
+  await expect.element(newFunnelDialog()).toBeVisible();
+}
+
 describe("product events", () => {
   test("open from the sidebar, listed with their events, visitors, and users", async () => {
     const api = installFakeApi();
@@ -251,14 +260,15 @@ describe("product events", () => {
 });
 
 describe("the funnel", () => {
-  test("starts with an example until two steps are shown", async () => {
-    const api = installFakeApi();
+  test("without saved funnels, offers an example, shown at once", async () => {
+    const api = installFakeApi({ savedFunnels: [] });
     const router = renderApp(FUNNEL);
 
-    await expect.element(page.getByText("Build a funnel")).toBeVisible();
+    await expect.element(page.getByText("No funnels yet")).toBeVisible();
+    await expect.element(page.getByText(/such as the page \/ then the event signup/)).toBeVisible();
     expect(funnelRequests(api)).toEqual([]);
 
-    await page.getByRole("button", { name: "Use this example" }).click();
+    await page.getByRole("button", { name: "Try this example" }).click();
 
     await expect
       .poll(() => router.state.location.search)
@@ -271,7 +281,12 @@ describe("the funnel", () => {
     await expect
       .poll(() => lastQuery(api, "/funnel").steps)
       .toBe('[{"type":"page","path":"/"},{"type":"event","name":"signup"}]');
+    await expect.element(page.getByRole("heading", { name: "Unsaved funnel" })).toBeVisible();
+    await expect
+      .element(page.getByText("/ → signup · Visitors, within 1 day", { exact: true }))
+      .toBeVisible();
     // The editor shows the example's steps.
+    await page.getByRole("button", { name: "Edit steps" }).click();
     await expect.element(step(1).getByRole("textbox", { name: "Path" })).toHaveValue("/");
     await expect
       .element(step(2).getByRole("combobox", { name: "Event name" }))
@@ -281,13 +296,26 @@ describe("the funnel", () => {
   test("the editor builds the steps: add, a filter, a page, reorder, remove", async () => {
     const api = installFakeApi();
     const router = renderApp(FUNNEL);
+    await newFunnel();
     await expect.element(step(2)).toBeVisible();
+    await expect
+      .element(step(1).getByRole("combobox", { name: "Event name" }))
+      .toHaveAttribute("placeholder", "For example, signup");
 
     await step(1).getByRole("combobox", { name: "Event name" }).fill("signup");
     await step(1).getByRole("button", { name: "Add a property filter" }).click();
+    await expect
+      .element(step(1).getByRole("textbox", { name: "Property" }))
+      .toHaveAttribute("placeholder", "For example, plan");
+    await expect
+      .element(step(1).getByRole("textbox", { name: "Value" }))
+      .toHaveAttribute("placeholder", "For example, team");
     await step(1).getByRole("textbox", { name: "Property" }).fill("plan");
     await step(1).getByRole("textbox", { name: "Value" }).fill("team");
     await choose("Step 2 type", "Page");
+    await expect
+      .element(step(2).getByRole("textbox", { name: "Path" }))
+      .toHaveAttribute("placeholder", "For example, /pricing");
     await step(2).getByRole("textbox", { name: "Path" }).fill("/pricing");
     await page.getByRole("button", { name: "Add a step" }).click();
     await step(3).getByRole("combobox", { name: "Event name" }).fill("purchase");
@@ -302,6 +330,7 @@ describe("the funnel", () => {
 
     await page.getByRole("button", { name: "Show funnel" }).click();
 
+    await expect.element(newFunnelDialog()).not.toBeInTheDocument();
     const steps = [
       { type: "page", path: "/pricing" },
       { type: "event", name: "signup", filter: { key: "plan", value: "team" } },
@@ -324,22 +353,28 @@ describe("the funnel", () => {
 
   test("says which steps are not complete instead of asking", async () => {
     const api = installFakeApi();
-    renderApp(FUNNEL);
+    const router = renderApp(FUNNEL);
+    await newFunnel();
     await step(1).getByRole("combobox", { name: "Event name" }).fill("signup");
 
     await page.getByRole("button", { name: "Show funnel" }).click();
 
-    await expect.element(page.getByRole("alert")).toMatchTextContent(/Some steps are incomplete/);
+    // The dialog stays open, with the steps to correct.
+    await expect
+      .element(newFunnelDialog().getByRole("alert"))
+      .toMatchTextContent(/Some steps are incomplete/);
     await expect
       .element(step(2).getByRole("combobox", { name: "Event name" }))
       .toHaveAttribute("aria-invalid", "true");
     await expect.element(step(2).getByText("Name the event.")).toBeVisible();
     expect(funnelRequests(api)).toEqual([]);
+    expect(router.state.location.search).toEqual({});
   });
 
   test("catches two steps in a row that one event could both be, before asking", async () => {
     const api = installFakeApi();
     renderApp(FUNNEL);
+    await newFunnel();
     await step(1).getByRole("combobox", { name: "Event name" }).fill("signup");
     await step(2).getByRole("combobox", { name: "Event name" }).fill("signup");
 
@@ -348,6 +383,7 @@ describe("the funnel", () => {
     await expect
       .element(step(2).getByText(/One event could count for both this step and the previous one/))
       .toBeVisible();
+    await expect.element(newFunnelDialog()).toBeVisible();
     expect(funnelRequests(api)).toEqual([]);
   });
 
@@ -356,7 +392,10 @@ describe("the funnel", () => {
     const steps = '[{"type":"event","name":"signup"},{"type":"event","name":"purchase"}]';
     const router = renderApp(`${FUNNEL}?steps=${encodeURIComponent(steps)}`);
     await expect.poll(() => lastQuery(api, "/funnel").count).toBe("visitors");
-    await expect.element(page.getByText(/Windows longer than a day require Users/)).toBeVisible();
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    await expect
+      .element(editDialog().getByText(/Windows longer than a day need Users/))
+      .toBeVisible();
 
     await page.getByRole("combobox", { name: "Conversion window" }).click();
     await expect
@@ -366,10 +405,13 @@ describe("the funnel", () => {
       .element(page.getByRole("option", { name: "1 hour" }))
       .not.toHaveAttribute("data-disabled");
     await userEvent.keyboard("{Escape}");
+    await expect.element(editDialog()).toBeVisible();
 
     await choose("Count by", "Users");
-    await expect.poll(() => router.state.location.search).toMatchObject({ count: "users" });
     await choose("Conversion window", "7 days");
+    // Nothing applies until Show funnel.
+    expect(router.state.location.search).toEqual({ steps: JSON.parse(steps) as unknown });
+    await page.getByRole("button", { name: "Show funnel" }).click();
 
     await expect
       .poll(() => router.state.location.search)
@@ -377,18 +419,25 @@ describe("the funnel", () => {
     await expect
       .poll(() => lastQuery(api, "/funnel"))
       .toMatchObject({ count: "users", window: "604800" });
+    await expect
+      .element(page.getByText("signup → purchase · Users, within 7 days", { exact: true }))
+      .toBeVisible();
 
     // Back to visitors: the window shortens to a day, which they allow.
+    await page.getByRole("button", { name: "Edit steps" }).click();
     await choose("Count by", "Visitors");
+    await expect
+      .element(page.getByRole("combobox", { name: "Conversion window" }))
+      .toMatchTextContent(/1 day/);
+    await page.getByRole("button", { name: "Show funnel" }).click();
     await expect
       .poll(() => router.state.location.search)
       .toEqual({
         steps: JSON.parse(steps) as unknown,
       });
-    // The first answer, still fresh in the cache.
     await expect
-      .element(page.getByRole("combobox", { name: "Conversion window" }))
-      .toMatchTextContent(/1 day/);
+      .element(page.getByText("signup → purchase · Visitors, within 1 day", { exact: true }))
+      .toBeVisible();
   });
 
   test("shows each step's people, its conversion from step 1 and the step before, and overall", async () => {
@@ -416,12 +465,18 @@ describe("the funnel", () => {
       .element(page.getByText("10 to 16 Nov 2026, counted by users, within 1 hour of step 1"))
       .toBeVisible();
     await expect
-      .element(page.getByRole("combobox", { name: "Count by" }))
-      .toMatchTextContent(/Users/);
+      .element(
+        page.getByText("signup where plan = team → /pricing → purchase · Users, within 1 hour", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    // The definitions it counts by, folded away until asked for.
+    const notes = page.getByText("How the funnel counts", { exact: true });
     await expect
-      .element(page.getByRole("combobox", { name: "Conversion window" }))
-      .toMatchTextContent(/1 hour/);
-    // The definitions it counts by.
+      .element(page.getByText(/Other events between steps are allowed/))
+      .not.toBeVisible();
+    await notes.click();
     await expect.element(page.getByText(/Other events between steps are allowed/)).toBeVisible();
     await expect.element(page.getByText(/Step 1 must occur in the selected period/)).toBeVisible();
     await expect.element(page.getByText(/Their IDs change daily/)).toBeVisible();

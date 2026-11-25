@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { FilterIcon } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ArrowLeftIcon, ChevronRightIcon, FilterIcon, PencilIcon, PlusIcon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -12,127 +12,45 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WhenAllowed } from "@/components/when-allowed";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { savedFunnelsQuery } from "@/lib/funnels-api";
 import {
-  FUNNEL_COUNTS,
-  FUNNEL_WINDOWS,
+  DEFAULT_FUNNEL_COUNT,
+  DEFAULT_FUNNEL_WINDOW,
   type FunnelCount,
   type FunnelStep,
   type FunnelWindow,
   funnelQuery,
-  isFunnelCount,
-  isFunnelWindow,
-  MAX_VISITOR_WINDOW,
   MIN_STEPS,
   productEventsQuery,
-  windowAllowed,
 } from "@/lib/product-api";
 
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
-import { windowLabel } from "./format";
-import { FunnelEditor } from "./funnel-editor";
+import { countLine, stepsLine, windowLabel } from "./format";
+import { FunnelEditorDialog } from "./funnel-editor-dialog";
 import { FunnelResults } from "./funnel-results";
 import { stepText } from "./funnel-steps";
 import { LoadFailed, Refreshing } from "./report-state";
 import { SaveFunnelActions } from "./save-funnel-actions";
 import { SavedFunnelsCard } from "./saved-funnels-card";
-import { type FunnelSearch, funnelSearchOf } from "./search";
-
-function FunnelSettings({
-  count,
-  window,
-  onChange,
-}: {
-  count: FunnelCount;
-  window: FunnelWindow;
-  onChange: (next: { count: FunnelCount; window: FunnelWindow }) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-start gap-4">
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-ink-subtle" aria-hidden="true">
-          Count by
-        </span>
-        <Select
-          items={FUNNEL_COUNTS}
-          value={count}
-          onValueChange={(value) => {
-            if (!isFunnelCount(value)) return;
-            // Visitors cannot be followed past a day: shorten a longer window.
-            onChange({
-              count: value,
-              window: windowAllowed(value, window) ? window : MAX_VISITOR_WINDOW,
-            });
-          }}
-        >
-          <SelectTrigger aria-label="Count by" className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {FUNNEL_COUNTS.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-ink-subtle" aria-hidden="true">
-          Conversion window
-        </span>
-        <Select
-          items={FUNNEL_WINDOWS.map((item) => ({ value: item.value, label: item.label }))}
-          value={window}
-          onValueChange={(value) => {
-            if (isFunnelWindow(value)) onChange({ count, window: value });
-          }}
-        >
-          <SelectTrigger aria-label="Conversion window" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {FUNNEL_WINDOWS.map((item) => (
-              <SelectItem
-                key={item.value}
-                value={item.value}
-                disabled={!windowAllowed(count, item.value)}
-              >
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {count === "visitors" && (
-        <p className="max-w-sm self-end pb-1.5 text-xs text-ink-subtle">
-          Windows longer than a day require Users. A visitor's ID changes every day.
-        </p>
-      )}
-    </div>
-  );
-}
+import { type FunnelSearch, funnelSearchOf, productSearchOf } from "./search";
 
 /** The definitions the funnel counts by (docs/product-analytics.md, "Funnel"). */
 function FunnelNotes({ window }: { window: FunnelWindow }) {
   return (
-    <section aria-labelledby="funnel-notes" className="flex flex-col gap-2 border-t pt-5">
-      <h2 id="funnel-notes" className="text-sm font-medium text-ink">
+    <details className="group border-t pt-5">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon
+          aria-hidden="true"
+          className="size-4 text-ink-subtle transition-transform group-open:rotate-90 motion-reduce:transition-none"
+        />
         How the funnel counts
-      </h2>
-      <ul className="flex max-w-4xl list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
+      </summary>
+      <ul className="mt-2 flex max-w-prose list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
         <li>
           Someone reaches a step after completing all previous steps in order. Other events between
           steps are allowed.
@@ -156,21 +74,29 @@ function FunnelNotes({ window }: { window: FunnelWindow }) {
           compares values as text. Numbers, true, false, and null use their JSON representations.
         </li>
       </ul>
-    </section>
+    </details>
   );
 }
 
-function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => void }) {
+/** The page when the project has no saved funnel yet. */
+function NoFunnels({
+  example,
+  onNew,
+  onExample,
+}: {
+  example: FunnelStep[];
+  onNew: () => void;
+  onExample: () => void;
+}) {
   return (
     <Empty className="border border-dashed p-10">
-      <EmptyHeader>
+      <EmptyHeader className="max-w-xl">
         <EmptyMedia variant="icon">
           <FilterIcon />
         </EmptyMedia>
-        <EmptyTitle>Build a funnel</EmptyTitle>
+        <EmptyTitle>No funnels yet</EmptyTitle>
         <EmptyDescription>
-          Set two to five steps above. Each step is a page or an event your site sends. Select Show
-          funnel to see how many people reached each successive step. For example:{" "}
+          A funnel counts how many people take steps in order, such as{" "}
           {example.map((step, index) => (
             <span key={index}>
               {index > 0 && " then "}
@@ -178,18 +104,26 @@ function StartHere({ example, onUse }: { example: FunnelStep[]; onUse: () => voi
               <code className="font-mono">{stepText(step)}</code>
             </span>
           ))}
-          .
+          , and where they stop.
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" onClick={onUse}>
-          Use this example
+      <EmptyContent className="flex-row flex-wrap justify-center gap-2">
+        <Button onClick={onNew}>
+          <PlusIcon data-icon="inline-start" />
+          New funnel
+        </Button>
+        <Button variant="outline" onClick={onExample}>
+          Try this example
         </Button>
       </EmptyContent>
     </Empty>
   );
 }
 
+/**
+ * The saved funnels, with New funnel; or one funnel, shown from the address (its steps, who it
+ * counts, and its window), with Edit steps and Save. Building and editing happen in a dialog.
+ */
 export function FunnelPage({
   projectId,
   range,
@@ -216,8 +150,9 @@ export function FunnelPage({
   // Suggestions are optional; the funnel works without them.
   const events = useQuery(productEventsQuery(projectId, range, environment));
   const saved = useQuery(savedFunnelsQuery(projectId));
-  // Saving removes the trigger, so return focus to the Steps heading.
-  const stepsHeadingRef = React.useRef<HTMLHeadingElement>(null);
+  const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
+  // Saving removes the trigger, so return focus to the funnel's heading.
+  const titleRef = React.useRef<HTMLHeadingElement>(null);
   const search: FunnelSearch = { range, environment, funnel, steps, count, window };
   const show = (next: Partial<FunnelSearch>) =>
     void navigate({
@@ -239,93 +174,151 @@ export function FunnelPage({
     { type: "page", path: "/" },
     { type: "event", name: eventNames[0] ?? "signup" },
   ];
+  const open = saved.data?.find((item) => item.id === funnel);
+  const listSearch = productSearchOf({ range, environment });
+
+  const editor = (
+    <FunnelEditorDialog
+      open={editing !== null}
+      onOpenChange={(next) => {
+        if (!next) setEditing(null);
+      }}
+      title={editing === "edit" ? "Edit the funnel's steps" : "New funnel"}
+      initial={
+        editing === "edit"
+          ? { steps, count, window }
+          : { steps: [], count: DEFAULT_FUNNEL_COUNT, window: DEFAULT_FUNNEL_WINDOW }
+      }
+      eventNames={eventNames}
+      // A new funnel leaves the one shown, so saving it makes a new saved funnel.
+      onShow={(draft) => show(editing === "edit" ? draft : { ...draft, funnel: undefined })}
+    />
+  );
+
+  const filterBar = (
+    <ReportFilterBar
+      range={range}
+      environment={environment}
+      answered={data ?? events.data}
+      onRange={(next) => show({ range: next })}
+      onEnvironment={(next) => show({ environment: next })}
+    />
+  );
+
+  if (!ready) {
+    return (
+      <div className="flex flex-col">
+        {filterBar}
+        <div className="flex flex-col gap-6 px-gutter py-5">
+          {saved.data !== undefined && saved.data.length === 0 && !saved.isError ? (
+            <NoFunnels
+              example={example}
+              onNew={() => setEditing("new")}
+              onExample={() => show({ steps: example, funnel: undefined })}
+            />
+          ) : (
+            <SavedFunnelsCard
+              projectId={projectId}
+              funnels={saved.data}
+              failure={saved.isError ? saved.error.message : null}
+              onRetry={() => void saved.refetch()}
+              search={search}
+              openId={funnel}
+              onDeleted={(deleted) => {
+                if (deleted.id === funnel) show({ funnel: undefined });
+              }}
+              action={
+                <Button size="sm" onClick={() => setEditing("new")}>
+                  <PlusIcon data-icon="inline-start" />
+                  New funnel
+                </Button>
+              }
+            />
+          )}
+        </div>
+        {editor}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col">
-      <ReportFilterBar
-        range={range}
-        environment={environment}
-        answered={data ?? events.data}
-        onRange={(next) => show({ range: next })}
-        onEnvironment={(next) => show({ environment: next })}
-      />
+      {filterBar}
       <div className="flex flex-col gap-6 px-gutter py-5">
-        <SavedFunnelsCard
-          projectId={projectId}
-          funnels={saved.data}
-          failure={saved.isError ? saved.error.message : null}
-          onRetry={() => void saved.refetch()}
-          search={search}
-          openId={funnel}
-          onDeleted={(deleted) => {
-            if (deleted.id === funnel) show({ funnel: undefined });
-          }}
-        />
-        <section aria-labelledby="funnel-steps" className="flex flex-col gap-4 border-t pt-5">
-          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-            <h2
-              id="funnel-steps"
-              ref={stepsHeadingRef}
-              tabIndex={-1}
-              className="py-1.5 text-sm font-medium text-ink outline-none"
-            >
-              Steps
-            </h2>
-            <WhenAllowed area="product_analytics" level="manage">
-              <SaveFunnelActions
-                projectId={projectId}
-                shown={ready ? { steps, count, window } : null}
-                funnels={saved.data}
-                loading={saved.isPending}
-                openId={funnel}
-                returnFocus={stepsHeadingRef}
-                onSaved={(created) => show({ funnel: created.id })}
-              />
-            </WhenAllowed>
-          </div>
-          <FunnelEditor
-            applied={steps}
-            eventNames={eventNames}
-            onApply={(next) => show({ steps: next })}
+        <section aria-labelledby="funnel-title" className="flex flex-col gap-3">
+          <Link
+            to="/projects/$projectId/product/funnel"
+            params={{ projectId }}
+            search={listSearch}
+            className="inline-flex w-fit items-center gap-1 text-sm text-ink-subtle hover:text-ink"
           >
-            <FunnelSettings count={count} window={window} onChange={(next) => show({ ...next })} />
-          </FunnelEditor>
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            All funnels
+          </Link>
+          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+            <div className="flex min-w-0 flex-col gap-1">
+              <h2
+                id="funnel-title"
+                ref={titleRef}
+                tabIndex={-1}
+                className="text-base font-medium text-ink outline-none"
+              >
+                {open?.name ??
+                  (funnel !== undefined && saved.isPending ? "Funnel" : "Unsaved funnel")}
+              </h2>
+              <p className="min-w-0 text-sm break-words text-ink-subtle">
+                {stepsLine(steps)} · {countLine(count, window)}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-start justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditing("edit")}>
+                <PencilIcon data-icon="inline-start" />
+                Edit steps
+              </Button>
+              <WhenAllowed area="product_analytics" level="manage">
+                <SaveFunnelActions
+                  projectId={projectId}
+                  shown={{ steps, count, window }}
+                  funnels={saved.data}
+                  loading={saved.isPending}
+                  openId={funnel}
+                  returnFocus={titleRef}
+                  onSaved={(created) => show({ funnel: created.id })}
+                />
+              </WhenAllowed>
+            </div>
+          </div>
         </section>
-        {!ready ? (
-          <StartHere example={example} onUse={() => show({ steps: example })} />
-        ) : (
-          <>
-            {query.isError && (
-              <LoadFailed
-                what="The funnel"
-                message={query.error.message}
-                hasData={data !== undefined}
-                onRetry={() => void query.refetch()}
-              />
-            )}
-            {data === undefined ? (
-              !query.isError && (
-                <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading">
-                  <div className="grid max-w-2xl grid-cols-3 gap-4">
-                    {["conversion", "first", "last"].map((item) => (
-                      <div key={item} className="flex flex-col gap-2">
-                        <Skeleton className="h-3 w-20" />
-                        <Skeleton className="h-7 w-16" />
-                      </div>
-                    ))}
+        {query.isError && (
+          <LoadFailed
+            what="The funnel"
+            message={query.error.message}
+            hasData={data !== undefined}
+            onRetry={() => void query.refetch()}
+          />
+        )}
+        {data === undefined ? (
+          !query.isError && (
+            <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading">
+              <div className="grid max-w-2xl grid-cols-3 gap-4">
+                {["conversion", "first", "last"].map((item) => (
+                  <div key={item} className="flex flex-col gap-2">
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-7 w-16" />
                   </div>
-                  <Skeleton className="h-40 w-full" />
-                </div>
-              )
-            ) : (
-              <Refreshing stale={query.isPlaceholderData}>
-                <FunnelResults funnel={data} />
-              </Refreshing>
-            )}
-          </>
+                ))}
+              </div>
+              <Skeleton className="h-40 w-full" />
+            </div>
+          )
+        ) : (
+          <Refreshing stale={query.isPlaceholderData}>
+            <FunnelResults funnel={data} />
+          </Refreshing>
         )}
         <FunnelNotes window={window} />
       </div>
+      {editor}
     </div>
   );
 }

@@ -103,9 +103,9 @@ export function StepFields({
                 {...props}
                 list={eventListId}
                 value={step.name}
-                placeholder="signup"
+                placeholder="For example, signup"
                 autoComplete="off"
-                className="font-mono"
+                className="font-mono placeholder:font-sans"
                 onChange={(event) => onChange({ ...step, name: event.target.value })}
               />
             )}
@@ -116,9 +116,9 @@ export function StepFields({
               <Input
                 {...props}
                 value={step.path}
-                placeholder="/pricing"
+                placeholder="For example, /pricing"
                 autoComplete="off"
-                className="font-mono"
+                className="font-mono placeholder:font-sans"
                 onChange={(event) => onChange({ ...step, path: event.target.value })}
               />
             )}
@@ -144,9 +144,9 @@ export function StepFields({
                 <Input
                   {...props}
                   value={step.filter?.key ?? ""}
-                  placeholder="plan"
+                  placeholder="For example, plan"
                   autoComplete="off"
-                  className="font-mono"
+                  className="font-mono placeholder:font-sans"
                   onChange={(event) =>
                     onChange({
                       ...step,
@@ -164,9 +164,9 @@ export function StepFields({
                 <Input
                   {...props}
                   value={step.filter?.value ?? ""}
-                  placeholder="team"
+                  placeholder="For example, team"
                   autoComplete="off"
-                  className="font-mono"
+                  className="font-mono placeholder:font-sans"
                   onChange={(event) =>
                     onChange({
                       ...step,

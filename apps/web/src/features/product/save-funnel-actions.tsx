@@ -107,11 +107,7 @@ export function SaveFunnelActions({
     <div className="flex max-w-md flex-col items-end gap-2">
       <div className={known ? "flex flex-wrap items-center justify-end gap-2" : "hidden"}>
         <output aria-live="polite" className="text-sm text-ink-subtle empty:hidden">
-          {compared === undefined
-            ? ""
-            : unchanged
-              ? `Saved as “${compared.name}”.`
-              : `Changed from the saved funnel “${compared.name}”.`}
+          {compared === undefined ? "" : unchanged ? "No unsaved changes" : "Unsaved changes"}
         </output>
         {compared === undefined || shown === null ? (
           <SaveNewButton
@@ -124,6 +120,7 @@ export function SaveFunnelActions({
         ) : (
           <>
             <Button
+              variant="outline"
               size="sm"
               disabled={unchanged || saveChanges.isPending}
               focusableWhenDisabled

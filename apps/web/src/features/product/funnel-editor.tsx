@@ -96,16 +96,23 @@ function draftsOf(steps: readonly FunnelStep[]): DraftStep[] {
 
 const keyOf = (steps: readonly FunnelStep[]) => JSON.stringify(steps);
 
-/** Keep 2 to 5 steps. Address changes replace the draft. */
+/**
+ * Keep 2 to 5 steps. Address changes replace the draft. In a dialog (`onCancel`), the form ends
+ * with Cancel and its submit button.
+ */
 export function FunnelEditor({
   applied,
   eventNames,
   onApply,
+  submitLabel = "Show funnel",
+  onCancel,
   children,
 }: {
   applied: readonly FunnelStep[];
   eventNames: readonly string[];
   onApply: (steps: FunnelStep[]) => void;
+  submitLabel?: string;
+  onCancel?: () => void;
   children?: React.ReactNode;
 }) {
   const eventListId = React.useId();
@@ -196,17 +203,33 @@ export function FunnelEditor({
         )}
       </div>
       {children}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit">Show funnel</Button>
-        {checked && !valid && (
-          <p role="alert" className="text-sm text-destructive">
-            Some steps are incomplete. Correct the marked fields above.
-          </p>
-        )}
-        {applied.length >= MIN_STEPS && changed && !(checked && !valid) && (
-          <p className="text-sm text-ink-subtle">The funnel below is for the steps last shown.</p>
-        )}
-      </div>
+      {onCancel === undefined ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit">{submitLabel}</Button>
+          {checked && !valid && (
+            <p role="alert" className="text-sm text-destructive">
+              Some steps are incomplete. Correct the marked fields above.
+            </p>
+          )}
+          {applied.length >= MIN_STEPS && changed && !(checked && !valid) && (
+            <p className="text-sm text-ink-subtle">The funnel below is for the steps last shown.</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {checked && !valid && (
+            <p role="alert" className="text-sm text-destructive">
+              Some steps are incomplete. Correct the marked fields above.
+            </p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit">{submitLabel}</Button>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

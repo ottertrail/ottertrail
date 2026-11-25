@@ -46,10 +46,21 @@ function savedRows(): string[][] {
 }
 
 const savedHeading = () => page.getByRole("heading", { name: "Saved funnels" });
-const stepsHeading = () => page.getByRole("heading", { name: "Steps", exact: true });
-/** The Steps card's word on the saved funnel open (the page has other status regions). */
+/** The funnel view's heading: the saved funnel's name, or "Unsaved funnel". */
+const funnelHeading = (name: string) => page.getByRole("heading", { name, exact: true });
+/** The save actions' word on the saved funnel open (the page has other status regions). */
 const status = () =>
-  page.getByRole("status").filter({ hasText: /^(Saved as|Changed from the saved funnel)/ });
+  page.getByRole("status").filter({ hasText: /^(No unsaved changes|Unsaved changes)$/ });
+const allFunnels = () => page.getByRole("link", { name: "All funnels" });
+/** The dialog that builds a new funnel or changes the shown one's steps. */
+const newFunnelDialog = () => page.getByRole("dialog", { name: "New funnel" });
+const editDialog = () => page.getByRole("dialog", { name: "Edit the funnel's steps" });
+
+/** Picks an option of one of the dialog's selects. */
+async function choose(combobox: string, option: string) {
+  await page.getByRole("combobox", { name: combobox }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
 
 /** n saved funnels of visitors within a day. */
 const manyFunnels = (n: number): SavedFunnel[] =>
@@ -77,10 +88,11 @@ describe("saved funnels", () => {
       ["Team trial", "signup where plan = team → purchase", "Users, within 7 days"],
     ]);
     await expect.element(page.getByText("2 of 50 saved")).toBeVisible();
-    // No funnel is shown yet, so there is nothing to save: Save is disabled, and stays focusable.
-    await expect
-      .element(page.getByRole("button", { name: "Save funnel" }))
-      .toHaveAttribute("aria-disabled", "true");
+    await expect.element(page.getByRole("button", { name: "New funnel" })).toBeVisible();
+    // No funnel is shown, so there is nothing to save, and no build prompt beside the list.
+    expect(page.getByRole("button", { name: "Save funnel" }).elements()).toEqual([]);
+    expect(page.getByText("No funnels yet").elements()).toEqual([]);
+    expect(page.getByRole("button", { name: "Try this example" }).elements()).toEqual([]);
   });
 
   test("opens one from its link, keeping the period and the environment", async () => {
@@ -108,13 +120,17 @@ describe("saved funnels", () => {
         count: "users",
         window: "604800",
       });
+    // The funnel view, named, with its definition in a line.
+    await expect.element(funnelHeading("Team trial")).toBeVisible();
     await expect
-      .element(page.getByRole("link", { name: "Team trial" }))
-      .toHaveAttribute("aria-current");
-    await expect
-      .element(page.getByRole("link", { name: "pricing to signup" }))
-      .not.toHaveAttribute("aria-current");
-    await expect.element(status()).toHaveTextContent("Saved as “Team trial”.");
+      .element(
+        page.getByText("signup where plan = team → purchase · Users, within 7 days", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    await expect.element(savedHeading()).not.toBeInTheDocument();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
     // Shown as it was saved: nothing new to save.
     await expect
       .element(page.getByRole("button", { name: "Save changes" }))
@@ -134,11 +150,15 @@ describe("saved funnels", () => {
     const api = installFakeApi();
     const router = renderApp(funnelAddress(SHOWN, "&count=users&window=3600"));
     await expect.element(page.getByRole("button", { name: "Save funnel" })).toBeVisible();
-    // A change in the editor, not shown yet.
-    await page
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
+    // A change in the editor, cancelled: never shown.
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    await editDialog()
       .getByRole("group", { name: "Step 2" })
       .getByRole("combobox", { name: "Event name" })
       .fill("refund");
+    await editDialog().getByRole("button", { name: "Cancel" }).click();
+    await expect.element(editDialog()).not.toBeInTheDocument();
 
     await page.getByRole("button", { name: "Save funnel" }).click();
     const dialog = page.getByRole("dialog", { name: "Save the funnel" });
@@ -164,8 +184,12 @@ describe("saved funnels", () => {
     await expect
       .poll(() => router.state.location.search)
       .toEqual({ funnel: saved?.id, steps: SHOWN, count: "users", window: 3600 });
-    await expect.element(status()).toHaveTextContent("Saved as “Home to purchase”.");
-    await expect.element(stepsHeading()).toHaveFocus();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
+    // The trigger is gone, so focus goes to the heading, now the funnel's name.
+    await expect.element(funnelHeading("Home to purchase")).toHaveFocus();
+
+    // Listed with the others.
+    await allFunnels().click();
     await expect
       .poll(savedRows)
       .toContainEqual(["Home to purchase", "/ → purchase", "Users, within 1 hour"]);
@@ -202,14 +226,12 @@ describe("saved funnels", () => {
       funnelAddress(TEAM_STEPS, `&funnel=${TEAM_TRIAL}&count=users&window=3600`),
     );
 
-    await expect.element(status()).toHaveTextContent("Changed from the saved funnel “Team trial”.");
-    await expect
-      .element(page.getByRole("link", { name: "Team trial" }))
-      .toHaveAttribute("aria-current", "true");
+    await expect.element(funnelHeading("Team trial")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("Unsaved changes");
 
     await page.getByRole("button", { name: "Save changes" }).click();
 
-    await expect.element(status()).toHaveTextContent("Saved as “Team trial”.");
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PUT",
       path: `${FUNNELS_PATH}/${TEAM_TRIAL}`,
@@ -221,13 +243,6 @@ describe("saved funnels", () => {
         updatedAt: TEAM_TRIAL_READ,
       },
     });
-    await expect
-      .poll(savedRows)
-      .toContainEqual([
-        "Team trial",
-        "signup where plan = team → purchase",
-        "Users, within 1 hour",
-      ]);
     // Focus stays on Save changes, now disabled and still focusable.
     await expect.element(page.getByRole("button", { name: "Save changes" })).toHaveFocus();
     await expect
@@ -236,9 +251,10 @@ describe("saved funnels", () => {
     expect(router.state.location.search).toMatchObject({ funnel: TEAM_TRIAL });
 
     // Another window, saved as a new funnel instead.
-    await page.getByRole("combobox", { name: "Conversion window" }).click();
-    await page.getByRole("option", { name: "30 days", exact: true }).click();
-    await expect.element(status()).toHaveTextContent("Changed from the saved funnel “Team trial”.");
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    await choose("Conversion window", "30 days");
+    await editDialog().getByRole("button", { name: "Show funnel" }).click();
+    await expect.element(status()).toHaveTextContent("Unsaved changes");
     await page.getByRole("button", { name: "Save as new funnel" }).click();
     const dialog = page.getByRole("dialog", { name: "Save as a new funnel" });
     await dialog.getByRole("textbox", { name: "Name" }).fill("Team trial, a month");
@@ -252,9 +268,16 @@ describe("saved funnels", () => {
     });
     const created = api.savedFunnels.find((funnel) => funnel.name === "Team trial, a month");
     await expect.poll(() => router.state.location.search).toMatchObject({ funnel: created?.id });
-    await expect.element(status()).toHaveTextContent("Saved as “Team trial, a month”.");
+    await expect.element(funnelHeading("Team trial, a month")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
     // The first one is as it was saved.
     expect(api.savedFunnels.find((funnel) => funnel.id === TEAM_TRIAL)?.window).toBe(3600);
+    await allFunnels().click();
+    await expect.poll(savedRows).toEqual([
+      ["pricing to signup", "/pricing → signup", "Visitors, within 1 day"],
+      ["Team trial", "signup where plan = team → purchase", "Users, within 1 hour"],
+      ["Team trial, a month", "signup where plan = team → purchase", "Users, within 30 days"],
+    ]);
   });
 
   test("says when Save changes fails", async () => {
@@ -271,15 +294,17 @@ describe("saved funnels", () => {
       .toHaveTextContent(
         "The changes could not be saved. The project has no saved funnel with this ID.",
       );
-    // The list is read again: it is gone, so it can only be saved anew.
+    // The list is read again: it is gone, so the funnel shown is unsaved and can only be saved anew.
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
     await expect
-      .poll(savedRows)
-      .toEqual([["pricing to signup", "/pricing → signup", "Visitors, within 1 day"]]);
+      .element(page.getByRole("button", { name: "Save changes" }))
+      .not.toBeInTheDocument();
     await page.getByRole("button", { name: "Save funnel" }).click();
     const dialog = page.getByRole("dialog", { name: "Save the funnel" });
     await dialog.getByRole("textbox", { name: "Name" }).fill("Team trial again");
     await dialog.getByRole("button", { name: "Save funnel" }).click();
-    await expect.element(status()).toHaveTextContent("Saved as “Team trial again”.");
+    await expect.element(funnelHeading("Team trial again")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
     // The failure was for the funnel deleted, not for this one.
     await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
   });
@@ -287,7 +312,7 @@ describe("saved funnels", () => {
   test("does not undo a change made in another tab: says so, and loads it", async () => {
     const api = installFakeApi();
     renderApp(funnelAddress(TEAM_STEPS, `&funnel=${TEAM_TRIAL}&count=users&window=3600`));
-    await expect.element(status()).toHaveTextContent("Changed from the saved funnel “Team trial”.");
+    await expect.element(status()).toHaveTextContent("Unsaved changes");
     // Another tab renames it.
     api.savedFunnels = api.savedFunnels.map((funnel) =>
       funnel.id === TEAM_TRIAL
@@ -302,14 +327,13 @@ describe("saved funnels", () => {
       .toHaveTextContent(
         "The changes could not be saved. The funnel changed elsewhere. The saved version has been reloaded; review it before saving again.",
       );
-    await expect
-      .element(status())
-      .toHaveTextContent("Changed from the saved funnel “Team trial (renamed)”.");
+    await expect.element(funnelHeading("Team trial (renamed)")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("Unsaved changes");
     expect(api.savedFunnels.find((funnel) => funnel.id === TEAM_TRIAL)?.window).toBe(604_800);
 
     // Seen, and saved again: from the version loaded, keeping its new name.
     await page.getByRole("button", { name: "Save changes" }).click();
-    await expect.element(status()).toHaveTextContent("Saved as “Team trial (renamed)”.");
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
     expect(api.bodies.filter((body) => body.method === "PUT").at(-1)).toEqual({
       method: "PUT",
       path: `${FUNNELS_PATH}/${TEAM_TRIAL}`,
@@ -399,7 +423,6 @@ describe("saved funnels", () => {
     installFakeApi({ savedFunnels: manyFunnels(50) });
     renderApp(funnelAddress(SHOWN));
 
-    await expect.element(page.getByText("50 of 50 saved")).toBeVisible();
     const save = page.getByRole("button", { name: "Save funnel" });
     await expect.element(save).toBeDisabled();
     await expect
@@ -407,11 +430,15 @@ describe("saved funnels", () => {
       .toHaveAccessibleDescription(
         "A project has at most 50 saved funnels. Delete one to save another.",
       );
+    // The list says how many, and a new funnel can still be built and shown.
+    await allFunnels().click();
+    await expect.element(page.getByText("50 of 50 saved")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "New funnel" })).toBeEnabled();
   });
 
   test("deletes one after a confirmation that says the events stay", async () => {
     const api = installFakeApi();
-    const router = renderApp(funnelAddress(SHOWN));
+    const router = renderApp(`${FUNNEL}?period=30d`);
 
     await page.getByRole("button", { name: "Delete the funnel Team trial" }).click();
     const confirm = page.getByRole("dialog", { name: "Delete the funnel “Team trial”?" });
@@ -432,40 +459,232 @@ describe("saved funnels", () => {
       .poll(savedRows)
       .toEqual([["pricing to signup", "/pricing → signup", "Visitors, within 1 day"]]);
     await expect.element(savedHeading()).toHaveFocus();
-    expect(router.state.location.search).toEqual({ steps: SHOWN });
+    expect(router.state.location.search).toEqual({ period: "30d" });
   });
 
-  test("deleting the open funnel keeps the steps shown, now unsaved", async () => {
+  test("a funnel deleted while open keeps its steps shown, now unsaved", async () => {
     const api = installFakeApi();
     const steps: FunnelStep[] = [
       { type: "page", path: "/pricing" },
       { type: "event", name: "signup" },
     ];
     const router = renderApp(funnelAddress(steps, `&funnel=${PRICING}`));
-    await expect.element(status()).toHaveTextContent("Saved as “pricing to signup”.");
-    const requests = api.requests.length;
+    await expect.element(funnelHeading("pricing to signup")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
 
+    // Deleted from the list, then back to its address: the funnel is no longer saved.
+    await allFunnels().click();
     await page.getByRole("button", { name: "Delete the funnel pricing to signup" }).click();
     await page
       .getByRole("dialog", { name: "Delete the funnel “pricing to signup”?" })
       .getByRole("button", { name: "Delete funnel" })
       .click();
+    await expect
+      .poll(savedRows)
+      .toEqual([["Team trial", "signup where plan = team → purchase", "Users, within 7 days"]]);
+    expect(api.savedFunnels.some((funnel) => funnel.id === PRICING)).toBe(false);
+    router.history.back();
 
-    await expect.poll(() => router.state.location.search).toEqual({ steps });
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
+    await expect
+      .element(page.getByText("/pricing → signup · Visitors, within 1 day", { exact: true }))
+      .toBeVisible();
     await expect.element(page.getByRole("button", { name: "Save funnel" })).toBeVisible();
-    await expect.element(savedHeading()).toHaveFocus();
-    // The funnel shown is the same, so it is not asked for again.
-    expect(api.requests.slice(requests).some((path) => path.includes("/funnel?"))).toBe(false);
+    await expect.element(status()).not.toBeInTheDocument();
   });
 
-  test("without saved funnels, says how to save one", async () => {
+  test("without saved funnels, says what a funnel is and how to start one", async () => {
     installFakeApi({ savedFunnels: [] });
     renderApp(FUNNEL);
 
-    await expect
-      .element(page.getByText(/Set the steps, then choose Show funnel and Save funnel/))
-      .toBeVisible();
-    await expect.element(page.getByText("0 of 50 saved")).toBeVisible();
+    await expect.element(page.getByText("No funnels yet")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "New funnel" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Try this example" })).toBeVisible();
+    expect(page.getByText("0 of 50 saved").elements()).toEqual([]);
     expect(savedRows()).toEqual([]);
+  });
+});
+
+describe("the list and the funnel view", () => {
+  test("All funnels goes back to the list, keeping the period and the environment", async () => {
+    installFakeApi();
+    const router = renderApp(
+      funnelAddress(
+        TEAM_STEPS,
+        `&funnel=${TEAM_TRIAL}&count=users&window=604800&period=30d&env=staging`,
+      ),
+    );
+    await expect.element(funnelHeading("Team trial")).toBeVisible();
+
+    await allFunnels().click();
+
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ period: "30d", env: "staging" });
+    await expect.element(savedHeading()).toBeVisible();
+    await expect.poll(savedRows).toHaveLength(2);
+    await expect.element(allFunnels()).not.toBeInTheDocument();
+  });
+
+  test("New funnel after a saved one starts empty, and what it shows is unsaved", async () => {
+    const api = installFakeApi();
+    const router = renderApp(FUNNEL);
+    await page.getByRole("link", { name: "Team trial" }).click();
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
+    await allFunnels().click();
+
+    await page.getByRole("button", { name: "New funnel" }).click();
+    const dialog = newFunnelDialog();
+    await expect.element(dialog).toBeVisible();
+    // Two empty steps, counted the default way: nothing of Team trial.
+    const name = (n: number) =>
+      dialog
+        .getByRole("group", { name: `Step ${n}` })
+        .getByRole("combobox", { name: "Event name" });
+    await expect.element(name(1)).toHaveValue("");
+    await expect.element(name(2)).toHaveValue("");
+    await expect.element(dialog.getByRole("group", { name: "Step 3" })).not.toBeInTheDocument();
+    await expect
+      .element(dialog.getByRole("combobox", { name: "Count by" }))
+      .toMatchTextContent(/Visitors/);
+    await expect
+      .element(dialog.getByRole("combobox", { name: "Conversion window" }))
+      .toMatchTextContent(/1 day/);
+
+    await name(1).fill("signup");
+    await name(2).fill("purchase");
+    await dialog.getByRole("button", { name: "Show funnel" }).click();
+
+    const steps: FunnelStep[] = [
+      { type: "event", name: "signup" },
+      { type: "event", name: "purchase" },
+    ];
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.poll(() => router.state.location.search).toEqual({ steps });
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Save funnel" })).toBeVisible();
+    expect(page.getByRole("button", { name: "Save changes" }).elements()).toEqual([]);
+    expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: /unsaved changes/i })
+        .elements(),
+    ).toEqual([]);
+    await expect
+      .poll(() => lastFunnelQuery(api))
+      .toEqual({ period: "7d", steps: JSON.stringify(steps), count: "visitors", window: "86400" });
+  });
+
+  test("New funnel never keeps a saved funnel's ID left in the address", async () => {
+    installFakeApi();
+    // A saved funnel's ID with no steps: the list.
+    const router = renderApp(`${FUNNEL}?funnel=${TEAM_TRIAL}`);
+    await expect.element(savedHeading()).toBeVisible();
+
+    await page.getByRole("button", { name: "New funnel" }).click();
+    const dialog = newFunnelDialog();
+    await dialog
+      .getByRole("group", { name: "Step 1" })
+      .getByRole("combobox", { name: "Event name" })
+      .fill("signup");
+    await dialog
+      .getByRole("group", { name: "Step 2" })
+      .getByRole("combobox", { name: "Event name" })
+      .fill("purchase");
+    await dialog.getByRole("button", { name: "Show funnel" }).click();
+
+    await expect.poll(() => router.state.location.search).not.toHaveProperty("funnel");
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Save funnel" })).toBeVisible();
+  });
+
+  test("Edit steps starts from the funnel shown and keeps the saved funnel open", async () => {
+    installFakeApi();
+    const router = renderApp(
+      funnelAddress(TEAM_STEPS, `&funnel=${TEAM_TRIAL}&count=users&window=604800`),
+    );
+    await expect.element(status()).toHaveTextContent("No unsaved changes");
+
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    const dialog = editDialog();
+    const step1 = dialog.getByRole("group", { name: "Step 1" });
+    await expect.element(step1.getByRole("combobox", { name: "Event name" })).toHaveValue("signup");
+    await expect.element(step1.getByRole("textbox", { name: "Property" })).toHaveValue("plan");
+    await expect.element(step1.getByRole("textbox", { name: "Value" })).toHaveValue("team");
+    await expect
+      .element(dialog.getByRole("combobox", { name: "Count by" }))
+      .toMatchTextContent(/Users/);
+    await expect
+      .element(dialog.getByRole("combobox", { name: "Conversion window" }))
+      .toMatchTextContent(/7 days/);
+
+    await choose("Conversion window", "1 hour");
+    await dialog.getByRole("button", { name: "Show funnel" }).click();
+
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ funnel: TEAM_TRIAL, steps: TEAM_STEPS, count: "users", window: 3600 });
+    await expect.element(funnelHeading("Team trial")).toBeVisible();
+    await expect.element(status()).toHaveTextContent("Unsaved changes");
+  });
+
+  test("the dialog's Cancel leaves the page as it was", async () => {
+    const api = installFakeApi();
+    const address = funnelAddress(SHOWN, "&count=users&window=3600");
+    const router = renderApp(address);
+    await expect.element(funnelHeading("Unsaved funnel")).toBeVisible();
+    await expect.poll(() => lastFunnelQuery(api).steps).toBe(JSON.stringify(SHOWN));
+    const search = router.state.location.search;
+    const funnelRequests = api.requests.filter((item) => item.includes("/funnel?")).length;
+
+    // Steps, who is counted, and the window all changed, then cancelled.
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    const dialog = editDialog();
+    await dialog
+      .getByRole("group", { name: "Step 2" })
+      .getByRole("combobox", { name: "Event name" })
+      .fill("refund");
+    await dialog.getByRole("button", { name: "Add a step" }).click();
+    await choose("Count by", "Visitors");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(router.state.location.search).toEqual(search);
+    await expect
+      .element(page.getByText("/ → purchase · Users, within 1 hour", { exact: true }))
+      .toBeVisible();
+    expect(api.requests.filter((item) => item.includes("/funnel?"))).toHaveLength(funnelRequests);
+    await expect.element(page.getByRole("button", { name: "Edit steps" })).toHaveFocus();
+
+    // Opened again, it starts from the funnel shown, not the cancelled draft.
+    await page.getByRole("button", { name: "Edit steps" }).click();
+    await expect
+      .element(
+        editDialog()
+          .getByRole("group", { name: "Step 2" })
+          .getByRole("combobox", { name: "Event name" }),
+      )
+      .toHaveValue("purchase");
+    await expect
+      .element(editDialog().getByRole("group", { name: "Step 3" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(editDialog().getByRole("combobox", { name: "Count by" }))
+      .toMatchTextContent(/Users/);
+    await editDialog().getByRole("button", { name: "Cancel" }).click();
+
+    // On the list, New funnel's Cancel changes nothing either.
+    await allFunnels().click();
+    await expect.element(savedHeading()).toBeVisible();
+    const listSearch = router.state.location.search;
+    await page.getByRole("button", { name: "New funnel" }).click();
+    await newFunnelDialog()
+      .getByRole("group", { name: "Step 1" })
+      .getByRole("combobox", { name: "Event name" })
+      .fill("signup");
+    await newFunnelDialog().getByRole("button", { name: "Cancel" }).click();
+    await expect.element(newFunnelDialog()).not.toBeInTheDocument();
+    expect(router.state.location.search).toEqual(listSearch);
+    await expect.element(savedHeading()).toBeVisible();
   });
 });

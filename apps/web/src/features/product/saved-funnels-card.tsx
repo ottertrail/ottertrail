@@ -183,7 +183,7 @@ function SavedFunnelTable({
               Steps
             </TableHead>
             <TableHead scope="col" className="h-8 w-48 text-xs font-normal text-ink-subtle">
-              Counts
+              Counted by
             </TableHead>
             <TableHead scope="col" className={`h-8 w-20 pr-0 ${PINNED_END}`}>
               <span className="sr-only">Actions</span>
@@ -256,6 +256,7 @@ export function SavedFunnelsCard({
   search,
   openId,
   onDeleted,
+  action,
 }: {
   projectId: string;
   funnels: SavedFunnel[] | undefined;
@@ -264,6 +265,8 @@ export function SavedFunnelsCard({
   search: FunnelSearch;
   openId: string | undefined;
   onDeleted: (funnel: SavedFunnel) => void;
+  /** Beside the heading, as Add rule is on the Alerts page: New funnel. */
+  action?: React.ReactNode;
 }) {
   // Return focus to the heading if deletion removed the row.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
@@ -278,11 +281,14 @@ export function SavedFunnelsCard({
         >
           Saved funnels
         </h2>
-        {funnels !== undefined && (
-          <p className="text-xs text-ink-subtle tabular-nums">
-            {funnels.length} of {MAX_SAVED_FUNNELS} saved
-          </p>
-        )}
+        <div className="flex items-center gap-3">
+          {funnels !== undefined && (
+            <p className="text-xs text-ink-subtle tabular-nums">
+              {funnels.length} of {MAX_SAVED_FUNNELS} saved
+            </p>
+          )}
+          {action}
+        </div>
       </div>
       {failure !== null && (
         <LoadFailed
@@ -295,9 +301,7 @@ export function SavedFunnelsCard({
       {funnels === undefined ? (
         failure === null && <LoadingRows rows={2} />
       ) : funnels.length === 0 ? (
-        <p className="text-sm text-ink-subtle">
-          Set the steps, then choose Show funnel and Save funnel.
-        </p>
+        <p className="text-sm text-ink-subtle">No saved funnels yet.</p>
       ) : (
         <SavedFunnelTable
           funnels={funnels}
