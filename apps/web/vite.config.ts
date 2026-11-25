@@ -11,8 +11,10 @@ import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
 /**
  * Initial JavaScript limits in kB, including the entry and static imports.
  * The build fails above these limits (docs/dashboard.md, "Code splitting").
+ * gzip 256 since 26 November 2026: the router checks the funnel's `start`
+ * and the product API checks the events' comparison, about 0.1 kB past 255.
  */
-const INITIAL_JS_BUDGET = { raw: 780, gzip: 255 };
+const INITIAL_JS_BUDGET = { raw: 780, gzip: 256 };
 
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 

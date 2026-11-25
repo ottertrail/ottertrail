@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { MousePointerClickIcon } from "lucide-react";
+import { ArrowUpRightIcon, MousePointerClickIcon } from "lucide-react";
+import * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
+import { ButtonAnchor } from "@/components/button-anchor";
 import { CopyableCode } from "@/components/copyable-code";
 import {
   Empty,
@@ -12,26 +14,34 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
+import { useSettled } from "@/hooks/use-settled";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
+import { DOCS_URL } from "@/lib/docs";
 import { type ProductEvents, productEventsQuery } from "@/lib/product-api";
 
-import { formatWhole } from "../analytics/format";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
+import { CountChange, EventNotes } from "./event-notes";
+import { comparedWith } from "./format";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { type ProductSearch, productSearchOf } from "./search";
 
 const TRACK_EXAMPLE = `window.ottertrail?.track("signup", { plan: "team" });`;
 
-export function WhoNote() {
+function DocsButton({ path, children }: { path: string; children: React.ReactNode }) {
   return (
-    <>
-      <strong className="font-medium text-ink-muted">Visitors</strong> are daily visitor IDs. One
-      browser counts once per day and again the next day. Server-side events have no visitor ID.{" "}
-      <strong className="font-medium text-ink-muted">Users</strong> are your site's IDs for
-      signed-in users. Only events sent while someone was signed in count.
-    </>
+    <ButtonAnchor
+      variant="outline"
+      href={`${DOCS_URL}${path}`}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {children}
+      <ArrowUpRightIcon aria-hidden="true" />
+      <span className="sr-only">(opens in a new tab)</span>
+    </ButtonAnchor>
   );
 }
 
@@ -39,23 +49,24 @@ function NoEvents({ environment }: { environment: string }) {
   const where = environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`;
   return (
     <Empty className="border border-dashed p-10">
-      <EmptyHeader>
+      <EmptyHeader className="max-w-xl">
         <EmptyMedia variant="icon">
           <MousePointerClickIcon />
         </EmptyMedia>
         <EmptyTitle>No product events{where} in this period</EmptyTitle>
         <EmptyDescription>
-          Product events are events your site sends, such as signups or purchases. Each has up to 30
-          properties. In the browser, call{" "}
-          <code className="font-mono">window.ottertrail.track(name, properties)</code> once the
-          tracking snippet is on the page. From your server, send them to{" "}
-          <code className="font-mono">POST /api/server-events</code> with the project&apos;s secret
-          key, from its settings. Pageviews, time on page, errors, and Web Vitals are the
-          tracker&apos;s own events and are not listed here.
+          Send events such as signups or purchases from your site with{" "}
+          <code className="font-mono">track()</code>, or from your server.
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent className="max-w-2xl text-left">
+      <EmptyContent className="max-w-xl text-left">
         <CopyableCode text={TRACK_EXAMPLE} copyLabel="Copy the example" />
+        <div className="flex flex-wrap justify-center gap-2">
+          <DocsButton path="/product-analytics/custom-events/">How to send events</DocsButton>
+          <DocsButton path="/product-analytics/server-side-events/">
+            Send from your server
+          </DocsButton>
+        </div>
       </EmptyContent>
     </Empty>
   );
@@ -65,10 +76,13 @@ function EventTable({
   data,
   projectId,
   search,
+  searched,
 }: {
   data: ProductEvents;
   projectId: string;
   search: ProductSearch;
+  /** The text the names were searched for; empty for none. */
+  searched: string;
 }) {
   return (
     <BreakdownTable
@@ -77,6 +91,7 @@ function EventTable({
       caption="Product events, most frequent first"
       nameHeading="Event"
       figureHeadings={["Events", "Visitors", "Users"]}
+      layout="stack"
       rows={data.events.map((event) => ({
         key: event.name,
         title: event.name,
@@ -91,9 +106,17 @@ function EventTable({
             {event.name}
           </Link>
         ),
-        figures: [formatWhole(event.events), formatWhole(event.visitors), formatWhole(event.users)],
+        figures: [
+          <CountChange key="events" now={event.events} before={event.previous.events} />,
+          <CountChange key="visitors" now={event.visitors} before={event.previous.visitors} />,
+          <CountChange key="users" now={event.users} before={event.previous.users} />,
+        ],
       }))}
-      empty="No product events in this period."
+      empty={
+        searched === ""
+          ? "No product events in this period."
+          : `No event name contains "${searched}" in this period.`
+      }
       className="max-w-5xl"
     />
   );
@@ -109,7 +132,9 @@ export function EventsPage({
   environment?: string;
 }) {
   const navigate = useNavigate();
-  const query = useQuery(productEventsQuery(projectId, range, environment));
+  const [text, setText] = React.useState("");
+  const searched = useSettled(text.trim(), 250);
+  const query = useQuery(productEventsQuery(projectId, range, environment, searched));
   const search: ProductSearch = { range, environment };
   const show = (next: Partial<ProductSearch>) =>
     void navigate({
@@ -122,15 +147,35 @@ export function EventsPage({
     return <NoSuchProject />;
   }
   const data = query.data;
+  // Nothing sent at all in the period: how to send events, without a search box. Another
+  // search's answer, shown while this one loads, says nothing about that.
+  const noneYet =
+    data !== undefined && !query.isPlaceholderData && data.events.length === 0 && searched === "";
 
   return (
     <div className="flex flex-col">
       <ReportFilterBar
+        label="Period, environment, and search"
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
+        filters={
+          data !== undefined &&
+          !noneYet && (
+            <Input
+              type="search"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="Search events"
+              aria-label="Search events by name"
+              autoComplete="off"
+              maxLength={200}
+              className="w-64 max-w-full"
+            />
+          )
+        }
       />
       <div className="flex flex-col gap-6 px-gutter py-5">
         {query.isError && (
@@ -143,22 +188,22 @@ export function EventsPage({
         )}
         {data === undefined ? (
           !query.isError && <LoadingRows rows={4} />
+        ) : noneYet ? (
+          <NoEvents environment={environment} />
         ) : (
-          <Refreshing stale={query.isPlaceholderData}>
-            {data.events.length === 0 ? (
-              <NoEvents environment={environment} />
-            ) : (
-              <>
-                <EventTable data={data} projectId={projectId} search={search} />
-                <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-                  The events your site sends with <code className="font-mono">track()</code> or from
-                  its server, most frequent first
-                  {data.events.length === 100 ? " (the top 100)" : ""}. <WhoNote /> Open an event to
-                  see its properties.
-                </p>
-              </>
-            )}
-          </Refreshing>
+          <>
+            <Refreshing stale={query.isPlaceholderData}>
+              <div className="flex flex-col gap-3">
+                <EventTable data={data} projectId={projectId} search={search} searched={searched} />
+                {data.events.length > 0 && (
+                  <p className="text-xs text-ink-subtle">
+                    {comparedWith(data.previous, data.timeZone)}
+                  </p>
+                )}
+              </div>
+            </Refreshing>
+            <EventNotes list />
+          </>
         )}
       </div>
     </div>

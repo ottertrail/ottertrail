@@ -11,9 +11,10 @@ import { type DocsLinkTarget, docsFor } from "@/lib/docs";
 
 /**
  * What a page tells the layout's header: a title of its own (a detail
- * page's item) and the element its actions are drawn into.
+ * page's item), and the elements its way back and its actions are drawn into.
  */
 interface PageHeaderSlots {
+  back: HTMLElement | null;
   actions: HTMLElement | null;
   setTitle: (title: string | undefined) => void;
 }
@@ -25,6 +26,13 @@ export function PageActions({ children }: { children: React.ReactNode }) {
   const slots = React.use(SlotsContext);
   if (slots?.actions == null) return null;
   return createPortal(children, slots.actions);
+}
+
+/** Portal an item's way back (page-back.tsx) into the header, before the title. */
+export function PageBackSlot({ children }: { children: React.ReactNode }) {
+  const slots = React.use(SlotsContext);
+  if (slots?.back == null) return null;
+  return createPortal(children, slots.back);
 }
 
 /** Use the route title until the detail title loads. */
@@ -79,10 +87,12 @@ function DocsLink({ docs }: { docs: DocsLinkTarget }) {
  */
 function PageHeader({
   title,
+  setBack,
   setActions,
 }: {
   /** A page's own title (`PageTitle`), in place of the route's. */
   title: string | undefined;
+  setBack: (element: HTMLElement | null) => void;
   setActions: (element: HTMLElement | null) => void;
 }) {
   const { isMobile } = useSidebar();
@@ -102,6 +112,8 @@ function PageHeader({
       )}
     >
       {isMobile && <MenuButton />}
+      {/* An item's way back (`PageBack`); first, its icon is pulled into the gutter as the menu's is. */}
+      <div ref={setBack} className={cn("-me-1 flex shrink-0 empty:hidden", !isMobile && "-ms-2")} />
       {shown === undefined ? (
         <h1 className="sr-only">Ottertrail</h1>
       ) : (
@@ -124,12 +136,13 @@ function PageHeader({
 
 /** Keep the header in the page scroll. Let workbenches and page states fill the remaining height. */
 export function PageWithHeader({ children }: { children: React.ReactNode }) {
+  const [back, setBack] = React.useState<HTMLElement | null>(null);
   const [actions, setActions] = React.useState<HTMLElement | null>(null);
   const [title, setTitle] = React.useState<string | undefined>(undefined);
-  const slots = React.useMemo(() => ({ actions, setTitle }), [actions]);
+  const slots = React.useMemo(() => ({ back, actions, setTitle }), [back, actions]);
   return (
     <div data-slot="app-content" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <PageHeader title={title} setActions={setActions} />
+      <PageHeader title={title} setBack={setBack} setActions={setActions} />
       <div data-slot="page" className="min-h-0 flex-1">
         <SlotsContext value={slots}>{children}</SlotsContext>
       </div>

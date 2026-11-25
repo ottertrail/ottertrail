@@ -104,6 +104,20 @@ export function stepsFrom(value: unknown): FunnelStep[] {
   );
 }
 
+/** An event name as collection allows it: 1 to 200 characters, no control characters. */
+// eslint-disable-next-line no-control-regex -- control characters are what it refuses
+const EVENT_NAME = /^[^\u0000-\u001F\u007F]{1,200}$/u;
+
+/**
+ * The event a new funnel starts with (`start`), or undefined. The router
+ * parses a name such as "404" as a number: read it back as text.
+ */
+export function startEventFrom(value: unknown): string | undefined {
+  const name =
+    typeof value === "number" || typeof value === "boolean" ? JSON.stringify(value) : value;
+  return typeof name === "string" && EVENT_NAME.test(name) ? name : undefined;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const savedFunnelIdFrom = (value: unknown): string | undefined =>

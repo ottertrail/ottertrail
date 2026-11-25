@@ -2956,23 +2956,55 @@ const WEEK = {
   lastDay: "2026-11-16",
 } as const;
 
-/** Three product events of a week; change parts with `overrides`. */
+/** The week before WEEK, which is over. */
+const WEEK_BEFORE = { firstDay: "2026-11-03", lastDay: "2026-11-09", until: null } as const;
+
+/**
+ * Three product events of a week, with the week before: signup grew, a
+ * purchase is new, and invite_sent counts too few to compare. Change parts
+ * with `overrides`.
+ */
 export function productEventsFixture(overrides: Partial<ProductEvents> = {}): ProductEvents {
   return {
     ...WEEK,
     environment: "production",
     environments: ["production"],
+    previous: WEEK_BEFORE,
     events: [
-      { name: "signup", events: 140, visitors: 127, users: 40 },
-      { name: "purchase", events: 60, visitors: 50, users: 30 },
-      { name: "invite_sent", events: 12, visitors: 0, users: 9 },
+      {
+        name: "signup",
+        events: 140,
+        visitors: 127,
+        users: 40,
+        previous: { events: 100, visitors: 127, users: 50 },
+      },
+      {
+        name: "purchase",
+        events: 60,
+        visitors: 50,
+        users: 30,
+        previous: { events: 0, visitors: 0, users: 0 },
+      },
+      {
+        name: "invite_sent",
+        events: 12,
+        visitors: 0,
+        users: 9,
+        previous: { events: 10, visitors: 0, users: 4 },
+      },
     ],
     ...overrides,
   };
 }
 
+/** The fixture's events whose name contains `search`, in any case, as the API searches. */
 export function fakeProductEvents(query: URLSearchParams): ProductEvents {
-  return productEventsFixture({ environment: query.get("environment") ?? "production" });
+  const fixture = productEventsFixture({ environment: query.get("environment") ?? "production" });
+  const search = query.get("search")?.toLowerCase() ?? "";
+  return {
+    ...fixture,
+    events: fixture.events.filter((event) => event.name.toLowerCase().includes(search)),
+  };
 }
 
 type PropertyValue = string | number | boolean;
@@ -3017,6 +3049,13 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
     events: events.length,
     visitors: Math.round(events.length * 0.9),
     users: Math.round(events.length * 0.3),
+    // A week before with fewer events, as many visitors, and no users yet.
+    previous: {
+      ...WEEK_BEFORE,
+      events: Math.round(events.length * 0.8),
+      visitors: Math.round(events.length * 0.9),
+      users: 0,
+    },
     days: DAYS.map(({ day }) => ({
       day,
       events: events.filter((event) => event.day === day).length,

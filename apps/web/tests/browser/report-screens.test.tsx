@@ -70,7 +70,7 @@ const SCREENS = [
     path: `${P}/product/events`,
     ready: () => page.getByRole("table", { name: "Product events, most frequent first" }),
     tables: ["Product events, most frequent first"],
-    phone: { scroll: ["Product events, most frequent first"] },
+    phone: { stack: ["Product events, most frequent first"] },
   },
   {
     name: "a product event",

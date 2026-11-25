@@ -41,6 +41,28 @@ const tableRows = (name: string) =>
       .map((cell) => cell.textContent),
   );
 
+const EVENT_LIST = "Product events, most frequent first";
+
+/**
+ * The events list's rows: each name, then each figure as shown, with its
+ * change from the period before as a screen reader hears it, if any.
+ */
+const eventRows = () =>
+  [...page.getByRole("table", { name: EVENT_LIST }).element().querySelectorAll("tbody tr")].map(
+    (row) => {
+      const [name, , ...figures] = row.querySelectorAll("td");
+      return [
+        name?.textContent,
+        ...figures.map((cell) => {
+          const shown = cell.querySelector(":scope > span:not([data-slot=breakdown-label])");
+          const change = shown?.querySelector(".sr-only")?.textContent;
+          const value = shown?.firstElementChild?.textContent;
+          return change === undefined ? value : `${value} (${change})`;
+        }),
+      ];
+    },
+  );
+
 /** A figure of the event's stats, by its label. */
 function stat(label: string) {
   const item = [...document.querySelectorAll("dl > div")].find(
@@ -90,11 +112,6 @@ describe("product events", () => {
       .element(page.getByRole("table", { name: "Product events, most frequent first" }))
       .toBeVisible();
     expect(lastQuery(api, "/events")).toEqual({ period: "7d" });
-    expect(tableRows("Product events, most frequent first")).toEqual([
-      ["signup", "140", "127", "40"],
-      ["purchase", "60", "50", "30"],
-      ["invite_sent", "12", "0", "9"],
-    ]);
     await expect.element(sidebarLink()).toHaveAttribute("data-active");
     await expect
       .element(
@@ -103,7 +120,91 @@ describe("product events", () => {
         }),
       )
       .toHaveAttribute("aria-current", "page");
+  });
+
+  test("compares each figure with the period before, but not a new event's or too few", async () => {
+    installFakeApi();
+    renderApp(EVENTS);
+
+    await expect.element(page.getByRole("table", { name: EVENT_LIST })).toBeVisible();
+    expect(eventRows()).toEqual([
+      ["signup", "140 (Up 40% from 100)", "127 (No change from 127)", "40 (Down 20% from 50)"],
+      // Nothing in the period before: new, not an endless rise.
+      [
+        "purchase",
+        "60 (New: none in the period before)",
+        "50 (New: none in the period before)",
+        "30 (New: none in the period before)",
+      ],
+      // Under 20 in both periods: no change at all.
+      ["invite_sent", "12", "0", "9"],
+    ]);
+    await expect
+      .element(page.getByText("Changes compare with 3 to 9 Nov 2026.", { exact: true }))
+      .toBeVisible();
+  });
+
+  test("says who is counted in a note folded away", async () => {
+    installFakeApi();
+    renderApp(EVENTS);
+
+    const summary = page.getByText("How events are counted");
+    await expect.element(summary).toBeVisible();
+    await expect.element(page.getByText(/Visitors are daily visitor IDs/)).not.toBeVisible();
+    await summary.click();
     await expect.element(page.getByText(/Visitors are daily visitor IDs/)).toBeVisible();
+  });
+
+  test("searches the names, asking the API, and says when none matches", async () => {
+    const api = installFakeApi();
+    renderApp(EVENTS);
+    const box = page.getByRole("searchbox", { name: "Search events by name" });
+
+    await box.fill("SIGN");
+    await expect.poll(() => lastQuery(api, "/events")).toEqual({ period: "7d", search: "SIGN" });
+    await expect.poll(() => eventRows().map(([name]) => name)).toEqual(["signup"]);
+
+    await box.fill("nothing");
+    await expect
+      .element(page.getByText('No event name contains "nothing" in this period.'))
+      .toBeVisible();
+    // The box stays to change the search; the page does not turn into the first-run help.
+    await expect.element(box).toHaveValue("nothing");
+    await expect
+      .element(page.getByText("No product events in this period"))
+      .not.toBeInTheDocument();
+
+    // Cleared, the whole list comes back, from the answer already read.
+    await box.fill("");
+    await expect.poll(() => eventRows()).toHaveLength(3);
+  });
+
+  test("on a phone, each event's figures stack under its name, all on the screen", async () => {
+    await page.viewport(390, 844);
+    try {
+      installFakeApi();
+      renderApp(EVENTS);
+      await expect.element(page.getByRole("table", { name: EVENT_LIST })).toBeVisible();
+
+      const row = page.getByRole("table", { name: EVENT_LIST }).element().querySelector("tbody tr");
+      const cells = [...(row?.querySelectorAll("td") ?? [])].slice(2);
+      expect(
+        cells.map((cell) => cell.querySelector("[data-slot=breakdown-label]")?.textContent),
+      ).toEqual(["Events", "Visitors", "Users"]);
+      for (const cell of cells) {
+        const box = cell.getBoundingClientRect();
+        expect(box.left).toBeGreaterThanOrEqual(0);
+        expect(box.right).toBeLessThanOrEqual(390);
+      }
+      // One under another, not side by side.
+      const tops = cells.map((cell) => cell.getBoundingClientRect().top);
+      expect(tops).toEqual(tops.toSorted((a, b) => a - b));
+      expect(new Set(tops).size).toBe(3);
+      const content = document.querySelector("[data-slot=app-content]");
+      expect(content?.scrollWidth).toBeLessThanOrEqual(content?.clientWidth ?? 0);
+    } finally {
+      await page.viewport(1280, 900);
+    }
   });
 
   test("the product address alone opens the events, keeping the period", async () => {
@@ -158,6 +259,89 @@ describe("product events", () => {
       ["false", "105"],
       ["true", "35"],
     ]);
+  });
+
+  test("an event's figures compare with the period before", async () => {
+    installFakeApi();
+    renderApp(SIGNUP);
+
+    await expect.poll(() => stat("Events")).toBe("140");
+    expect(statParts("Events")).toEqual(["140", "25%Up 25% from 112"]);
+    expect(statParts("Visitors")).toEqual(["126", "0%No change from 126"]);
+    expect(statParts("Users")).toEqual(["42", "NewNew: none in the period before"]);
+    await expect
+      .element(page.getByText("Changes compare with 3 to 9 Nov 2026.", { exact: true }))
+      .toBeVisible();
+  });
+
+  test("an event's way back to the list sits in the header, before its name", async () => {
+    installFakeApi();
+    const router = renderApp(`${SIGNUP}?period=30d&p.plan=team`);
+    await expect.element(page.getByRole("heading", { name: "signup", level: 1 })).toBeVisible();
+
+    const header = document.querySelector("[data-slot=page-header]");
+    const back = page.getByRole("link", { name: "All events" });
+    await expect.element(back).toBeVisible();
+    expect(page.getByRole("link", { name: "All events" }).elements()).toHaveLength(1);
+    expect(header?.contains(back.element())).toBe(true);
+    const title = header?.querySelector("h1");
+    expect(
+      title !== null &&
+        title !== undefined &&
+        back.element().compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await back.click();
+    await expect.poll(() => router.state.location.pathname).toBe(EVENTS);
+    // The period stays; the event's own filters do not.
+    expect(router.state.location.search).toEqual({ period: "30d" });
+  });
+
+  test("an event's properties come before its sources, and its notes are folded", async () => {
+    installFakeApi();
+    renderApp(SIGNUP);
+    await expect.element(page.getByRole("heading", { name: "Sources" })).toBeVisible();
+
+    const headings = [...document.querySelectorAll("h3")].map((heading) => heading.textContent);
+    expect(headings.indexOf("Properties")).toBeLessThan(headings.indexOf("Sources"));
+    await expect.element(page.getByText("How events are counted")).toBeVisible();
+    await expect.element(page.getByText(/Users are your site's IDs/)).not.toBeVisible();
+  });
+
+  test("Start a funnel opens New funnel with the event as step 1", async () => {
+    installFakeApi();
+    const router = renderApp(`${SIGNUP}?period=30d`);
+
+    await page.getByRole("link", { name: "Start a funnel" }).click();
+
+    await expect.poll(() => router.state.location.pathname).toBe(FUNNEL);
+    await expect.element(newFunnelDialog()).toBeVisible();
+    await expect
+      .element(step(1).getByRole("combobox", { name: "Event name" }))
+      .toHaveValue("signup");
+    // The dialog holds it: the address keeps only the period, so a reload opens nothing.
+    await expect.poll(() => router.state.location.search).toEqual({ period: "30d" });
+
+    // Closed, New funnel starts empty again.
+    await userEvent.keyboard("{Escape}");
+    await expect.element(newFunnelDialog()).not.toBeInTheDocument();
+    await newFunnel();
+    await expect.element(step(1).getByRole("combobox", { name: "Event name" })).toHaveValue("");
+  });
+
+  test("a funnel's start event is checked like a name: one the router reads as a number is text", async () => {
+    installFakeApi();
+    renderApp(`${FUNNEL}?start=404`);
+    await expect.element(newFunnelDialog()).toBeVisible();
+    await expect.element(step(1).getByRole("combobox", { name: "Event name" })).toHaveValue("404");
+  });
+
+  test("a funnel's start event with a control character opens nothing", async () => {
+    installFakeApi();
+    const router = renderApp(`${FUNNEL}?start=${encodeURIComponent("sign\u0001up")}`);
+    await expect.element(page.getByRole("button", { name: "New funnel" })).toBeVisible();
+    expect(newFunnelDialog().elements()).toEqual([]);
+    expect(router.state.location.search).toEqual({});
   });
 
   test("an event's sources: its visit's source and campaign, with the page's filters", async () => {
@@ -257,7 +441,14 @@ describe("product events", () => {
       .element(page.getByText('window.ottertrail?.track("signup", { plan: "team" });'))
       .toBeVisible();
     await expect.element(page.getByRole("button", { name: "Copy the example" })).toBeVisible();
-    await expect.element(page.getByText("POST /api/server-events")).toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "How to send events (opens in a new tab)" }))
+      .toHaveAttribute("href", "https://docs.ottertrail.app/product-analytics/custom-events/");
+    await expect
+      .element(page.getByRole("link", { name: "Send from your server (opens in a new tab)" }))
+      .toHaveAttribute("href", "https://docs.ottertrail.app/product-analytics/server-side-events/");
+    // Nothing to search yet.
+    expect(page.getByRole("searchbox").elements()).toEqual([]);
   });
 
   test("shows a failed load with a retry", async () => {

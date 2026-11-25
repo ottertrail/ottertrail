@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, SearchXIcon, XIcon } from "lucide-react";
+import { FilterIcon, SearchXIcon, XIcon } from "lucide-react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
-import { PageTitle } from "@/components/page-header";
+import { ButtonLink } from "@/components/button-link";
+import { PageBack } from "@/components/page-back";
+import { PageActions, PageTitle } from "@/components/page-header";
 import { ReportChart } from "@/components/report-chart";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import {
@@ -27,12 +29,13 @@ import {
 } from "@/lib/product-api";
 
 import { DayChart } from "../analytics/day-chart";
-import { formatDay, formatWhole } from "../analytics/format";
+import { formatDay, formatWhole, relativeChange } from "../analytics/format";
 import { valueText } from "../analytics/list-rows";
 import { ReportFilterBar } from "../errors/range-controls";
+import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
 import { NoSuchProject } from "../projects/no-such-project";
-import { WhoNote } from "./events-page";
-import { filterText } from "./format";
+import { EventNotes } from "./event-notes";
+import { comparedWith, filterText } from "./format";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { filterSearchOf, type ProductSearch, productSearchOf } from "./search";
 
@@ -79,17 +82,26 @@ function FilterChips({
 }
 
 function Stats({ detail }: { detail: ProductEventDetail }) {
-  const stats: Stat[] = [
-    { label: "Events", value: formatWhole(detail.events) },
-    { label: "Visitors", value: formatWhole(detail.visitors) },
-    { label: "Users", value: formatWhole(detail.users) },
-  ];
+  const stat = (label: string, key: "events" | "visitors" | "users"): Stat => {
+    const now = detail[key];
+    const before = detail.previous[key];
+    return {
+      label,
+      value: formatWhole(now),
+      change: relativeChange(now, before),
+      counts: { current: now, previous: before },
+      before: formatWhole(before),
+    };
+  };
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
-      <StatStrip label="Figures" stats={stats} className="sm:grid-cols-3 lg:max-w-2xl" />
-      <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-        <WhoNote />
-      </p>
+      <StatStrip
+        label="Figures"
+        stats={[stat("Events", "events"), stat("Visitors", "visitors"), stat("Users", "users")]}
+        minCount={MIN_LOADS_FOR_CHANGE}
+        className="sm:grid-cols-3 lg:max-w-2xl"
+      />
+      <p className="text-xs text-ink-subtle">{comparedWith(detail.previous, detail.timeZone)}</p>
     </section>
   );
 }
@@ -208,8 +220,8 @@ function VisitSources({
           Sources
         </h3>
         <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-          Where the visit each event happened in came from, as on the Analytics page. Events without
-          a visit, such as those sent by a server, are Unknown.
+          Where each event's visit came from. Events without a visit, such as a server's, are
+          Unknown.
         </p>
       </div>
       {query.isError && (
@@ -323,7 +335,6 @@ function Detail({
     <>
       <Stats detail={detail} />
       <EventsPerDay days={detail.days} />
-      <VisitSources projectId={projectId} name={detail.name} search={search} />
       <section
         aria-labelledby="properties-heading"
         className="@container flex flex-col gap-4 border-t pt-5"
@@ -333,10 +344,9 @@ function Detail({
             Properties
           </h3>
           <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-            The 30 most common event properties, each with its 10 most frequent values. Values are
-            compared as text. Numbers, true, false, and null use their JSON representations. Select
-            a value to show only events with that value
-            {search.filters.length >= MAX_FILTERS ? ` (at most ${MAX_FILTERS} filters)` : ""}.
+            {search.filters.length >= MAX_FILTERS
+              ? `Each property's most frequent values. At most ${MAX_FILTERS} filters.`
+              : "Each property's most frequent values. Select one to filter by it."}
           </p>
         </div>
         {detail.properties.length === 0 ? (
@@ -357,6 +367,8 @@ function Detail({
           </div>
         )}
       </section>
+      <VisitSources projectId={projectId} name={detail.name} search={search} />
+      <EventNotes />
     </>
   );
 }
@@ -408,18 +420,28 @@ export function EventPage({
         }
       />
       <div className="flex flex-col gap-6 px-gutter py-5">
-        <div className="flex min-w-0 flex-col gap-2">
-          <Link
-            to="/projects/$projectId/product/events"
+        <PageTitle title={name} />
+        <PageBack
+          label="All events"
+          link={
+            <Link
+              to="/projects/$projectId/product/events"
+              params={{ projectId }}
+              search={productSearchOf(search)}
+            />
+          }
+        />
+        <PageActions>
+          <ButtonLink
+            variant="outline"
+            to="/projects/$projectId/product/funnel"
             params={{ projectId }}
-            search={productSearchOf(search)}
-            className="inline-flex items-center gap-1 self-start text-sm text-link hover:underline"
+            search={{ ...productSearchOf(search), start: name }}
           >
-            <ArrowLeftIcon aria-hidden="true" className="size-4" />
-            All events
-          </Link>
-          <PageTitle title={name} />
-        </div>
+            <FilterIcon data-icon="inline-start" />
+            Start a funnel
+          </ButtonLink>
+        </PageActions>
         {query.isError && (
           <LoadFailed
             what="The event"

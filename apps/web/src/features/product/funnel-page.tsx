@@ -161,6 +161,7 @@ export function FunnelPage({
   count,
   window,
   by: asked,
+  start,
 }: {
   projectId: string;
   range: PageRange;
@@ -171,6 +172,8 @@ export function FunnelPage({
   window: FunnelWindow;
   /** The breakdown under the result, from the address; not saved with a funnel. */
   by?: FunnelBreakdownBy | undefined;
+  /** An event's page's "Start a funnel": open New funnel with this event as step 1. */
+  start?: string | undefined;
 }) {
   const navigate = useNavigate();
   const access = useAccess();
@@ -219,7 +222,13 @@ export function FunnelPage({
     ...funnelTimesQuery(projectId, range, environment, steps, count, window),
     enabled: ready,
   });
-  const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
+  const [editing, setEditing] = React.useState<"new" | "edit" | null>(
+    start === undefined ? null : "new",
+  );
+  // Step 1 of the New funnel that `start` opens; New funnel itself starts empty.
+  const [startSteps, setStartSteps] = React.useState<FunnelStep[]>(
+    start === undefined ? [] : [{ type: "event", name: start }],
+  );
   // Saved goals for the editor's "Copy from a goal" menus; read once it opens.
   const goals = useQuery({ ...goalsQuery(projectId), enabled: editing !== null });
   const [people, setPeople] = React.useState<PeopleList | null>(null);
@@ -241,6 +250,19 @@ export function FunnelPage({
       }),
     });
   };
+  // The dialog holds `start` now: drop it, so Back or a reload does not open the dialog again.
+  const addressSearch = funnelSearchOf(search);
+  React.useEffect(() => {
+    if (start === undefined) return;
+    void navigate({
+      to: "/projects/$projectId/product/funnel",
+      params: { projectId },
+      search: addressSearch,
+      replace: true,
+    });
+    // Once, for the `start` the page opened with.
+    // oxlint-disable-next-line react/exhaustive-deps
+  }, [start]);
 
   if (
     (query.error instanceof ApiError && query.error.status === 404) ||
@@ -263,13 +285,16 @@ export function FunnelPage({
     <FunnelEditorDialog
       open={editing !== null}
       onOpenChange={(next) => {
-        if (!next) setEditing(null);
+        if (!next) {
+          setEditing(null);
+          setStartSteps([]);
+        }
       }}
       title={editing === "edit" ? "Edit the funnel's steps" : "New funnel"}
       initial={
         editing === "edit"
           ? { steps, count, window }
-          : { steps: [], count: DEFAULT_FUNNEL_COUNT, window: DEFAULT_FUNNEL_WINDOW }
+          : { steps: startSteps, count: DEFAULT_FUNNEL_COUNT, window: DEFAULT_FUNNEL_WINDOW }
       }
       eventNames={eventNames}
       goals={goals.data}

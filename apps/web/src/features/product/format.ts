@@ -4,11 +4,22 @@ import {
   FUNNEL_WINDOWS,
   type FunnelCount,
   type FunnelStep,
+  type PeriodBefore,
   type PropertyFilter,
 } from "@/lib/product-api";
 
-import { formatWhole } from "../analytics/format";
+import { formatDay, formatDayRange, formatTimeOfDay, formatWhole } from "../analytics/format";
 import { stepText } from "./funnel-steps";
+
+/** Which period the changes compare with, worded as the funnel and the Web analytics summary word it. */
+export function comparedWith(previous: PeriodBefore, timeZone: string): string {
+  const days = formatDayRange(previous.firstDay, previous.lastDay);
+  if (previous.until === null) return `Changes compare with ${days}.`;
+  const time = formatTimeOfDay(previous.until, timeZone);
+  return previous.firstDay === previous.lastDay
+    ? `Changes compare with ${days}, up to ${time}.`
+    : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}.`;
+}
 
 /** Show "<1%" for positive shares that round to 0%; use the missing-value marker for no total. */
 export function formatShare(part: number, whole: number): string {

@@ -9,14 +9,29 @@ import { isStep, type Step } from "./steps";
  * itself, an ordered funnel, and weekly retention of signed-in users.
  */
 
-/** One product event's counts in the range. */
-export interface ProductEventRow {
-  name: string;
+export interface ProductEventCounts {
   events: number;
   /** Daily visitor IDs; a server's events have none. */
   visitors: number;
   /** Signed-in users. */
   users: number;
+}
+
+/** One product event's counts in the range, and in the period before. */
+export interface ProductEventRow extends ProductEventCounts {
+  name: string;
+  previous: ProductEventCounts;
+}
+
+/**
+ * The period before, of the same length (apps/api/src/reports/reports.ts,
+ * previousDays): its days, and while the period runs, the moment it is
+ * compared up to; null otherwise.
+ */
+export interface PeriodBefore {
+  firstDay: string;
+  lastDay: string;
+  until: string | null;
 }
 
 /** What every answer says about its range. */
@@ -30,6 +45,7 @@ interface Answered {
 /** GET /api/projects/:id/events: most frequent first, the top 100. */
 export interface ProductEvents extends Answered {
   environments: string[];
+  previous: PeriodBefore;
   events: ProductEventRow[];
 }
 
@@ -71,6 +87,7 @@ export interface ProductEventSources extends Answered {
 
 /** GET /api/projects/:id/events/:name: zeros, never 404, when nothing matches. */
 export interface ProductEventDetail extends Answered, ProductEventRow {
+  previous: PeriodBefore & ProductEventCounts;
   filters: PropertyFilter[];
   /** Every day of the range. */
   days: { day: string; events: number }[];
@@ -286,17 +303,23 @@ const isAnswered = (value: Record<string, unknown>) =>
   isText(value.firstDay) &&
   isText(value.lastDay);
 
+const isCounts = (value: unknown): value is ProductEventCounts =>
+  isRecord(value) && isNumber(value.events) && isNumber(value.visitors) && isNumber(value.users);
+
 const isEventRow = (value: unknown): value is ProductEventRow =>
+  isRecord(value) && isText(value.name) && isCounts(value.previous) && isCounts(value);
+
+const isPeriodBefore = (value: unknown): value is PeriodBefore =>
   isRecord(value) &&
-  isText(value.name) &&
-  isNumber(value.events) &&
-  isNumber(value.visitors) &&
-  isNumber(value.users);
+  isText(value.firstDay) &&
+  isText(value.lastDay) &&
+  (value.until === null || isText(value.until));
 
 const isProductEvents = (value: unknown): value is ProductEvents =>
   isRecord(value) &&
   isAnswered(value) &&
   isListOf(value.environments, isText) &&
+  isPeriodBefore(value.previous) &&
   isListOf(value.events, isEventRow);
 
 const isFilter = (value: unknown): value is PropertyFilter =>
@@ -328,6 +351,7 @@ const isEventDetail = (value: unknown): value is ProductEventDetail =>
   isRecord(value) &&
   isAnswered(value) &&
   isEventRow(value) &&
+  isPeriodBefore(value.previous) &&
   isListOf(value.filters, isFilter) &&
   isListOf(value.days, isDay) &&
   isListOf(value.properties, isBreakdown);
@@ -447,17 +471,23 @@ async function get<T>(
   return expectShape(await apiRequest(`${path}?${query.toString()}`, { signal }), isShape);
 }
 
-/** The project's product events in a range and an environment, most frequent first. */
-export const productEventsQuery = (projectId: string, range: PageRange, environment: string) =>
+/**
+ * The project's product events in a range and an environment, most frequent
+ * first; with `search`, those whose name contains it, in any case.
+ */
+export const productEventsQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  search = "",
+) =>
   queryOptions({
-    queryKey: ["product-events", projectId, range, environment],
-    queryFn: ({ signal }) =>
-      get(
-        `${projectPath(projectId)}/events`,
-        new URLSearchParams(rangeQuery(range, environment)),
-        signal,
-        isProductEvents,
-      ),
+    queryKey: ["product-events", projectId, range, environment, search],
+    queryFn: ({ signal }) => {
+      const query = new URLSearchParams(rangeQuery(range, environment));
+      if (search !== "") query.set("search", search);
+      return get(`${projectPath(projectId)}/events`, query, signal, isProductEvents);
+    },
     // While another period loads, keep showing this one (dimmed).
     placeholderData: keepPreviousData,
   });

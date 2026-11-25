@@ -27,6 +27,7 @@ import {
   filterSearchOf,
   propertyFiltersFrom,
   savedFunnelIdFrom,
+  startEventFrom,
   stepsFrom,
 } from "@/features/product/search";
 import { ProjectLayout } from "@/features/projects/project-layout";
@@ -1322,6 +1323,8 @@ const productEventRoute = createRoute({
  * last opened or saved, by ID; the steps stay in the address all the same,
  * so a link shows what was viewed. `by` is the breakdown under the result
  * ("deviceType" …, or "p.<property>"), left out for none.
+ * `start` is an event name from an event's page: without steps, the page
+ * opens New funnel with it as step 1, then drops it from the address.
  */
 const productFunnelRoute = createRoute({
   getParentRoute: () => productRoute,
@@ -1333,6 +1336,7 @@ const productFunnelRoute = createRoute({
       count?: unknown;
       window?: unknown;
       by?: unknown;
+      start?: unknown;
     },
   ): ReturnType<typeof productRangeSearch> & {
     funnel: string | undefined;
@@ -1340,6 +1344,7 @@ const productFunnelRoute = createRoute({
     count: "users" | undefined;
     window: FunnelWindow | undefined;
     by: FunnelBreakdownBy | undefined;
+    start: string | undefined;
   } => {
     const steps = stepsFrom(search.steps);
     const count = search.count === "users" ? "users" : undefined;
@@ -1356,11 +1361,12 @@ const productFunnelRoute = createRoute({
       count,
       window,
       by: steps.length > 0 && isBreakdownBy(search.by) ? search.by : undefined,
+      start: steps.length === 0 ? startEventFrom(search.start) : undefined,
     };
   },
   component: withPage(FunnelPage, function ProductFunnelRouteComponent() {
     const { projectId } = productFunnelRoute.useParams();
-    const { period, from, to, env, funnel, steps, count, window, by } =
+    const { period, from, to, env, funnel, steps, count, window, by, start } =
       productFunnelRoute.useSearch();
     return (
       <FunnelPage
@@ -1372,6 +1378,7 @@ const productFunnelRoute = createRoute({
         count={count ?? "visitors"}
         window={window ?? DEFAULT_FUNNEL_WINDOW}
         by={by}
+        start={start}
       />
     );
   }),
