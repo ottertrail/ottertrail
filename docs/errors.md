@@ -155,7 +155,7 @@ Content-Encoding: gzip   (optional)
 
 A server's exception, recorded on a span or in a log record and sent over OTLP ([telemetry](telemetry.md#exceptions-join-the-error-list)), is stored as an error event too, in the same table, grouped by the same rule, and listed with the browser's. It has the service's environment and release, the span's route as its path, the user's ID when the record names one (`user.id`), and three columns of its own: the service, and the trace and span it happened in. It has no visitor, browser, operating system, or location, so it counts towards a group's users but never its visitors.
 
-The error's page shows a server's group by route and service instead of page, browser, and operating system, and the latest occurrence's service, trace ID, and span ID. The trace's own page is planned (telemetry's step 3), so the trace ID is not a link yet. A server's stack is shown as it was sent: source maps are for browser code, so it is never mapped.
+The error's page shows a server's group by route and service instead of page, browser, and operating system, and the latest occurrence's service, trace ID, and span ID. The trace ID links to the trace's page, at the occurrence's span, for anyone with the monitoring area; for others it is plain text. A server's stack is shown as it was sent: source maps are for browser code, so it is never mapped.
 
 ## Alerts
 

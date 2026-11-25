@@ -492,7 +492,6 @@ Decided on 18 November 2026, after the alerts of stage 4 ([uptime and alerts](up
 - gRPC, and OTLP from browsers.
 - Exponential histograms and summaries (refused, and counted in `partial_success`).
 - Profiles, sampling.
-- Retention chosen per project.
 - Linking a browser's page load to the backend trace it started (`traceparent`).
 - Searching log bodies for a phrase: each word is matched on its own ([above](#how-the-pages-read)).
 - Filtering traces by an attribute, and a trace's whole span count in the list (it counts the trace's spans in the period, an hour either side).
