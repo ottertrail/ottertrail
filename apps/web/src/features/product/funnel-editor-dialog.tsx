@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { Goal } from "@/lib/goals-api";
 import {
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
@@ -113,11 +114,13 @@ function FunnelSettings({
 function FunnelDraftForm({
   initial,
   eventNames,
+  goals,
   onShow,
   onCancel,
 }: {
   initial: FunnelDraft;
   eventNames: readonly string[];
+  goals: readonly Goal[] | undefined;
   onShow: (draft: FunnelDraft) => void;
   onCancel: () => void;
 }) {
@@ -130,6 +133,7 @@ function FunnelDraftForm({
     <FunnelEditor
       applied={initial.steps}
       eventNames={eventNames}
+      goals={goals}
       onCancel={onCancel}
       onApply={(steps) => onShow({ steps, ...settings })}
     >
@@ -145,6 +149,7 @@ export function FunnelEditorDialog({
   title,
   initial,
   eventNames,
+  goals,
   onShow,
 }: {
   open: boolean;
@@ -152,6 +157,8 @@ export function FunnelEditorDialog({
   title: string;
   initial: FunnelDraft;
   eventNames: readonly string[];
+  /** The project's saved goals, to copy into steps. */
+  goals: readonly Goal[] | undefined;
   onShow: (draft: FunnelDraft) => void;
 }) {
   return (
@@ -160,7 +167,7 @@ export function FunnelEditorDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Two to five steps, in the order people take them. Each step is a page or an event your
+            Two to eight steps, in the order people take them. Each step is a page or an event your
             site sends.
           </DialogDescription>
         </DialogHeader>
@@ -168,6 +175,7 @@ export function FunnelEditorDialog({
           <FunnelDraftForm
             initial={initial}
             eventNames={eventNames}
+            goals={goals}
             onCancel={() => onOpenChange(false)}
             onShow={(draft) => {
               onOpenChange(false);

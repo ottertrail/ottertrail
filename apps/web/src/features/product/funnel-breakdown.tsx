@@ -165,7 +165,11 @@ function BreakdownTable({
   }
   return (
     <ScrollHint>
-      <Table className="table-fixed max-sm:min-w-[36rem] lg:max-w-5xl">
+      <Table
+        className="table-fixed lg:max-w-5xl"
+        // Room for the value column next to 5rem per step and the conversion: wider tables scroll.
+        style={{ minWidth: `${Math.max(36, 18 + steps.length * 5)}rem` }}
+      >
         <caption className="sr-only">
           {`Funnel steps ${byChoice(by).replace(/^By /, "by ")}, with the ${who} who reached each`}
         </caption>

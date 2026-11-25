@@ -1,7 +1,14 @@
-import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { type Goal, goalStepText } from "@/lib/goals-api";
 import { type FunnelStep, MAX_STEPS, MIN_STEPS } from "@/lib/product-api";
 
 import {
@@ -15,12 +22,56 @@ import {
 } from "./funnel-steps";
 import { StepFields } from "./step-fields";
 
+/** Copies a saved goal's definition into a step: a copy, so the goal can change or go. */
+function CopyFromGoal({
+  number,
+  goals,
+  onChoose,
+}: {
+  number: number;
+  goals: readonly Goal[];
+  onChoose: (goal: Goal) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`Copy step ${number} from a goal`}
+          />
+        }
+      >
+        Copy from a goal
+        <ChevronDownIcon aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto max-w-80 min-w-56">
+        {goals.map((goal) => (
+          <DropdownMenuItem
+            key={goal.id}
+            className="flex-col items-start gap-0.5"
+            onClick={() => onChoose(goal)}
+          >
+            <span className="text-ink">{goal.name}</span>
+            <span className="font-mono text-xs break-all text-ink-subtle">
+              {goalStepText(goal.step)}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function StepEditor({
   step,
   index,
   steps,
   problems,
   eventListId,
+  goals,
   onChange,
   onMove,
   onRemove,
@@ -30,6 +81,7 @@ function StepEditor({
   steps: number;
   problems: StepProblems;
   eventListId: string;
+  goals: readonly Goal[];
   onChange: (step: DraftStep) => void;
   onMove: (by: -1 | 1) => void;
   onRemove: () => void;
@@ -44,6 +96,15 @@ function StepEditor({
             Step {number}
           </span>
           <div className="ml-auto flex items-center gap-1">
+            {goals.length > 0 && (
+              <CopyFromGoal
+                number={number}
+                goals={goals}
+                onChoose={(goal) =>
+                  onChange({ ...draftOf(goal.step), id: step.id, copiedFrom: goal.name })
+                }
+              />
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -81,8 +142,15 @@ function StepEditor({
           problems={problems}
           eventListId={eventListId}
           typeLabel={`Step ${number} type`}
-          onChange={onChange}
+          comparisonLabel={`Step ${number} comparison`}
+          // A change makes the step the user's own, no longer the goal's copy.
+          onChange={(changed) => onChange({ ...changed, copiedFrom: undefined })}
         />
+        {step.copiedFrom !== undefined && (
+          <p className="text-xs text-ink-subtle">
+            Copied from the goal “{step.copiedFrom}”. Deleting the goal leaves this step as it is.
+          </p>
+        )}
       </fieldset>
     </li>
   );
@@ -97,12 +165,13 @@ function draftsOf(steps: readonly FunnelStep[]): DraftStep[] {
 const keyOf = (steps: readonly FunnelStep[]) => JSON.stringify(steps);
 
 /**
- * Keep 2 to 5 steps. Address changes replace the draft. In a dialog (`onCancel`), the form ends
- * with Cancel and its submit button.
+ * Keep 2 to 8 steps. Address changes replace the draft. In a dialog (`onCancel`), the form ends
+ * with Cancel and its submit button. `goals` fill the steps' "Copy from a goal" menus.
  */
 export function FunnelEditor({
   applied,
   eventNames,
+  goals = [],
   onApply,
   submitLabel = "Show funnel",
   onCancel,
@@ -110,6 +179,7 @@ export function FunnelEditor({
 }: {
   applied: readonly FunnelStep[];
   eventNames: readonly string[];
+  goals?: readonly Goal[] | undefined;
   onApply: (steps: FunnelStep[]) => void;
   submitLabel?: string;
   onCancel?: () => void;
@@ -177,6 +247,7 @@ export function FunnelEditor({
             steps={drafts.length}
             problems={checked ? (problems[index] ?? {}) : {}}
             eventListId={eventListId}
+            goals={goals}
             onChange={(changedStep) =>
               setDrafts(drafts.map((item) => (item.id === changedStep.id ? changedStep : item)))
             }

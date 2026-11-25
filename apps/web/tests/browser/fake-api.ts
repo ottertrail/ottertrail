@@ -64,6 +64,7 @@ import {
   isFunnelCount,
   isFunnelStep,
   isFunnelWindow,
+  MAX_STEPS,
   type ProductEventDetail,
   type ProductEvents,
   type ProductEventSources,
@@ -2212,12 +2213,17 @@ function funnelInput(body: unknown): FunnelInput | Response {
     );
   }
   const { steps, count, window } = input;
-  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 5 || !steps.every(isFunnelStep)) {
+  if (
+    !Array.isArray(steps) ||
+    steps.length < 2 ||
+    steps.length > MAX_STEPS ||
+    !steps.every(isFunnelStep)
+  ) {
     return json(
       {
         error: "invalid_steps",
         message:
-          'steps must be a JSON array of 2 to 5 steps: {"type":"event","name":…} or {"type":"page","path":"/…"}.',
+          'steps must be a JSON array of 2 to 8 steps: {"type":"event","name":…} or {"type":"page","path":"/…"}.',
       },
       400,
     );
@@ -2229,7 +2235,7 @@ function funnelInput(body: unknown): FunnelInput | Response {
     return json(
       {
         error: "steps_overlap",
-        message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or filter both by different values of one property.`,
+        message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or make them match different pages or property values.`,
       },
       400,
     );
@@ -3074,8 +3080,13 @@ export function fakeFunnel(query: URLSearchParams): Funnel | Response {
   } catch {
     return json({ error: "invalid_steps", message: "steps must be a JSON array." }, 400);
   }
-  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 5 || !steps.every(isFunnelStep)) {
-    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+  if (
+    !Array.isArray(steps) ||
+    steps.length < 2 ||
+    steps.length > MAX_STEPS ||
+    !steps.every(isFunnelStep)
+  ) {
+    return json({ error: "invalid_steps", message: "steps must be 2 to 8 steps." }, 400);
   }
   const count = query.get("count") === "users" ? "users" : "visitors";
   const window = Number(query.get("window") ?? 86_400);
@@ -3142,11 +3153,11 @@ export const FUNNEL_BREAKDOWN_ROWS: Record<string, FunnelBreakdownRow[]> = {
   ],
 };
 
-/** The steps in a funnel's query, or null when they are not 2 to 5 steps. */
+/** The steps in a funnel's query, or null when they are not 2 to 8 steps. */
 function funnelStepsOf(query: URLSearchParams): unknown[] | null {
   try {
     const steps: unknown = JSON.parse(query.get("steps") ?? "");
-    return Array.isArray(steps) && steps.length >= 2 && steps.length <= 5 ? steps : null;
+    return Array.isArray(steps) && steps.length >= 2 && steps.length <= MAX_STEPS ? steps : null;
   } catch {
     return null;
   }
@@ -3157,7 +3168,7 @@ export function fakeFunnelBreakdown(query: URLSearchParams): FunnelBreakdown | R
   const steps = funnelStepsOf(query);
   const by = query.get("by") ?? "";
   if (steps === null || by === "") {
-    return json({ error: "invalid_breakdown", message: "by and 2 to 5 steps, please." }, 400);
+    return json({ error: "invalid_breakdown", message: "by and 2 to 8 steps, please." }, 400);
   }
   return {
     ...WEEK,
@@ -3216,7 +3227,7 @@ export const FUNNEL_TREND_POINTS = [
 /** A funnel's conversion per day: FUNNEL_TREND_POINTS. */
 export function fakeFunnelTrend(query: URLSearchParams): FunnelTrend | Response {
   if (funnelStepsOf(query) === null) {
-    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+    return json({ error: "invalid_steps", message: "steps must be 2 to 8 steps." }, 400);
   }
   return {
     ...WEEK,
@@ -3244,7 +3255,7 @@ export const FUNNEL_STEP_TIMES = [
 export function fakeFunnelTimes(query: URLSearchParams): FunnelTimes | Response {
   const steps = funnelStepsOf(query);
   if (steps === null) {
-    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+    return json({ error: "invalid_steps", message: "steps must be 2 to 8 steps." }, 400);
   }
   return {
     ...WEEK,

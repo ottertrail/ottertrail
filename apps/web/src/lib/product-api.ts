@@ -2,6 +2,7 @@ import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import { DEFAULT_ENVIRONMENT, type PageRange, rangeParams } from "./analytics-api";
 import { apiRequest, expectShape } from "./api";
+import { isStep, type Step } from "./steps";
 
 /**
  * Product analytics (docs/product-analytics.md): the events a site sends
@@ -77,12 +78,10 @@ export interface ProductEventDetail extends Answered, ProductEventRow {
   properties: PropertyBreakdown[];
 }
 
-export type FunnelStep =
-  | { type: "event"; name: string; filter?: PropertyFilter }
-  | { type: "page"; path: string };
+export type FunnelStep = Step;
 
 export const MIN_STEPS = 2;
-export const MAX_STEPS = 5;
+export const MAX_STEPS = 8;
 
 /** Who a funnel follows: a daily visitor ID, or a signed-in user's ID. */
 export const FUNNEL_COUNTS = [
@@ -322,12 +321,7 @@ const isEventDetail = (value: unknown): value is ProductEventDetail =>
   isListOf(value.days, isDay) &&
   isListOf(value.properties, isBreakdown);
 
-export const isFunnelStep = (value: unknown): value is FunnelStep =>
-  isRecord(value) &&
-  ((value.type === "page" && isText(value.path)) ||
-    (value.type === "event" &&
-      isText(value.name) &&
-      (value.filter === undefined || isFilter(value.filter))));
+export const isFunnelStep: (value: unknown) => value is FunnelStep = isStep;
 
 const isStepResult = (item: unknown): item is Funnel["steps"][number] =>
   isRecord(item) && isFunnelStep(item.step) && isNumber(item.reached);
@@ -515,7 +509,7 @@ const funnelParams = (
   window: String(window),
 });
 
-/** An ordered funnel of 2 to 5 complete steps. */
+/** An ordered funnel of 2 to 8 complete steps. */
 export const funnelQuery = (
   projectId: string,
   range: PageRange,

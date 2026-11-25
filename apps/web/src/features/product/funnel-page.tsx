@@ -19,6 +19,7 @@ import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { savedFunnelsQuery } from "@/lib/funnels-api";
+import { goalsQuery } from "@/lib/goals-api";
 import {
   DEFAULT_FUNNEL_COUNT,
   DEFAULT_FUNNEL_WINDOW,
@@ -219,6 +220,8 @@ export function FunnelPage({
     enabled: ready,
   });
   const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
+  // Saved goals for the editor's "Copy from a goal" menus; read once it opens.
+  const goals = useQuery({ ...goalsQuery(projectId), enabled: editing !== null });
   const [people, setPeople] = React.useState<PeopleList | null>(null);
   // Saving removes the trigger, so return focus to the funnel's heading.
   const titleRef = React.useRef<HTMLHeadingElement>(null);
@@ -269,6 +272,7 @@ export function FunnelPage({
           : { steps: [], count: DEFAULT_FUNNEL_COUNT, window: DEFAULT_FUNNEL_WINDOW }
       }
       eventNames={eventNames}
+      goals={goals.data}
       // A new funnel leaves the one shown, so saving it makes a new saved funnel.
       onShow={(draft) => show(editing === "edit" ? draft : { ...draft, funnel: undefined })}
     />

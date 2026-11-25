@@ -124,6 +124,66 @@ describe("goals on the analytics page", () => {
       .toEqual(["Free signupsignup where plan = free", "0", "0%", "0"]);
   });
 
+  test("adds goals with a path pattern and a filter that does not equal or contains", async () => {
+    const api = installFakeApi();
+    renderApp(ANALYTICS);
+
+    await page.getByRole("button", { name: "Add goal" }).click();
+    await dialog().getByRole("textbox", { name: "Name" }).fill("Read the docs");
+    await choose("Goal type", "Page");
+    await expect.element(dialog().getByText(/\* matches any run of characters/)).toBeVisible();
+    await dialog().getByRole("textbox", { name: "Path" }).fill("/docs/*");
+    await dialog().getByRole("button", { name: "Add goal" }).click();
+    await expect.element(dialog()).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Add goal" }).click();
+    await dialog().getByRole("textbox", { name: "Name" }).fill("Paid signup");
+    await dialog().getByRole("combobox", { name: "Event name" }).fill("signup");
+    await dialog().getByRole("button", { name: "Add a property filter" }).click();
+    await dialog().getByRole("textbox", { name: "Property" }).fill("plan");
+    await choose("Goal comparison", "does not equal");
+    await dialog().getByRole("textbox", { name: "Value" }).fill("free");
+    await dialog().getByRole("button", { name: "Add goal" }).click();
+    await expect.element(dialog()).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Add goal" }).click();
+    await dialog().getByRole("textbox", { name: "Name" }).fill("Team plans");
+    await dialog().getByRole("combobox", { name: "Event name" }).fill("signup");
+    await dialog().getByRole("button", { name: "Add a property filter" }).click();
+    await dialog().getByRole("textbox", { name: "Property" }).fill("plan");
+    await choose("Goal comparison", "contains");
+    await dialog().getByRole("textbox", { name: "Value" }).fill("team");
+    await dialog().getByRole("button", { name: "Add goal" }).click();
+    await expect.element(dialog()).not.toBeInTheDocument();
+
+    expect(api.bodies.filter((item) => item.path === GOALS_PATH).map((item) => item.body)).toEqual([
+      { name: "Read the docs", step: { type: "page", path: "/docs/*" } },
+      {
+        name: "Paid signup",
+        step: {
+          type: "event",
+          name: "signup",
+          filter: { key: "plan", value: "free", operator: "notEquals" },
+        },
+      },
+      {
+        name: "Team plans",
+        step: {
+          type: "event",
+          name: "signup",
+          filter: { key: "plan", value: "team", operator: "contains" },
+        },
+      },
+    ]);
+    await expect
+      .poll(() => goalRows().slice(-3))
+      .toEqual([
+        ["Read the docsViewed /docs/*", "0", "0%", "0"],
+        ["Paid signupsignup where plan ≠ free", "0", "0%", "0"],
+        ["Team planssignup where plan contains team", "0", "0%", "0"],
+      ]);
+  });
+
   test("checks the fields before sending", async () => {
     const api = installFakeApi();
     renderApp(ANALYTICS);

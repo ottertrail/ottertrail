@@ -22,7 +22,7 @@ import { StepFields } from "../product/step-fields";
 
 const STEP_HELP = {
   event: "Counts browser visitors with matching events. Server events do not count.",
-  page: "Matches the exact path, without query or fragment.",
+  page: "Matches the path, without query or fragment. * matches any run of characters, as in /docs/*.",
 } as const;
 
 /** Remount on open to reset the form. */
@@ -101,6 +101,7 @@ function AddGoalForm({
           problems={checked ? problems : {}}
           eventListId={eventListId}
           typeLabel="Goal type"
+          comparisonLabel="Goal comparison"
           onChange={setStep}
         />
         <FieldDescription>{STEP_HELP[step.type]}</FieldDescription>

@@ -1,14 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { apiRequest, expectShape } from "./api";
+import { filterText, isStep, type Step } from "./steps";
 import { nameProblem } from "./text";
 
 /** Saved goals count conversions within the report visits (docs/product-analytics.md). */
 
 /** What reaching a goal means; the same shape as a funnel step. */
-export type GoalStep =
-  | { type: "event"; name: string; filter?: { key: string; value: string } }
-  | { type: "page"; path: string };
+export type GoalStep = Step;
 
 export interface Goal {
   id: string;
@@ -38,13 +37,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
 
-export const isGoalStep = (value: unknown): value is GoalStep =>
-  isRecord(value) &&
-  ((value.type === "page" && isText(value.path)) ||
-    (value.type === "event" &&
-      isText(value.name) &&
-      (value.filter === undefined ||
-        (isRecord(value.filter) && isText(value.filter.key) && isText(value.filter.value)))));
+export const isGoalStep: (value: unknown) => value is GoalStep = isStep;
 
 export const isGoal = (value: unknown): value is Goal =>
   isRecord(value) &&
@@ -94,10 +87,8 @@ export async function deleteGoal(projectId: string, goalId: string): Promise<voi
   await apiRequest(`${goalsPath(projectId)}/${encodeURIComponent(goalId)}`, { method: "DELETE" });
 }
 
-/** "Viewed /pricing", "signup", "signup where plan = team". */
+/** "Viewed /pricing", "signup", "signup where plan = team", "signup where plan ≠ free". */
 export function goalStepText(step: GoalStep): string {
   if (step.type === "page") return `Viewed ${step.path}`;
-  if (step.filter === undefined) return step.name;
-  const value = step.filter.value === "" ? "(empty)" : step.filter.value;
-  return `${step.name} where ${step.filter.key} = ${value}`;
+  return step.filter === undefined ? step.name : `${step.name} where ${filterText(step.filter)}`;
 }

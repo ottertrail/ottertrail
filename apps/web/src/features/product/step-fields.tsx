@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { isFilterOperator, type StepFilter } from "@/lib/steps";
 
 import type { DraftStep, StepProblems } from "./funnel-steps";
 
@@ -21,6 +22,13 @@ const STEP_TYPES = [
 
 const isStepType = (value: unknown): value is DraftStep["type"] =>
   value === "event" || value === "page";
+
+/** How a filter compares its value: equals is a filter without an operator. */
+const COMPARISONS = [
+  { value: "equals", label: "equals" },
+  { value: "notEquals", label: "does not equal" },
+  { value: "contains", label: "contains" },
+] as const;
 
 function Field({
   label,
@@ -56,11 +64,87 @@ function Field({
   );
 }
 
+function FilterFields({
+  filter,
+  problems,
+  comparisonLabel,
+  onChange,
+  onRemove,
+}: {
+  filter: StepFilter;
+  problems: StepProblems;
+  comparisonLabel: string;
+  onChange: (filter: StepFilter) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <Field label="Property" problem={problems.filterKey}>
+        {(props) => (
+          <Input
+            {...props}
+            value={filter.key}
+            placeholder="For example, plan"
+            autoComplete="off"
+            className="font-mono placeholder:font-sans"
+            onChange={(event) => onChange({ ...filter, key: event.target.value })}
+          />
+        )}
+      </Field>
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-ink-subtle" aria-hidden="true">
+          Compare
+        </span>
+        <Select
+          items={COMPARISONS}
+          value={filter.operator ?? "equals"}
+          onValueChange={(value) => {
+            const { key, value: wanted } = filter;
+            onChange(
+              isFilterOperator(value)
+                ? { key, value: wanted, operator: value }
+                : { key, value: wanted },
+            );
+          }}
+        >
+          <SelectTrigger aria-label={comparisonLabel} className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {COMPARISONS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <Field label="Value" problem={problems.filterValue}>
+        {(props) => (
+          <Input
+            {...props}
+            value={filter.value}
+            placeholder="For example, team"
+            autoComplete="off"
+            className="font-mono placeholder:font-sans"
+            onChange={(event) => onChange({ ...filter, value: event.target.value })}
+          />
+        )}
+      </Field>
+      <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+        <XIcon aria-hidden="true" />
+        Remove the filter
+      </Button>
+    </div>
+  );
+}
+
 export function StepFields({
   step,
   problems,
   eventListId,
   typeLabel,
+  comparisonLabel,
   onChange,
 }: {
   step: DraftStep;
@@ -68,6 +152,7 @@ export function StepFields({
   problems: StepProblems;
   eventListId: string;
   typeLabel: string;
+  comparisonLabel: string;
   onChange: (step: DraftStep) => void;
 }) {
   return (
@@ -116,7 +201,7 @@ export function StepFields({
               <Input
                 {...props}
                 value={step.path}
-                placeholder="For example, /pricing"
+                placeholder="For example, /pricing or /docs/*"
                 autoComplete="off"
                 className="font-mono placeholder:font-sans"
                 onChange={(event) => onChange({ ...step, path: event.target.value })}
@@ -138,54 +223,13 @@ export function StepFields({
             Add a property filter
           </Button>
         ) : (
-          <div className="flex flex-wrap items-end gap-3">
-            <Field label="Property" problem={problems.filterKey}>
-              {(props) => (
-                <Input
-                  {...props}
-                  value={step.filter?.key ?? ""}
-                  placeholder="For example, plan"
-                  autoComplete="off"
-                  className="font-mono placeholder:font-sans"
-                  onChange={(event) =>
-                    onChange({
-                      ...step,
-                      filter: { key: event.target.value, value: step.filter?.value ?? "" },
-                    })
-                  }
-                />
-              )}
-            </Field>
-            <span className="pb-1.5 text-sm text-ink-subtle" aria-hidden="true">
-              =
-            </span>
-            <Field label="Value" problem={problems.filterValue}>
-              {(props) => (
-                <Input
-                  {...props}
-                  value={step.filter?.value ?? ""}
-                  placeholder="For example, team"
-                  autoComplete="off"
-                  className="font-mono placeholder:font-sans"
-                  onChange={(event) =>
-                    onChange({
-                      ...step,
-                      filter: { key: step.filter?.key ?? "", value: event.target.value },
-                    })
-                  }
-                />
-              )}
-            </Field>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => onChange({ ...step, filter: null })}
-            >
-              <XIcon aria-hidden="true" />
-              Remove the filter
-            </Button>
-          </div>
+          <FilterFields
+            filter={step.filter}
+            problems={problems}
+            comparisonLabel={comparisonLabel}
+            onChange={(filter) => onChange({ ...step, filter })}
+            onRemove={() => onChange({ ...step, filter: null })}
+          />
         ))}
     </>
   );

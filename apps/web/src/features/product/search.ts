@@ -12,6 +12,7 @@ import {
   MAX_STEPS,
   type PropertyFilter,
 } from "@/lib/product-api";
+import { cleanFilter } from "@/lib/steps";
 
 import { errorsSearchOf } from "../errors/search";
 
@@ -99,11 +100,7 @@ export function stepsFrom(value: unknown): FunnelStep[] {
       ? { type: "page", path: step.path }
       : step.filter === undefined
         ? { type: "event", name: step.name }
-        : {
-            type: "event",
-            name: step.name,
-            filter: { key: step.filter.key, value: step.filter.value },
-          },
+        : { type: "event", name: step.name, filter: cleanFilter(step.filter) },
   );
 }
 

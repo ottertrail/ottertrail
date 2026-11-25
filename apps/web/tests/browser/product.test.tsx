@@ -346,7 +346,7 @@ describe("the funnel", () => {
     await choose("Step 2 type", "Page");
     await expect
       .element(step(2).getByRole("textbox", { name: "Path" }))
-      .toHaveAttribute("placeholder", "For example, /pricing");
+      .toHaveAttribute("placeholder", "For example, /pricing or /docs/*");
     await step(2).getByRole("textbox", { name: "Path" }).fill("/pricing");
     await page.getByRole("button", { name: "Add a step" }).click();
     await step(3).getByRole("combobox", { name: "Event name" }).fill("purchase");
