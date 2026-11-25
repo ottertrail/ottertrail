@@ -9,7 +9,7 @@ import { removeDeletedRows } from "../src/clickhouse/delete-events.ts";
 import { clickHouseTime } from "../src/clickhouse/query.ts";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { LOCAL_OBJECT_STORE, loadConfig } from "../src/config.ts";
-import { runUserDeletions } from "../src/identities/deletions.ts";
+import { runUserDeletions, withoutUserIds } from "../src/identities/deletions.ts";
 import { replayKeyOf } from "../src/replays/replays.ts";
 import { s3ObjectStore } from "../src/storage/object-store.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
@@ -337,21 +337,24 @@ describe("deleting one user's data", { timeout: 60_000 }, () => {
 
     const run = await runJob();
     expect(run).toMatchObject({ done: 1, failed: 0, replays: 2 });
-    expect(run.rows).toBe(4 + 1 + 1 + 1 + 1);
+    // Events, the AI call, and the first-seen time; spans and logs are queued, not counted.
+    expect(run.rows).toBe(4 + 1 + 1);
 
-    expect(await heldOf(shop, "ada", adas)).toEqual(NOTHING);
+    // ClickHouse masks the queued spans and logs moments later.
+    await expect.poll(() => heldOf(shop, "ada", adas), { timeout: 15_000 }).toEqual(NOTHING);
     // The other user of the project, and the same ID in another project, keep everything.
     expect(await heldOf(shop, "grace", graces)).toEqual(EVERYTHING);
     expect(await heldOf(other, "ada", otherAdas)).toEqual(EVERYTHING);
-    // Off the disk with the next retention run.
-    await removeDeletedRows(dashboard.reader.client, { wait: true });
-    expect(await heldOf(shop, "ada", [], { onDisk: true })).toMatchObject({
-      events: 0,
-      aiCalls: 0,
-      firstSeen: 0,
-      spans: 0,
-      logs: 0,
-    });
+    // Off the disk with a retention run once the queued deletes are done.
+    await expect
+      .poll(
+        async () => {
+          await removeDeletedRows(dashboard.reader.client, { wait: true });
+          return heldOf(shop, "ada", [], { onDisk: true });
+        },
+        { timeout: 15_000 },
+      )
+      .toMatchObject({ events: 0, aiCalls: 0, firstSeen: 0, spans: 0, logs: 0 });
 
     // The record keeps when and by whom, not the user's ID.
     const [owner] = await dashboard.db.selectFrom("dashboard_users").select("id").execute();
@@ -491,5 +494,17 @@ describe("deleting one user's data", { timeout: 60_000 }, () => {
     }
     expect(statuses).toContain(429);
     expect(statuses.filter((status) => status === 202).length).toBeLessThanOrEqual(30);
+  });
+});
+
+describe("a failed deletion's message", () => {
+  test("keeps no user ID, as written or as ClickHouse quotes it", () => {
+    const error = new Error(
+      "Code: 47. DB::Exception: In scope SELECT ... WHERE user_id IN _CAST(['ada@example.com', 'o\\'neil', 'ada'], 'Array(String)')",
+    );
+    const message = withoutUserIds(error, ["ada", "o'neil", "ada@example.com"]);
+    expect(message).toBe(
+      "Error: Code: 47. DB::Exception: In scope SELECT ... WHERE user_id IN _CAST(['[user ID]', '[user ID]', '[user ID]'], 'Array(String)')",
+    );
   });
 });

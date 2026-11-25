@@ -1,7 +1,7 @@
 import { type Kysely, sql } from "kysely";
 
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
-import { deleteWhere } from "../clickhouse/delete-events.ts";
+import { deleteInBackground, deleteWhere } from "../clickhouse/delete-events.ts";
 import { AI_CALLS_TABLE, USER_FIRST_SEEN } from "../clickhouse/migrations.ts";
 import { QueryParams, queryRows } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
@@ -224,8 +224,9 @@ export async function deleteUsersData(
   const byAttribute = `project_id = ${project} AND (${USER_ID_ATTRIBUTES.map(
     (name) => `attributes['${name}'] IN ${users}`,
   ).join(" OR ")})`;
-  count(await deleteWhere(clickhouse, "spans", byAttribute, params));
-  count(await deleteWhere(clickhouse, "logs", byAttribute, params));
+  // No index finds an attribute's value, so these are queued, not counted.
+  await deleteInBackground(clickhouse, "spans", byAttribute, params);
+  await deleteInBackground(clickhouse, "logs", byAttribute, params);
   return { rows, replays };
 }
 
@@ -235,10 +236,27 @@ export interface DeletionRun {
   done: number;
   /** Deletions that failed and wait for a retry. */
   failed: number;
+  /** Rows deleted from events, AI calls, and first-seen times (spans and logs are not counted). */
   rows: number;
   replays: number;
-  /** The first failure, for the log. */
-  firstError?: unknown;
+  /** The first failure's message, for the log, without the user IDs it may quote. */
+  firstError?: string;
+}
+
+/**
+ * An error's message with each of `userIds` replaced, also as ClickHouse
+ * quotes it: ClickHouse writes a query's parameters into the query text
+ * that some of its errors quote, and the log and last_error must not keep
+ * the IDs of users being deleted.
+ */
+export function withoutUserIds(error: unknown, userIds: readonly string[]): string {
+  let message = String(error);
+  const longestFirst = userIds.toSorted((a, b) => b.length - a.length);
+  for (const id of longestFirst) {
+    const quoted = id.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+    message = message.replaceAll(quoted, "[user ID]").replaceAll(id, "[user ID]");
+  }
+  return message;
 }
 
 /**
@@ -290,14 +308,18 @@ export async function runUserDeletions(
       run.rows += deleted.rows;
       run.replays += deleted.replays;
     } catch (error) {
+      const message = withoutUserIds(
+        error,
+        deletions.map((row) => row.user_id),
+      );
       run.failed += deletions.length;
-      run.firstError ??= error;
+      run.firstError ??= message;
       for (const row of deletions) {
         await db
           .updateTable("user_deletions")
           .set({
             next_attempt_at: sql<Date>`now() + make_interval(secs => ${retryDelayMs(row.attempts) / 1000})`,
-            last_error: String(error).slice(0, 1000),
+            last_error: message.slice(0, 1000),
           })
           .where("id", "=", row.id)
           .where("completed_at", "is", null)

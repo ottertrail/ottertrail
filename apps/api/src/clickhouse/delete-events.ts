@@ -77,6 +77,26 @@ export async function deleteWhere(
 }
 
 /**
+ * Deletes `table`'s rows that match `where` without waiting for ClickHouse
+ * to mask them, and without counting them first: for filters no index
+ * helps, such as a user ID inside spans' and logs' attributes, where each
+ * pass reads the project's whole table and could outlast the request's
+ * time limit. ClickHouse keeps a queued deletion until it is done.
+ */
+export async function deleteInBackground(
+  clickhouse: ClickHouseClient,
+  table: (typeof PROJECT_TABLES)[number],
+  where: string,
+  params: QueryParams,
+): Promise<void> {
+  await clickhouse.command({
+    query: `DELETE FROM ${identifier(table)} WHERE ${where}`,
+    query_params: params.values,
+    clickhouse_settings: { lightweight_deletes_sync: "0" },
+  });
+}
+
+/**
  * Deletes each project's events, and its AI calls, that happened before
  * its cut-off, a thousand projects per statement, and returns how many
  * rows each had (both tables together). AI calls are kept as long as

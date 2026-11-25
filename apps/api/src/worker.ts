@@ -118,7 +118,7 @@ const stopUserDeletions = every(PURGE_INTERVAL_MS, async () => {
       if (!userDeletionsFailing) {
         log("error", "deleting users' data failed; it is tried again", {
           failed: run.failed,
-          err: String(firstError),
+          err: firstError,
         });
       }
       userDeletionsFailing = true;
