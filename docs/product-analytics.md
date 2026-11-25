@@ -139,7 +139,13 @@ The funnel page's address still holds the steps, the count, and the window, so a
 
 ## Retention
 
-Code: `apps/api/src/product/retention.ts`. For each signed-in user: the Monday of the week of their first event in the environment (their cohort), and every week they did something themselves, any event but time on page and Web Vitals. The report shows the cohorts whose week holds a day of the range, the latest 13, each with up to 12 weeks after, until the current week, which is not over yet and so can only grow.
+Code: `apps/api/src/product/retention.ts`. For each signed-in user: the Monday of the week of their first event in the environment (their cohort), and every week they did something themselves, any event but time on page and Web Vitals. The report shows every cohort whose week holds a day of the range, at most 54 since a range is at most 366 days, each with up to 12 weeks after, until the current week, which is not over yet and so can only grow.
+
+The period means "cohorts that started in this period". It is shared with the other tabs, which open on Last 7 days, and with one cohort a week, a period that short showed one or two rows and looked broken. So the Retention tab offers only periods of 4 weeks or more and opens on Last 90 days (about 13 cohorts); a shorter one from the address opens Last 90 days, and the picker says so. A cohort-count control was the other choice, but it would sit beside a period the page then ignored, so the picker and the table could disagree. Older cohorts are a longer period or a custom range away: the report no longer keeps only the latest 13, which hid cohorts the period named.
+
+The answer also carries `average`, one entry per week offset: the retained users and the users of the cohorts whose week at that offset is over, summed. Summing weights each cohort by its size, so a small cohort cannot swing the average, and leaving out a week in progress keeps it from reading low, since its count can only grow. Week 0 counts too, so its average is 100% once any cohort has finished its first week. An offset no cohort has finished is `{ users: 0, retained: 0 }`.
+
+When no cohort shows, the answer says whether the project has ever identified a user (`identifiesUsers`), so the page can tell setup from an empty period: `SELECT 1 FROM events WHERE project_id = … AND user_id IS NOT NULL LIMIT 1`, any environment, without `FINAL` since only existence matters. It filters by `project_id` first, the table's sort key, and stops at the first match; it runs only when the table is empty.
 
 A user's first week is over all the time the project keeps, so a cohort leaves out users seen before it, even long ago: the query reads every signed-in event of the environment up to the last cohort's last shown week, after which nothing can change the table. A user's cohort can move later when retention deletes their first events.
 
@@ -152,7 +158,7 @@ GET /api/projects/:id/funnel/breakdown?(the funnel's parameters)&by=p.plan
 GET /api/projects/:id/funnel/people?(the funnel's parameters, count=users)&step=2&outcome=dropped
 GET /api/projects/:id/funnel/trend?(the funnel's parameters)
 GET /api/projects/:id/funnel/times?(the funnel's parameters)
-GET /api/projects/:id/retention?period=90d
+GET /api/projects/:id/retention?period=90d&environment=production
 
 GET    /api/projects/:id/funnels
 GET    /api/projects/:id/funnels/results?period=7d&environment=production
