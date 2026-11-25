@@ -2,13 +2,41 @@
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cn } from "cn";
+import * as React from "react";
 
 function TooltipProvider({ delay = 0, ...props }: TooltipPrimitive.Provider.Props) {
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delay={delay} {...props} />;
 }
 
-function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
+/**
+ * Escape closes the tooltip and still reaches the page, so a list's Esc
+ * clears its selection while the pointer rests on a control with a tooltip.
+ * Base UI would stop it there, so the open state is kept here.
+ */
+function Tooltip({
+  open,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: TooltipPrimitive.Root.Props) {
+  const [ownOpen, setOwnOpen] = React.useState(defaultOpen);
+  const controlled = open !== undefined;
+  return (
+    <TooltipPrimitive.Root
+      data-slot="tooltip"
+      open={controlled ? open : ownOpen}
+      onOpenChange={(next, details) => {
+        const escape = details.reason === "escape-key";
+        if (escape) {
+          details.cancel();
+          details.allowPropagation();
+        }
+        onOpenChange?.(next, details);
+        if (!controlled && (escape || !details.isCanceled)) setOwnOpen(next);
+      }}
+      {...props}
+    />
+  );
 }
 
 function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {

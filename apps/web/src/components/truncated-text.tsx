@@ -156,12 +156,8 @@ function TooltipText({
   return (
     <Tooltip
       open={open}
-      onOpenChange={(next, details) => {
-        if (details.reason === "escape-key") {
-          // Let Escape reach the page too, so workbenches can clear selection.
-          details.cancel();
-          details.allowPropagation();
-        }
+      onOpenChange={(next) => {
+        // Escape also reaches the page (components/ui/tooltip.tsx).
         if (!next) setOpen(false);
         else if (!nested && measure()) setOpen(true);
       }}

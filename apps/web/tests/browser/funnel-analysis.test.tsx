@@ -38,6 +38,10 @@ const selectedRows = () =>
     (row) => row.querySelector("th")?.textContent,
   );
 
+/** How many tooltips are open. */
+const openTooltips = () =>
+  document.querySelectorAll("[data-slot=tooltip-content][data-open]").length;
+
 /** n saved funnels of visitors within a day. */
 const manyFunnels = (n: number): SavedFunnel[] =>
   Array.from({ length: n }, (_, i) => ({
@@ -81,6 +85,21 @@ describe("the saved funnels list's keys", () => {
       .poll(() => (router.state.location.search as { funnel?: string }).funnel)
       .toBe(PRICING);
     await expect.element(page.getByRole("heading", { name: "pricing to signup" })).toBeVisible();
+  });
+
+  test("Esc clears the row while a tooltip is open, and closes the tooltip", async () => {
+    installFakeApi();
+    renderApp(FUNNEL);
+    await expect.element(savedTable()).toBeVisible();
+    // The pointer resting on a control with a tooltip, as it may on CI.
+    await page.getByRole("button", { name: "Collapse sidebar" }).hover();
+    await expect.poll(openTooltips).toBe(1);
+
+    await userEvent.keyboard("j");
+    await expect.poll(selectedRows).toEqual(["pricing to signup"]);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(selectedRows).toEqual([]);
+    await expect.poll(openTooltips).toBe(0);
   });
 
   test("o opens the row moved to, even with focus elsewhere", async () => {
