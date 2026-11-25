@@ -71,8 +71,10 @@ import { markNavigated } from "@/lib/navigations";
 import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
 import {
   DEFAULT_FUNNEL_WINDOW,
+  type FunnelBreakdownBy,
   type FunnelStep,
   type FunnelWindow,
+  isBreakdownBy,
   isFunnelWindow,
   windowAllowed,
 } from "@/lib/product-api";
@@ -1318,7 +1320,8 @@ const productEventRoute = createRoute({
  * for visitors), and its window in seconds (left out for a day). A window
  * visitors cannot have falls back to a day. `funnel` is the saved funnel
  * last opened or saved, by ID; the steps stay in the address all the same,
- * so a link shows what was viewed.
+ * so a link shows what was viewed. `by` is the breakdown under the result
+ * ("deviceType" …, or "p.<property>"), left out for none.
  */
 const productFunnelRoute = createRoute({
   getParentRoute: () => productRoute,
@@ -1329,12 +1332,14 @@ const productFunnelRoute = createRoute({
       steps?: unknown;
       count?: unknown;
       window?: unknown;
+      by?: unknown;
     },
   ): ReturnType<typeof productRangeSearch> & {
     funnel: string | undefined;
     steps: FunnelStep[] | undefined;
     count: "users" | undefined;
     window: FunnelWindow | undefined;
+    by: FunnelBreakdownBy | undefined;
   } => {
     const steps = stepsFrom(search.steps);
     const count = search.count === "users" ? "users" : undefined;
@@ -1350,11 +1355,13 @@ const productFunnelRoute = createRoute({
       steps: steps.length === 0 ? undefined : steps,
       count,
       window,
+      by: steps.length > 0 && isBreakdownBy(search.by) ? search.by : undefined,
     };
   },
   component: withPage(FunnelPage, function ProductFunnelRouteComponent() {
     const { projectId } = productFunnelRoute.useParams();
-    const { period, from, to, env, funnel, steps, count, window } = productFunnelRoute.useSearch();
+    const { period, from, to, env, funnel, steps, count, window, by } =
+      productFunnelRoute.useSearch();
     return (
       <FunnelPage
         projectId={projectId}
@@ -1364,6 +1371,7 @@ const productFunnelRoute = createRoute({
         steps={steps ?? []}
         count={count ?? "visitors"}
         window={window ?? DEFAULT_FUNNEL_WINDOW}
+        by={by}
       />
     );
   }),

@@ -95,6 +95,22 @@ const SCREENS = [
     phone: { scroll: ["Funnel steps, with the visitors who reached each"] },
   },
   {
+    name: "a funnel of users, by browser",
+    path: funnelAddress(STEPS, "&count=users&window=3600&by=browser"),
+    ready: () =>
+      page.getByRole("table", { name: "Funnel steps by browser, with the users who reached each" }),
+    tables: [
+      "Funnel steps, with the users who reached each",
+      "Funnel steps by browser, with the users who reached each",
+    ],
+    phone: {
+      scroll: [
+        "Funnel steps, with the users who reached each",
+        "Funnel steps by browser, with the users who reached each",
+      ],
+    },
+  },
+  {
     name: "Retention",
     path: `${P}/product/retention`,
     ready: () =>

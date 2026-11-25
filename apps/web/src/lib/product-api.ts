@@ -122,6 +122,62 @@ export interface Funnel extends Answered {
   previous?: FunnelPrevious;
 }
 
+/**
+ * What a funnel can be broken down by (apps/api/src/product/funnel.ts,
+ * BREAKDOWN_COLUMNS), named as the Web analytics page names them; or
+ * "p.<key>", a property of step 1's event.
+ */
+export const BREAKDOWN_COLUMNS = [
+  { value: "deviceType", label: "Device" },
+  { value: "browser", label: "Browser" },
+  { value: "os", label: "Operating system" },
+  { value: "country", label: "Country" },
+  { value: "release", label: "Release" },
+] as const;
+export type BreakdownColumn = (typeof BREAKDOWN_COLUMNS)[number]["value"];
+/** A column, or "p.<key>". */
+export type FunnelBreakdownBy = BreakdownColumn | `p.${string}`;
+
+export const BREAKDOWN_PROPERTY_PREFIX = "p.";
+/** As the API checks a property name: 1 to 100 characters, no NUL. */
+// eslint-disable-next-line no-control-regex -- NUL is what it refuses
+const PROPERTY_KEY = /^[^\u0000]{1,100}$/u;
+
+export const isBreakdownBy = (value: unknown): value is FunnelBreakdownBy =>
+  typeof value === "string" &&
+  (BREAKDOWN_COLUMNS.some((item) => item.value === value) ||
+    (value.startsWith(BREAKDOWN_PROPERTY_PREFIX) &&
+      PROPERTY_KEY.test(value.slice(BREAKDOWN_PROPERTY_PREFIX.length))));
+
+/** One row of a breakdown: a value, the rest of the values, or no value. */
+export interface FunnelBreakdownRow {
+  kind: "value" | "other" | "unknown";
+  /** The value, for kind "value"; null otherwise. */
+  value: string | null;
+  /** People at each step. */
+  reached: number[];
+}
+
+/** GET /api/projects/:id/funnel/breakdown: the top 5 values by step 1, then Other, then Unknown. */
+export interface FunnelBreakdown extends Answered {
+  count: FunnelCount;
+  window: number;
+  by: string;
+  rows: FunnelBreakdownRow[];
+}
+
+/** Whom a list of people holds: those who stopped after a step, or reached the last. */
+export type PeopleOutcome = "dropped" | "converted";
+
+/** GET /api/projects/:id/funnel/people: up to `limit` users, most recent first, and the total. */
+export interface FunnelPeople extends Answered {
+  step: number;
+  outcome: PeopleOutcome;
+  limit: number;
+  total: number;
+  users: { userId: string; reachedAt: string }[];
+}
+
 /** One saved funnel's counts, in GET /api/projects/:id/funnels/results. */
 export interface SavedFunnelResult {
   id: string;
@@ -228,6 +284,32 @@ const isFunnel = (value: unknown): value is Funnel =>
   isListOf(value.steps, isStepResult) &&
   isPrevious(value.previous);
 
+const isBreakdownRow = (value: unknown): value is FunnelBreakdownRow =>
+  isRecord(value) &&
+  (value.kind === "value" || value.kind === "other" || value.kind === "unknown") &&
+  (value.value === null || isText(value.value)) &&
+  isListOf(value.reached, isNumber);
+
+const isFunnelBreakdown = (value: unknown): value is FunnelBreakdown =>
+  isRecord(value) &&
+  isAnswered(value) &&
+  isFunnelCount(value.count) &&
+  isNumber(value.window) &&
+  isText(value.by) &&
+  isListOf(value.rows, isBreakdownRow);
+
+const isPerson = (value: unknown): value is FunnelPeople["users"][number] =>
+  isRecord(value) && isText(value.userId) && isText(value.reachedAt);
+
+const isFunnelPeople = (value: unknown): value is FunnelPeople =>
+  isRecord(value) &&
+  isAnswered(value) &&
+  isNumber(value.step) &&
+  (value.outcome === "dropped" || value.outcome === "converted") &&
+  isNumber(value.limit) &&
+  isNumber(value.total) &&
+  isListOf(value.users, isPerson);
+
 const isSavedFunnelResult = (value: unknown): value is SavedFunnelResult =>
   isRecord(value) &&
   isText(value.id) &&
@@ -306,6 +388,20 @@ export const productEventQuery = (
     placeholderData: keepPreviousData,
   });
 
+/** A funnel's query: the range, its steps as the API's JSON, who it counts, and its window. */
+const funnelParams = (
+  range: PageRange,
+  environment: string,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  window: FunnelWindow,
+) => ({
+  ...rangeQuery(range, environment),
+  steps: JSON.stringify(steps),
+  count,
+  window: String(window),
+});
+
 /** An ordered funnel of 2 to 5 complete steps. */
 export const funnelQuery = (
   projectId: string,
@@ -320,16 +416,58 @@ export const funnelQuery = (
     queryFn: ({ signal }) =>
       get(
         `${projectPath(projectId)}/funnel`,
-        new URLSearchParams({
-          ...rangeQuery(range, environment),
-          steps: JSON.stringify(steps),
-          count,
-          window: String(window),
-        }),
+        new URLSearchParams(funnelParams(range, environment, steps, count, window)),
         signal,
         isFunnel,
       ),
     placeholderData: keepPreviousData,
+  });
+
+/** A funnel by one dimension: each person under the value on their step 1. */
+export const funnelBreakdownQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  window: FunnelWindow,
+  by: FunnelBreakdownBy,
+) =>
+  queryOptions({
+    queryKey: ["funnel", projectId, range, environment, steps, count, window, "by", by],
+    queryFn: ({ signal }) =>
+      get(
+        `${projectPath(projectId)}/funnel/breakdown`,
+        new URLSearchParams({ ...funnelParams(range, environment, steps, count, window), by }),
+        signal,
+        isFunnelBreakdown,
+      ),
+    placeholderData: keepPreviousData,
+  });
+
+/** The signed-in users who stopped after `step` (from 1), or converted at the last. */
+export const funnelPeopleQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  steps: readonly FunnelStep[],
+  window: FunnelWindow,
+  step: number,
+  outcome: PeopleOutcome,
+) =>
+  queryOptions({
+    queryKey: ["funnel", projectId, range, environment, steps, "users", window, "people", step],
+    queryFn: ({ signal }) =>
+      get(
+        `${projectPath(projectId)}/funnel/people`,
+        new URLSearchParams({
+          ...funnelParams(range, environment, steps, "users", window),
+          step: String(step),
+          outcome,
+        }),
+        signal,
+        isFunnelPeople,
+      ),
   });
 
 /**

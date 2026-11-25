@@ -1,7 +1,7 @@
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
-import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import { canUse, FORBIDDEN, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -25,16 +25,24 @@ import {
   type PropertyFilter,
 } from "./events.ts";
 import {
+  type Breakdown,
+  BREAKDOWN_NAMES,
   funnel,
+  funnelBreakdown,
   FUNNEL_COUNTS,
   FUNNEL_WINDOWS,
   type FunnelCount,
+  funnelPeople,
   funnelRefusal,
   type FunnelStep,
   funnelStepsOf,
   type FunnelWindow,
   INVALID_STEPS,
+  MAX_STEPS,
   MAX_VISITOR_WINDOW,
+  PEOPLE_LIMIT,
+  PEOPLE_OUTCOMES,
+  type PeopleOutcome,
   previousReadEnd,
 } from "./funnel.ts";
 import { retention } from "./retention.ts";
@@ -78,6 +86,44 @@ export function parseSteps(text: string): FunnelStep[] | null {
   }
 }
 
+type FunnelQuery = RangeQuery & { steps: string; count?: FunnelCount; window?: FunnelWindow };
+
+/** A funnel's query: the range, its steps as JSON, who it counts, its window, and `more`. */
+const funnelSchema = (more: Record<string, object> = {}, required: string[] = []) => ({
+  params: {
+    type: "object",
+    required: ["id"],
+    properties: { id: { type: "string", pattern: UUID_PATTERN } },
+  },
+  querystring: {
+    type: "object",
+    required: ["steps", ...required],
+    additionalProperties: false,
+    properties: {
+      ...RANGE_PROPERTIES,
+      steps: { type: "string", maxLength: 8000 },
+      count: { type: "string", enum: FUNNEL_COUNTS },
+      window: { type: "integer", enum: FUNNEL_WINDOWS },
+      ...more,
+    },
+  },
+});
+
+const INVALID_BREAKDOWN = {
+  error: "invalid_breakdown",
+  message: `by is one of ${BREAKDOWN_NAMES.join(", ")}, or p.<property>: a property name of 1 to 100 characters, without NUL.`,
+};
+
+/** "deviceType" … from the allow-list, or "p.plan": a property, named as the step filter's. */
+function breakdownOf(text: string): Breakdown | null {
+  if (text.startsWith(FILTER_PREFIX)) {
+    const property = text.slice(FILTER_PREFIX.length);
+    return KEY.test(property) ? { property } : null;
+  }
+  const column = BREAKDOWN_NAMES.find((name) => name === text);
+  return column === undefined ? null : { column };
+}
+
 const answer = (range: ProductRange) => ({
   timeZone: range.timeZone,
   environment: range.environment,
@@ -90,7 +136,7 @@ export const productRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results. */
+  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results, a breakdown, and a list of people. */
   limiter?: DashboardQueryLimiter;
   now?: () => Date;
 }> = (
@@ -127,6 +173,31 @@ export const productRoutes: FastifyPluginCallback<{
       },
       moment,
     };
+  }
+
+  /** A funnel's steps, count, and window, checked, and its range. */
+  async function funnelOf(request: {
+    query: FunnelQuery;
+    projectAccess: ProjectAccess | null;
+  }): Promise<
+    | {
+        range: ProductRange;
+        moment: Date;
+        steps: FunnelStep[];
+        count: FunnelCount;
+        window: FunnelWindow;
+      }
+    | { problem: { error: string; message: string } }
+  > {
+    const steps = parseSteps(request.query.steps);
+    if (steps === null) return { problem: INVALID_STEPS };
+    const count = request.query.count ?? "visitors";
+    const window = request.query.window ?? MAX_VISITOR_WINDOW;
+    const refusal = funnelRefusal(steps, count, window);
+    if (refusal !== null) return { problem: refusal };
+    const asked = await rangeOf(request);
+    if ("problem" in asked) return asked;
+    return { ...asked, steps, count, window };
   }
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
@@ -199,42 +270,16 @@ export const productRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.get<{
-    Params: { id: string };
-    Querystring: RangeQuery & { steps: string; count?: FunnelCount; window?: FunnelWindow };
-  }>(
+  app.get<{ Params: { id: string }; Querystring: FunnelQuery }>(
     "/projects/:id/funnel",
     {
       preHandler: [signedIn, canView],
-      schema: {
-        params: {
-          type: "object",
-          required: ["id"],
-          properties: { id: { type: "string", pattern: UUID_PATTERN } },
-        },
-        querystring: {
-          type: "object",
-          required: ["steps"],
-          additionalProperties: false,
-          properties: {
-            ...RANGE_PROPERTIES,
-            steps: { type: "string", maxLength: 8000 },
-            count: { type: "string", enum: FUNNEL_COUNTS },
-            window: { type: "integer", enum: FUNNEL_WINDOWS },
-          },
-        },
-      },
+      schema: funnelSchema(),
     },
     async (request, reply) => {
-      const steps = parseSteps(request.query.steps);
-      if (steps === null) return reply.code(400).send(INVALID_STEPS);
-      const count = request.query.count ?? "visitors";
-      const window = request.query.window ?? MAX_VISITOR_WINDOW;
-      const refusal = funnelRefusal(steps, count, window);
-      if (refusal !== null) return reply.code(400).send(refusal);
-      const asked = await rangeOf(request);
+      const asked = await funnelOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range, moment } = asked;
+      const { range, moment, steps, count, window } = asked;
       // The period before, compared as the Web analytics summary is (reports.ts, previousDays).
       const previous = await previousDays(
         db,
@@ -270,6 +315,93 @@ export const productRoutes: FastifyPluginCallback<{
           reached: earlier.map((step) => step.reached),
         },
       };
+    },
+  );
+
+  /**
+   * The funnel by one dimension (funnel.ts, funnelBreakdown): its own
+   * request, so choosing one leaves the funnel's answer as it is, and its
+   * query within the dashboard's query limit.
+   */
+  app.get<{ Params: { id: string }; Querystring: FunnelQuery & { by: string } }>(
+    "/projects/:id/funnel/breakdown",
+    {
+      preHandler: [signedIn, canView],
+      schema: funnelSchema({ by: { type: "string", minLength: 1, maxLength: 200 } }, ["by"]),
+    },
+    async (request, reply) => {
+      const by = breakdownOf(request.query.by);
+      if (by === null) return reply.code(400).send(INVALID_BREAKDOWN);
+      const asked = await funnelOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range, steps, count, window } = asked;
+      if ("property" in by && steps[0]?.type !== "event") {
+        return reply.code(400).send({
+          error: "invalid_breakdown",
+          message: "Only a funnel whose step 1 is an event can be broken down by a property.",
+        });
+      }
+      const rows = await funnelBreakdown(
+        dashboardReader(clickhouse, limiter, reply),
+        range,
+        steps,
+        count,
+        window,
+        by,
+      );
+      return { ...answer(range), count, window, by: request.query.by, rows };
+    },
+  );
+
+  /**
+   * The signed-in users whose furthest step is `step` (funnel.ts,
+   * funnelPeople). They are user IDs, so this needs the users area as
+   * well as product analytics, as the Users pages do.
+   */
+  app.get<{
+    Params: { id: string };
+    Querystring: FunnelQuery & { step: number; outcome: PeopleOutcome };
+  }>(
+    "/projects/:id/funnel/people",
+    {
+      preHandler: [signedIn, canView],
+      schema: funnelSchema(
+        {
+          step: { type: "integer", minimum: 1, maximum: MAX_STEPS },
+          outcome: { type: "string", enum: PEOPLE_OUTCOMES },
+        },
+        ["step", "outcome"],
+      ),
+    },
+    async (request, reply) => {
+      if (!canUse(accessOf(request).user, "users", "view")) {
+        return reply.code(403).send(FORBIDDEN);
+      }
+      const asked = await funnelOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range, steps, count, window } = asked;
+      const { step, outcome } = request.query;
+      if (count !== "users") {
+        return reply.code(400).send({
+          error: "people_need_users",
+          message: "Lists of people need a funnel that counts users. Visitor IDs are not people.",
+        });
+      }
+      const last = steps.length;
+      if (step > last || (outcome === "converted") !== (step === last)) {
+        return reply.code(400).send({
+          error: "invalid_step",
+          message: `"converted" is for the last step, ${last}; "dropped" for steps 1 to ${last - 1}.`,
+        });
+      }
+      const people = await funnelPeople(
+        dashboardReader(clickhouse, limiter, reply),
+        range,
+        steps,
+        window,
+        step,
+      );
+      return { ...answer(range), step, outcome, limit: PEOPLE_LIMIT, ...people };
     },
   );
 

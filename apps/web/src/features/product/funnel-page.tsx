@@ -14,12 +14,14 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WhenAllowed } from "@/components/when-allowed";
+import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { savedFunnelsQuery } from "@/lib/funnels-api";
 import {
   DEFAULT_FUNNEL_COUNT,
   DEFAULT_FUNNEL_WINDOW,
+  type FunnelBreakdownBy,
   type FunnelCount,
   type FunnelStep,
   type FunnelWindow,
@@ -32,13 +34,21 @@ import {
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { countLine, stepsLine, windowLabel } from "./format";
+import { FunnelBreakdownSection } from "./funnel-breakdown";
 import { FunnelEditorDialog } from "./funnel-editor-dialog";
+import { FunnelPeopleDialog, type PeopleList } from "./funnel-people-dialog";
 import { FunnelResults } from "./funnel-results";
 import { stepText } from "./funnel-steps";
 import { LoadFailed, Refreshing } from "./report-state";
 import { SaveFunnelActions } from "./save-funnel-actions";
 import { SavedFunnelsCard } from "./saved-funnels-card";
-import { type FunnelSearch, funnelSearchOf, isShownFunnel, productSearchOf } from "./search";
+import {
+  breakdownFor,
+  type FunnelSearch,
+  funnelSearchOf,
+  isShownFunnel,
+  productSearchOf,
+} from "./search";
 
 /** The definitions the funnel counts by (docs/product-analytics.md, "Funnel"). */
 function FunnelNotes({ window }: { window: FunnelWindow }) {
@@ -74,6 +84,8 @@ function FunnelNotes({ window }: { window: FunnelWindow }) {
           A page step matches pageviews with exactly that path. An event step's property filter
           compares values as text. Numbers, true, false, and null use their JSON representations.
         </li>
+        <li>A breakdown counts each person under the value on their first step 1 in the period.</li>
+        <li>Counted by users, each step lists who dropped off after it.</li>
       </ul>
     </details>
   );
@@ -133,6 +145,7 @@ export function FunnelPage({
   steps,
   count,
   window,
+  by: asked,
 }: {
   projectId: string;
   range: PageRange;
@@ -141,8 +154,12 @@ export function FunnelPage({
   steps: FunnelStep[];
   count: FunnelCount;
   window: FunnelWindow;
+  /** The breakdown under the result, from the address; not saved with a funnel. */
+  by?: FunnelBreakdownBy | undefined;
 }) {
   const navigate = useNavigate();
+  const access = useAccess();
+  const by = breakdownFor(asked, steps);
   const ready = steps.length >= MIN_STEPS;
   // Suggestions are optional; the funnel works without them.
   const events = useQuery(productEventsQuery(projectId, range, environment));
@@ -184,15 +201,25 @@ export function FunnelPage({
           },
   });
   const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
+  const [people, setPeople] = React.useState<PeopleList | null>(null);
   // Saving removes the trigger, so return focus to the funnel's heading.
   const titleRef = React.useRef<HTMLHeadingElement>(null);
-  const search: FunnelSearch = { range, environment, funnel, steps, count, window };
-  const show = (next: Partial<FunnelSearch>) =>
+  const search: FunnelSearch = { range, environment, funnel, steps, count, window, by };
+  const show = (next: Partial<FunnelSearch>) => {
+    const shown = { ...search, ...next };
     void navigate({
       to: "/projects/$projectId/product/funnel",
       params: { projectId },
-      search: funnelSearchOf({ ...search, ...next }),
+      // A property of step 1's event only while step 1 stays that event.
+      search: funnelSearchOf({
+        ...shown,
+        by:
+          JSON.stringify(shown.steps[0]) === JSON.stringify(steps[0])
+            ? shown.by
+            : breakdownFor(shown.by, []),
+      }),
     });
+  };
 
   if (
     (query.error instanceof ApiError && query.error.status === 404) ||
@@ -348,12 +375,35 @@ export function FunnelPage({
           )
         ) : (
           <Refreshing stale={query.isPlaceholderData}>
-            <FunnelResults funnel={data} />
+            <FunnelResults
+              funnel={data}
+              onPeople={access.canUse("users") ? setPeople : undefined}
+            />
           </Refreshing>
         )}
+        <FunnelBreakdownSection
+          projectId={projectId}
+          range={range}
+          environment={environment}
+          steps={steps}
+          count={count}
+          window={window}
+          by={by}
+          onBy={(next) => show({ by: next })}
+        />
         <FunnelNotes window={window} />
       </div>
       {editor}
+      <FunnelPeopleDialog
+        list={people}
+        onClose={() => setPeople(null)}
+        projectId={projectId}
+        range={range}
+        environment={environment}
+        steps={steps}
+        window={window}
+        timeZone={data?.timeZone ?? "UTC"}
+      />
     </div>
   );
 }

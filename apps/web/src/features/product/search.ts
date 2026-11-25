@@ -1,7 +1,9 @@
 import type { PageRange } from "@/lib/analytics-api";
 import {
+  BREAKDOWN_PROPERTY_PREFIX,
   DEFAULT_FUNNEL_COUNT,
   DEFAULT_FUNNEL_WINDOW,
+  type FunnelBreakdownBy,
   type FunnelCount,
   type FunnelStep,
   type FunnelWindow,
@@ -50,6 +52,8 @@ export interface FunnelSearch extends ProductSearch {
   steps: FunnelStep[];
   count: FunnelCount;
   window: FunnelWindow;
+  /** The breakdown under the result; never saved with a funnel. */
+  by?: FunnelBreakdownBy | undefined;
 }
 
 export const funnelSearchOf = ({
@@ -59,13 +63,22 @@ export const funnelSearchOf = ({
   steps,
   count,
   window,
+  by,
 }: FunnelSearch) => ({
   ...productSearchOf({ range, environment }),
   ...(funnel === undefined ? {} : { funnel }),
   ...(steps.length === 0 ? {} : { steps }),
   ...(count === DEFAULT_FUNNEL_COUNT ? {} : { count }),
   ...(window === DEFAULT_FUNNEL_WINDOW ? {} : { window }),
+  ...(by === undefined || steps.length === 0 ? {} : { by }),
 });
+
+/** A breakdown that fits the steps: a property only when step 1 is an event. */
+export const breakdownFor = (
+  by: FunnelBreakdownBy | undefined,
+  steps: readonly FunnelStep[],
+): FunnelBreakdownBy | undefined =>
+  by?.startsWith(BREAKDOWN_PROPERTY_PREFIX) === true && steps[0]?.type !== "event" ? undefined : by;
 
 /** The router parses compact JSON arrays; parse spaced JSON here. Invalid step lists become empty. */
 export function stepsFrom(value: unknown): FunnelStep[] {

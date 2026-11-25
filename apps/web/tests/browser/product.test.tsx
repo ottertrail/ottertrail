@@ -460,11 +460,18 @@ describe("the funnel", () => {
 
     const table = "Funnel steps, with the users who reached each";
     await expect.element(page.getByRole("table", { name: table })).toBeVisible();
-    // Each count with its change from the period before (800, 400, 100).
+    // Each count with its change from the period before (800, 400, 100), and,
+    // counted by users, who stopped there or converted.
     expect(tableRows(table)).toEqual([
-      ["1.Event signup where plan = team", "1,00025%Up 25% from 800", "100%", "–"],
-      ["2.Page /pricing", "4205%Up 5% from 400", "42%", "42%"],
-      ["3.Event purchase", "12626%Up 26% from 100", "13%", "30%"],
+      [
+        "1.Event signup where plan = team",
+        "1,00025%Up 25% from 800",
+        "100%",
+        "–",
+        "580 dropped off",
+      ],
+      ["2.Page /pricing", "4205%Up 5% from 400", "42%", "42%", "294 dropped off"],
+      ["3.Event purchase", "12626%Up 26% from 100", "13%", "30%", "126 converted"],
     ]);
     await expect
       .element(

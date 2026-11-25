@@ -10,6 +10,8 @@ What people do in an app, beyond which pages they open: the events a site sends,
 | One retention report                         | Done   |
 | Saved goals                                  | Done   |
 | Saved funnels                                | Done   |
+| A funnel's breakdown by one dimension        | Done   |
+| Who dropped off, for signed-in users         | Done   |
 
 ## Definitions
 
@@ -62,6 +64,20 @@ Choices: count by visitors (the default) or users, and a window of 5 or 30 minut
 
 The answer also counts the period before (`previous`: its days, `until`, and each step's `reached`), chosen as the Web analytics summary and the Overview choose it (`previousDays` in `reports/reports.ts`): the same number of days just before, in the instance's timezone, and while the period is still running, only up to the same time of day. Later steps of the period before are read only up to the moment that matches the period's own reading end (`previousReadEnd`): its end plus the window, or now if that comes first, moved back by the period's length. So a running period, whose later steps can only have happened up to now, compares with a period before whose later steps stop at the same point. The dashboard shows each count's change in percent and the overall conversion's in percentage points, and none when fewer than 20 people are counted in both periods, as the summary does.
 
+### Breakdown
+
+A funnel can be split by one dimension (`GET /api/projects/:id/funnel/breakdown`, the funnel's own parameters and `by`): the device type, browser, operating system, country, or release, named as the Web analytics page names them (`deviceType`, `browser`, `os`, `country`, `release`), or, when step 1 is an event, a property of that event (`p.<name>`, checked as a step filter's name is: 1 to 100 characters, no NUL). Anything else answers 400. The columns come from a fixed list in `funnel.ts` (`BREAKDOWN_COLUMNS`) and a property name goes to ClickHouse as a parameter, so `by` never becomes SQL.
+
+Each person counts once, under the value on their first step 1 event in the range (`argMinIf` beside `windowFunnel`, in the same pass over the events), so the rows add up to the funnel. The answer is the five values with the most people at step 1 (ties by name), then Other for the rest of the values, then Unknown for no value (an unrecognized browser, no location, an event without the property): at most seven rows, `{ kind, value, reached[] }` each, whatever the dimension holds. A property is compared as text, as a step filter compares it. The query runs through the dashboard's query limit, like the saved funnels' results. There is no period before for a breakdown.
+
+The visit's source and campaign are not offered: an event's own referrer is the page before it in the site, and its UTM tags those of its own page, so on a step 1 that is not the visit's first page they would read as "Direct". Splitting by them needs the visit's first event, not built.
+
+### Who dropped off
+
+For a funnel counted by users, `GET /api/projects/:id/funnel/people` (the funnel's parameters, `step`, and `outcome`) lists the users whose furthest step is `step`: `dropped` for steps 1 to _n_ - 1, those who did it and not the next; `converted` for the last step. Any other pairing, or a funnel of visitors, answers 400: a daily visitor ID is not a person anyone can look up. The list holds at most 100 user IDs, most recent first by the last time they did that step (step 1's inside the range), with `total`, the count of all of them, from the same query (`count() OVER ()`, before the `LIMIT`). It runs through the dashboard's query limit.
+
+It shows user IDs, so it needs the `users` area as well as `product_analytics` ([access](access.md#each-routes-need)); without it the answer is 403, and the dashboard shows the counts without the lists.
+
 ### Each saved funnel's result
 
 The saved funnels list shows each funnel's overall conversion, and the people at its first and last steps, for the page's period and environment. One request counts them all (`GET /api/projects/:id/funnels/results`): it reads the project's saved funnels from PostgreSQL and runs each one's funnel query through the dashboard's query limit (`telemetry/dashboard-limit.ts`), at most 2 at once for the request and 4 for the process. One request per funnel would have sent up to 50 at once, each with its own queries and no limit, and filled the browser's connections ahead of the rest of the page. The list's answer has no period before. Opening a saved funnel shows the list's counts at once, dimmed, until the funnel's own answer brings the comparison. A saved funnel whose stored steps no longer pass the checks gets no result. If the request fails, each row says so, with a Retry that asks again for all of them.
@@ -82,6 +98,9 @@ A user's first week is over all the time the project keeps, so a cohort leaves o
 GET /api/projects/:id/events?period=7d&environment=production
 GET /api/projects/:id/events/:name?period=7d&p.plan=team&p.seats=5
 GET /api/projects/:id/funnel?period=7d&steps=[{"type":"page","path":"/pricing"},{"type":"event","name":"signup"}]&count=visitors&window=86400
+GET /api/projects/:id/funnel/breakdown?(the funnel's parameters)&by=deviceType
+GET /api/projects/:id/funnel/breakdown?(the funnel's parameters)&by=p.plan
+GET /api/projects/:id/funnel/people?(the funnel's parameters, count=users)&step=2&outcome=dropped
 GET /api/projects/:id/retention?period=90d
 
 GET    /api/projects/:id/funnels
@@ -96,7 +115,8 @@ Like every project route, each runs the access check first. Saving, changing, or
 ## Not done yet
 
 - Goals by signed-in user instead of visitor, and a goal's trend over time.
-- Time between funnel steps, and who dropped off.
+- Time between funnel steps.
+- A funnel's breakdown by the visit's source or campaign, and by more than one dimension.
 - Retention by a chosen event instead of any event, and by day or month.
 - Property filters on the web analytics page, and other comparisons than "equals".
 - A time limit for report queries, and stopping a query when the browser stops waiting: a long range on a large project runs to its end.

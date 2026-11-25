@@ -56,6 +56,9 @@ import {
 import { WIDGETS, type WidgetId } from "../../src/lib/overview-api.ts";
 import {
   type Funnel,
+  type FunnelBreakdown,
+  type FunnelBreakdownRow,
+  type FunnelPeople,
   isFunnelCount,
   isFunnelStep,
   isFunnelWindow,
@@ -227,6 +230,10 @@ export interface FakeApi {
   productEvent: (name: string, query: URLSearchParams) => ProductEventDetail | Response;
   /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. A promise holds it. */
   funnel: (query: URLSearchParams) => Funnel | Response | Promise<Funnel | Response>;
+  /** Answers GET /api/projects/:id/funnel/breakdown; by default, fakeFunnelBreakdown. */
+  funnelBreakdown: (query: URLSearchParams) => FunnelBreakdown | Response;
+  /** Answers GET /api/projects/:id/funnel/people; by default, fakeFunnelPeople. */
+  funnelPeople: (query: URLSearchParams) => FunnelPeople | Response;
   /**
    * Answers GET /api/projects/:id/funnels/results; by default,
    * fakeFunnelResults. A promise holds it.
@@ -3025,6 +3032,89 @@ export function fakeFunnel(query: URLSearchParams): Funnel | Response {
   };
 }
 
+/**
+ * A breakdown's rows by its `by`: devices, a plan, or for anything else
+ * five browsers, Other, and Unknown, each cut to the funnel's steps.
+ */
+export const FUNNEL_BREAKDOWN_ROWS: Record<string, FunnelBreakdownRow[]> = {
+  deviceType: [
+    { kind: "value", value: "desktop", reached: [600, 300, 90, 40, 0] },
+    { kind: "value", value: "mobile", reached: [350, 100, 30, 8, 0] },
+    { kind: "unknown", value: null, reached: [50, 20, 6, 2, 0] },
+  ],
+  "p.plan": [
+    { kind: "value", value: "team", reached: [700, 350, 100, 45, 0] },
+    { kind: "value", value: "free", reached: [300, 70, 26, 5, 0] },
+  ],
+  other: [
+    { kind: "value", value: "Chrome", reached: [500, 230, 70, 30, 0] },
+    { kind: "value", value: "Safari", reached: [200, 80, 20, 8, 0] },
+    { kind: "value", value: "Firefox", reached: [100, 40, 12, 4, 0] },
+    { kind: "value", value: "Microsoft Edge", reached: [80, 30, 10, 3, 0] },
+    { kind: "value", value: "Samsung Internet", reached: [50, 20, 6, 2, 0] },
+    { kind: "other", value: null, reached: [40, 12, 5, 2, 0] },
+    { kind: "unknown", value: null, reached: [30, 8, 3, 1, 0] },
+  ],
+};
+
+/** The steps in a funnel's query, or null when they are not 2 to 5 steps. */
+function funnelStepsOf(query: URLSearchParams): unknown[] | null {
+  try {
+    const steps: unknown = JSON.parse(query.get("steps") ?? "");
+    return Array.isArray(steps) && steps.length >= 2 && steps.length <= 5 ? steps : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A funnel by one dimension: FUNNEL_BREAKDOWN_ROWS, cut to the steps asked for. */
+export function fakeFunnelBreakdown(query: URLSearchParams): FunnelBreakdown | Response {
+  const steps = funnelStepsOf(query);
+  const by = query.get("by") ?? "";
+  if (steps === null || by === "") {
+    return json({ error: "invalid_breakdown", message: "by and 2 to 5 steps, please." }, 400);
+  }
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    count: query.get("count") === "users" ? "users" : "visitors",
+    window: Number(query.get("window") ?? 86_400),
+    by,
+    rows: (FUNNEL_BREAKDOWN_ROWS[by] ?? FUNNEL_BREAKDOWN_ROWS.other ?? []).map((item) => ({
+      ...item,
+      reached: item.reached.slice(0, steps.length),
+    })),
+  };
+}
+
+/**
+ * The users at a step, as the API lists them: as many as FUNNEL_REACHED
+ * drops there (or converts at the last step), the 100 most recent shown,
+ * "user-1" the most recent.
+ */
+export function fakeFunnelPeople(query: URLSearchParams): FunnelPeople | Response {
+  const steps = funnelStepsOf(query);
+  const step = Number(query.get("step"));
+  const outcome = query.get("outcome") === "converted" ? "converted" : "dropped";
+  if (steps === null || query.get("count") !== "users") {
+    return json({ error: "people_need_users", message: "Lists need users." }, 400);
+  }
+  const reached = FUNNEL_REACHED[step - 1] ?? 0;
+  const total = step === steps.length ? reached : reached - (FUNNEL_REACHED[step] ?? 0);
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    step,
+    outcome,
+    limit: 100,
+    total,
+    users: Array.from({ length: Math.min(total, 100) }, (_, index) => ({
+      userId: `user-${index + 1}`,
+      reachedAt: new Date(Date.UTC(2026, 10, 16, 12) - index * 60_000).toISOString(),
+    })),
+  };
+}
+
 /** People reaching each step in the period before: 800 start. */
 export const FUNNEL_REACHED_BEFORE = [800, 400, 100, 50, 0];
 
@@ -4047,6 +4137,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.productEvent(decodeURIComponent(productEventPath[1]), url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/funnel\/breakdown$/.test(path)) {
+    const result = api.funnelBreakdown(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/funnel\/people$/.test(path)) {
+    const result = api.funnelPeople(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/funnel$/.test(path)) {
     const result = await api.funnel(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -4462,6 +4560,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
     funnel: fakeFunnel,
+    funnelBreakdown: fakeFunnelBreakdown,
+    funnelPeople: fakeFunnelPeople,
     funnelResults: fakeFunnelResults,
     retention: fakeRetention,
     resolutions: fakeResolutions(),

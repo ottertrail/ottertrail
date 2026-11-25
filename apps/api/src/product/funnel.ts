@@ -1,5 +1,5 @@
-import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
-import type { ProductRange } from "./events.ts";
+import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
+import { type ProductRange, propertyText } from "./events.ts";
 import { type Step, stepOf, stepSql, stepsOverlap } from "./steps.ts";
 
 /**
@@ -90,32 +90,13 @@ export async function funnel(
   steps: readonly FunnelStep[],
   count: FunnelCount,
   windowSeconds: FunnelWindow,
-  { until = new Date(range.to.getTime() + windowSeconds * 1000) }: { until?: Date } = {},
+  { until = readEnd(range, windowSeconds) }: { until?: Date } = {},
 ): Promise<FunnelStepResult[]> {
   const params = new QueryParams();
-  const conditions = steps.map((step) => stepSql(params, step));
-  const [first = "false", ...rest] = conditions;
-  const startsInRange = `(${first} AND occurred_at < ${params.time(range.to)})`;
-  // The column names are constants, never input.
-  const who = count === "visitors" ? "visitor_id" : "user_id";
   const rows = await queryRows<{ level: string; people: string }>(
     reader,
     `SELECT level, count() AS people
-     FROM (
-       SELECT ${who},
-              windowFunnel(${windowSeconds * 1000})(
-                toUInt64(toUnixTimestamp64Milli(occurred_at)),
-                ${[startsInRange, ...rest].join(",\n                ")}
-              ) AS level
-       FROM events FINAL
-       WHERE project_id = ${params.add(range.projectId, "UUID")}
-         AND environment = ${params.add(range.environment, "String")}
-         AND occurred_at >= ${params.time(range.from)}
-         AND occurred_at < ${params.time(until)}
-         AND ${who} IS NOT NULL
-         AND (${conditions.join(" OR ")})
-       GROUP BY ${who}
-     )
+     FROM (${perPersonSql(params, { range, steps, count, windowSeconds, until })})
      WHERE level > 0
      GROUP BY level`,
     params,
@@ -125,6 +106,211 @@ export async function funnel(
     step,
     reached: [...atLevel].reduce((sum, [level, people]) => (level > index ? sum + people : sum), 0),
   }));
+}
+
+/** What every funnel query reads: whom, the steps, and up to when. */
+interface FunnelReading {
+  range: ProductRange;
+  steps: readonly FunnelStep[];
+  count: FunnelCount;
+  windowSeconds: FunnelWindow;
+  until: Date;
+}
+
+/** The range's end plus the window, so a funnel started near the end can finish. */
+const readEnd = (range: ProductRange, windowSeconds: FunnelWindow) =>
+  new Date(range.to.getTime() + windowSeconds * 1000);
+
+/**
+ * One row per person who did any step: `person`, their furthest step
+ * (`level`, 0 when step 1 was not in the range), and the columns `more`
+ * adds, which may use each step's condition and `startsInRange` (step 1
+ * inside the range). Filtered by project first, then environment and time.
+ */
+function perPersonSql(
+  params: QueryParams,
+  { range, steps, count, windowSeconds, until }: FunnelReading,
+  more: (sql: { conditions: string[]; startsInRange: string }) => string[] = () => [],
+): string {
+  const conditions = steps.map((step) => stepSql(params, step));
+  const [first = "false", ...rest] = conditions;
+  const startsInRange = `(${first} AND occurred_at < ${params.time(range.to)})`;
+  // The column names are constants, never input.
+  const who = count === "visitors" ? "visitor_id" : "user_id";
+  const extra = more({ conditions, startsInRange }).map((column) => `, ${column}`);
+  return `
+       SELECT ${who} AS person,
+              windowFunnel(${windowSeconds * 1000})(
+                toUInt64(toUnixTimestamp64Milli(occurred_at)),
+                ${[startsInRange, ...rest].join(",\n                ")}
+              ) AS level${extra.join("")}
+       FROM events FINAL
+       WHERE project_id = ${params.add(range.projectId, "UUID")}
+         AND environment = ${params.add(range.environment, "String")}
+         AND occurred_at >= ${params.time(range.from)}
+         AND occurred_at < ${params.time(until)}
+         AND ${who} IS NOT NULL
+         AND (${conditions.join(" OR ")})
+       GROUP BY ${who}`;
+}
+
+/**
+ * What a funnel can be broken down by: columns every event has, named as
+ * the Web analytics page names them, or a property of step 1's event
+ * (docs/product-analytics.md, "Breakdown"). The visit's source is left
+ * out: an event's own referrer is the page before it in the site, not
+ * where the visit came from.
+ */
+export const BREAKDOWN_COLUMNS = {
+  deviceType: "device_type",
+  browser: "browser",
+  os: "os",
+  country: "country",
+  release: "release",
+} as const;
+export type BreakdownColumn = keyof typeof BREAKDOWN_COLUMNS;
+export const BREAKDOWN_NAMES: readonly BreakdownColumn[] = [
+  "deviceType",
+  "browser",
+  "os",
+  "country",
+  "release",
+];
+
+export type Breakdown = { column: BreakdownColumn } | { property: string };
+
+/** Values shown by name; the rest add up to Other. */
+export const BREAKDOWN_VALUES = 5;
+
+export interface BreakdownRow {
+  /** A value, the rest of the values ("other"), or no value ("unknown"). */
+  kind: "value" | "other" | "unknown";
+  /** The value, for kind "value"; null otherwise. */
+  value: string | null;
+  /** People at each step, as in the funnel. */
+  reached: number[];
+}
+
+const KIND_ORDER = { value: 0, other: 1, unknown: 2 } as const;
+
+/**
+ * The funnel per value of one dimension. Each person counts once, under
+ * the value on their first step 1 event in the range, so the rows add up
+ * to the funnel. The top BREAKDOWN_VALUES values by step 1, then Other,
+ * then Unknown: at most seven rows, whatever the dimension holds.
+ */
+export async function funnelBreakdown(
+  reader: Reader,
+  range: ProductRange,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  windowSeconds: FunnelWindow,
+  by: Breakdown,
+): Promise<BreakdownRow[]> {
+  const params = new QueryParams();
+  // A column from the allow-list, or a property name as a parameter; "" is no value.
+  const valueSql =
+    "column" in by
+      ? `ifNull(${BREAKDOWN_COLUMNS[by.column]}, '')`
+      : propertyText(params.add(by.property, "String"));
+  const perPerson = perPersonSql(
+    params,
+    { range, steps, count, windowSeconds, until: readEnd(range, windowSeconds) },
+    ({ startsInRange }) => [
+      `argMinIf(${valueSql}, occurred_at, ${startsInRange}) AS dimension_value`,
+    ],
+  );
+  // Step counts are constants from the validated steps, never input.
+  const reached = steps.map((_, index) => `countIf(level > ${index}) AS r${index}`);
+  const sums = steps.map((_, index) => `sum(r${index}) AS r${index}`);
+  const rows = await queryRows<Record<string, string>>(
+    reader,
+    `SELECT multiIf(dimension_value = '', 'unknown', place <= ${BREAKDOWN_VALUES}, 'value', 'other') AS kind,
+            if(kind = 'value', dimension_value, '') AS shown,
+            ${sums.join(", ")}
+     FROM (
+       SELECT *,
+              row_number() OVER (
+                PARTITION BY dimension_value = '' ORDER BY r0 DESC, dimension_value ASC
+              ) AS place
+       FROM (
+         SELECT dimension_value, ${reached.join(", ")}
+         FROM (${perPerson})
+         WHERE level > 0
+         GROUP BY dimension_value
+       )
+     )
+     GROUP BY kind, shown`,
+    params,
+  );
+  return rows
+    .map((row): BreakdownRow => {
+      const kind = row.kind === "value" || row.kind === "other" ? row.kind : "unknown";
+      return {
+        kind,
+        value: kind === "value" ? String(row.shown) : null,
+        reached: steps.map((_, index) => Number(row[`r${index}`])),
+      };
+    })
+    .toSorted(
+      (a, b) =>
+        KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+        (b.reached[0] ?? 0) - (a.reached[0] ?? 0) ||
+        (a.value ?? "").localeCompare(b.value ?? ""),
+    );
+}
+
+/** Users listed per step; the total says how many there are in all. */
+export const PEOPLE_LIMIT = 100;
+
+export const PEOPLE_OUTCOMES = ["dropped", "converted"] as const;
+export type PeopleOutcome = (typeof PEOPLE_OUTCOMES)[number];
+
+export interface FunnelPeople {
+  /** Every user whose furthest step it is. */
+  total: number;
+  /** Up to PEOPLE_LIMIT, most recent first. */
+  users: { userId: string; reachedAt: string }[];
+}
+
+/**
+ * The signed-in users whose furthest step is `step` (from 1): at the last
+ * step those who converted, before it those who dropped off after it.
+ * Most recent first by the last time they did that step in the reading
+ * (step 1's inside the range), at most PEOPLE_LIMIT, with the total.
+ */
+export async function funnelPeople(
+  reader: Reader,
+  range: ProductRange,
+  steps: readonly FunnelStep[],
+  windowSeconds: FunnelWindow,
+  step: number,
+): Promise<FunnelPeople> {
+  const params = new QueryParams();
+  const index = step - 1;
+  const perPerson = perPersonSql(
+    params,
+    { range, steps, count: "users", windowSeconds, until: readEnd(range, windowSeconds) },
+    ({ conditions, startsInRange }) => [
+      `maxIf(occurred_at, ${index === 0 ? startsInRange : (conditions[index] ?? "false")}) AS reached_at`,
+    ],
+  );
+  const rows = await queryRows<{ person: string; reached_at: string; total: string }>(
+    reader,
+    `SELECT person, reached_at, count() OVER () AS total
+     FROM (${perPerson})
+     WHERE level = ${params.add(step, "UInt8")}
+     ORDER BY reached_at DESC, person ASC
+     LIMIT ${PEOPLE_LIMIT}`,
+    params,
+  );
+  return {
+    total: Number(rows[0]?.total ?? 0),
+    users: rows.map((row) => ({
+      userId: row.person,
+      reachedAt: fromClickHouseTime(row.reached_at).toISOString(),
+    })),
+  };
 }
 
 /**
