@@ -293,7 +293,7 @@ On a user's page, each error the page recorded a replay for links to it ("Play r
 - Replays are kept 30 days, the shortest retention a project can choose for events, so a replay outlives its error by a day at most. The worker deletes expired replays, object and row, itself rather than through the store's lifecycle rules, which differ from one store to another.
 - Deleting a project deletes its replays, everything under its key prefix, through the same `project_deletions` path as events ([ClickHouse](clickhouse.md#retention-and-deleting-a-project)).
 - Turning replay off keeps the recordings already made until they expire; the setting offers to delete them now.
-- A recording carries no user or visitor ID. Its row in PostgreSQL keeps the user ID of its first error, copied from that error event, so the user's page can list it. Deleting one user's data (not built) will have to delete those replays, and their rows.
+- A recording carries no user or visitor ID. Its row in PostgreSQL keeps the user ID of its first error, copied from that error event, so the user's page can list it. Deleting one user's data deletes those replays, object and row, and any replay whose error event has the user's ID, before its row is linked ([data](data.md#deleting-one-users-data)).
 
 ## What has been tested end to end
 

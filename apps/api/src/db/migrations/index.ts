@@ -28,6 +28,7 @@ import * as replayChunkUnpackedBytes from "./0025_replay_chunk_unpacked_bytes.ts
 import * as heatmapOverlayScope from "./0026_heatmap_overlay_scope.ts";
 import * as projectLocationSource from "./0027_project_location_source.ts";
 import * as projectTelemetryRetention from "./0028_project_telemetry_retention.ts";
+import * as userDeletions from "./0029_user_deletions.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -65,4 +66,5 @@ export const migrations: Record<string, Migration> = {
   "0026_heatmap_overlay_scope": heatmapOverlayScope,
   "0027_project_location_source": projectLocationSource,
   "0028_project_telemetry_retention": projectTelemetryRetention,
+  "0029_user_deletions": userDeletions,
 };

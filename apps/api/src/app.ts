@@ -39,6 +39,7 @@ import { heatmapOverlayRoutes } from "./heatmaps/overlay-routes.ts";
 import { heatmapCollectionRoutes } from "./heatmaps/routes.ts";
 import { heatmapSnapshotRoutes } from "./heatmaps/snapshot-routes.ts";
 import { userRoutes } from "./identities/routes.ts";
+import { userDeletionRoutes } from "./identities/server-routes.ts";
 import type { Mailer } from "./notifications/email.ts";
 import { inboxRoutes } from "./notifications/inbox-routes.ts";
 import { LinkSealer } from "./notifications/link-sealer.ts";
@@ -153,6 +154,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
     /** Uploads one process stores at once (source-maps/routes.ts). */
     maxInFlight?: number;
   };
+  /** POST /api/user-deletions' limit per client address (identities/server-routes.ts). */
+  userDeletions?: { ipLimit?: RateLimit };
   /** Replay storage and collection limits (docs/session-replay.md). */
   replays?: {
     limitBytes: number;
@@ -296,6 +299,7 @@ export function buildApp({
   locationData,
   sourceMaps = { limitBytes: DEFAULT_SOURCE_MAP_STORAGE_BYTES },
   replays = { limitBytes: DEFAULT_REPLAY_STORAGE_BYTES },
+  userDeletions = {},
   heatmaps = {},
   telemetry = {},
   aiCalls = {},
@@ -408,6 +412,12 @@ export function buildApp({
     limitBytes: sourceMaps.limitBytes,
     ...(sourceMaps.ipLimit === undefined ? {} : { ipLimit: sourceMaps.ipLimit }),
     ...(sourceMaps.maxInFlight === undefined ? {} : { maxInFlight: sourceMaps.maxInFlight }),
+  });
+  app.register(userDeletionRoutes, {
+    prefix: "/api",
+    db,
+    projects: projectKeys,
+    ...userDeletions,
   });
   const telemetryClickHouse = telemetry.clickhouse ?? dashboard?.clickhouse;
   if (telemetryClickHouse !== undefined) {
@@ -547,6 +557,7 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
     });
     app.register(goalRoutes, {
       prefix: "/api",

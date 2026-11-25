@@ -95,7 +95,7 @@ import type {
   TraceSummary,
 } from "../../src/lib/traces-api.ts";
 import type { Check, CheckResults, IncidentList } from "../../src/lib/uptime-api.ts";
-import type { Activity, User, UserActivity, UserList } from "../../src/lib/users-api.ts";
+import type { Activity, ListedUser, UserActivity, UserList } from "../../src/lib/users-api.ts";
 import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fake-account.ts";
 import { answerAiCalls, type FakeAiCalls, fakeAiCalls } from "./fake-ai-calls.ts";
 import { answerAiModels, type FakeAiModels, fakeAiModels } from "./fake-ai-models.ts";
@@ -198,9 +198,17 @@ export interface FakeApi {
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
   /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
-  users: (query: URLSearchParams) => UserList | Response;
+  users: (query: URLSearchParams, api: FakeApi) => UserList | Response;
   /** Answers GET /api/projects/:id/users/:userId; by default, fakeUser. */
-  user: (userId: string, query: URLSearchParams) => UserActivity | Response;
+  user: (userId: string, query: URLSearchParams, api: FakeApi) => UserActivity | Response;
+  /**
+   * The users whose data is being deleted, oldest first: DELETE
+   * /api/projects/:id/users/:userId adds one (the owner and admins only), and
+   * fakeUsers and fakeUser say so.
+   */
+  userDeletions: string[];
+  /** An answer DELETE …/users/:userId gets instead of 202, such as a 503; null starts the deletion. */
+  userDeletionRefusal: Response | null;
   /** Answers GET /api/projects/:id/errors; by default, fakeErrors. */
   errors: (query: URLSearchParams, api: FakeApi) => ErrorList | Response;
   /** Answers GET /api/projects/:id/errors/:fingerprint; by default, fakeError. */
@@ -373,28 +381,49 @@ export interface FakeApi {
   bodies: { method: string; path: string; body: unknown }[];
 }
 
-/** 120 known users, user-1 seen most recently, searched and paged as the API does. */
-export function fakeUsers(query: URLSearchParams): UserList {
+/** When the fake API says a pending deletion of a user's data was asked for. */
+export const DELETION_REQUESTED_AT = "2026-11-16T08:05:00.000Z";
+
+/** The pending deletions as GET …/users answers them: the count, and the oldest ten. */
+export function pendingDeletionsOf(userIds: readonly string[]): UserList["pendingDeletions"] {
+  return {
+    count: userIds.length,
+    users: userIds.slice(0, 10).map((userId) => ({ userId, requestedAt: DELETION_REQUESTED_AT })),
+  };
+}
+
+/**
+ * 120 known users, user-1 seen most recently, searched and paged as the API
+ * does; those in the fake API's userDeletions are being deleted.
+ */
+export function fakeUsers(query: URLSearchParams, api?: FakeApi): UserList {
   const search = (query.get("search") ?? "").toLowerCase();
   const offset = Number(query.get("offset") ?? 0);
-  const all: User[] = Array.from({ length: 120 }, (_, i) => ({
+  const deleting = api?.userDeletions ?? [];
+  const all: ListedUser[] = Array.from({ length: 120 }, (_, i) => ({
     userId: `user-${i + 1}`,
     firstSeenAt: "2026-11-01T02:00:00.000Z",
     lastSeenAt: new Date(Date.UTC(2026, 10, 16, 8, 0) - i * 3_600_000).toISOString(),
     events: 120 - i,
+    deletionPending: deleting.includes(`user-${i + 1}`),
   })).filter((user) => user.userId.includes(search));
   return {
     timeZone: "Asia/Singapore",
     environment: query.get("environment") ?? "production",
     signedUserIdsRequired: false,
     environments: ["production"],
+    pendingDeletions: pendingDeletionsOf(deleting),
     users: all.slice(offset, offset + 50),
     hasMore: offset + 50 < all.length,
   };
 }
 
 /** Ada's activity: 150 pageviews and signups, newest first, paged back by cursor as the API does. */
-export function fakeUser(userId: string, query: URLSearchParams): UserActivity | Response {
+export function fakeUser(
+  userId: string,
+  query: URLSearchParams,
+  api?: FakeApi,
+): UserActivity | Response {
   if (userId !== "ada") {
     return json(
       { error: "not_found", message: "No event in this environment has this user ID." },
@@ -424,6 +453,8 @@ export function fakeUser(userId: string, query: URLSearchParams): UserActivity |
     timeZone: "Asia/Singapore",
     environment: query.get("environment") ?? "production",
     signedUserIdsRequired: false,
+    deletionRequestedAt:
+      api?.userDeletions.includes(userId) === true ? DELETION_REQUESTED_AT : null,
     user: {
       userId,
       firstSeenAt: all.at(-1)?.occurredAt ?? "",
@@ -4235,7 +4266,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return new Response(null, { status: 204 });
   }
   if (/^\/api\/projects\/[^/]+\/users$/.test(path)) {
-    const result = api.users(url.searchParams);
+    const result = api.users(url.searchParams, api);
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/events$/.test(path)) {
@@ -4549,8 +4580,25 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return result instanceof Response ? result : json(result);
   }
   const userPath = /^\/api\/projects\/[^/]+\/users\/([^/]+)$/.exec(path);
+  if (userPath?.[1] !== undefined && init?.method === "DELETE") {
+    // As the API: the projects permission, the owner's and admins'.
+    if (api.access.role === "member") {
+      return json(
+        {
+          error: "forbidden",
+          message:
+            "You don't have access to this. Ask the instance's owner or an admin if you need it.",
+        },
+        403,
+      );
+    }
+    if (api.userDeletionRefusal !== null) return api.userDeletionRefusal;
+    const userId = decodeURIComponent(userPath[1]);
+    if (!api.userDeletions.includes(userId)) api.userDeletions = [...api.userDeletions, userId];
+    return json({ deletion: { requestedAt: DELETION_REQUESTED_AT } }, 202);
+  }
   if (userPath?.[1] !== undefined) {
-    const result = api.user(decodeURIComponent(userPath[1]), url.searchParams);
+    const result = api.user(decodeURIComponent(userPath[1]), url.searchParams, api);
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
@@ -4671,6 +4719,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     list: fakeList,
     users: fakeUsers,
     user: fakeUser,
+    userDeletions: [],
+    userDeletionRefusal: null,
     errors: fakeErrors,
     error: fakeError,
     setErrorStatus: changeErrorStatus,

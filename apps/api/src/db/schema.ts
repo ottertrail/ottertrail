@@ -91,6 +91,25 @@ export interface ProjectDeletionsTable {
   deleted_at: DatabaseDefault<Date>;
 }
 
+/**
+ * A request to delete one known user's data (identities/deletions.ts,
+ * migration 0029). The user ID is cleared once the worker has done it.
+ */
+export interface UserDeletionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  project_id: ColumnType<string, string, never>;
+  /** The end user's ID while pending; null once done. */
+  user_id: ColumnType<string | null, string, null>;
+  requested_at: ColumnType<Date, Date | undefined, never>;
+  /** The dashboard user who asked; null for the secret key, or once that user is removed. */
+  requested_by: ColumnType<string | null, string | null, never>;
+  requested_with: ColumnType<"dashboard" | "secret_key", "dashboard" | "secret_key", never>;
+  attempts: ColumnType<number, number | undefined, number>;
+  next_attempt_at: ColumnType<Date, Date | undefined, Date>;
+  last_error: Nullable<string>;
+  completed_at: ColumnType<Date | null, never, Date>;
+}
+
 /** Why a check's request failed (uptime/request.ts). */
 export type CheckCause =
   | "timeout"
@@ -778,6 +797,7 @@ export interface Database {
   instance_settings: InstanceSettingsTable;
   projects: ProjectsTable;
   project_deletions: ProjectDeletionsTable;
+  user_deletions: UserDeletionsTable;
   error_resolutions: ErrorResolutionsTable;
   goals: GoalsTable;
   saved_funnels: SavedFunnelsTable;

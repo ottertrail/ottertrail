@@ -34,6 +34,7 @@ import { type Activity, type ActivityError, userQuery } from "@/lib/users-api";
 import { countryName } from "../analytics/format";
 import { ARRIVING_HINT } from "../errors/occurrence-replay";
 import { formatReplayDuration, pagesText } from "../replays/format";
+import { DeleteUserDialog } from "./delete-user-dialog";
 import { dayKey, formatLongDay, formatMoment, formatTime, rangeCovering } from "./format";
 import { UnverifiedIdsNotice } from "./unverified-ids-notice";
 import { UserAi } from "./user-ai";
@@ -314,8 +315,34 @@ export function UserView({
           {inWorkbench && (
             <h2 className="min-w-0 font-mono text-xl font-semibold break-all text-ink">{userId}</h2>
           )}
-          {actions}
+          {(actions !== undefined ||
+            (first !== undefined && first.deletionRequestedAt === null)) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {actions}
+              {first !== undefined && first.deletionRequestedAt === null && (
+                <WhenAllowed permission="projects">
+                  <DeleteUserDialog
+                    projectId={projectId}
+                    userId={userId}
+                    environment={environment}
+                  />
+                </WhenAllowed>
+              )}
+            </div>
+          )}
         </div>
+        {first !== undefined && first.deletionRequestedAt !== null && (
+          <Alert role="note">
+            <LoaderCircleIcon
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+            />
+            <AlertTitle>Deleting this user&apos;s data</AlertTitle>
+            <AlertDescription>
+              Started {formatMoment(first.deletionRequestedAt, timeZone)}.
+            </AlertDescription>
+          </Alert>
+        )}
         {first !== undefined && (
           <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
             <div>

@@ -13,6 +13,7 @@ import { ButtonLink } from "@/components/button-link";
 import { CopyableCode } from "@/components/copyable-code";
 import { FilterBar } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
+import { StatusBadge } from "@/components/status-badge";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,7 @@ import { NARROW_WORKBENCH, useMediaQuery } from "@/hooks/use-media-query";
 import { useSettled } from "@/hooks/use-settled";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type User, usersQuery } from "@/lib/users-api";
+import { type ListedUser, type PendingDeletions, type User, usersQuery } from "@/lib/users-api";
 
 import { formatWhole } from "../analytics/format";
 import { NoSuchProject } from "../projects/no-such-project";
@@ -102,6 +103,28 @@ function NoUsersYet() {
   );
 }
 
+/** The project's deletions of users' data that the server has not finished. */
+function PendingDeletionsNotice({ pending }: { pending: PendingDeletions }) {
+  if (pending.count === 0) return null;
+  const more = pending.count - pending.users.length;
+  return (
+    <Alert role="note">
+      <LoaderCircleIcon aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+      <AlertTitle>
+        {pending.count === 1
+          ? "Deleting the data of 1 user"
+          : `Deleting the data of ${formatWhole(pending.count)} users`}
+      </AlertTitle>
+      <AlertDescription className="break-all">
+        <p>
+          <span className="font-mono">{pending.users.map((user) => user.userId).join(", ")}</span>
+          {more > 0 && ` and ${formatWhole(more)} more`}. It takes about a minute.
+        </p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function UserTable({
   users,
   projectId,
@@ -110,7 +133,7 @@ function UserTable({
   selected,
   select,
 }: {
-  users: readonly User[];
+  users: readonly ListedUser[];
   projectId: string;
   environment: string;
   timeZone: string | undefined;
@@ -142,20 +165,36 @@ function UserTable({
           return (
             <TableRow key={user.userId} {...workbenchRow(user.userId, chosen)}>
               <TableCell className={`${GUTTER_START} py-2.5 font-mono`}>
-                <TruncatedText
-                  text={user.userId}
-                  className="rounded-sm text-link hover:underline"
-                  render={
-                    <Link
-                      to="/projects/$projectId/users/$userId"
-                      params={{ projectId, userId: user.userId }}
-                      search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
-                      aria-current={chosen ? "true" : undefined}
-                      {...ROW_LINK}
-                      onClick={selectOnPlainClick(select, user.userId)}
-                    />
-                  }
-                />
+                <div className="flex min-w-0 items-center gap-2">
+                  <TruncatedText
+                    text={user.userId}
+                    className="rounded-sm text-link hover:underline"
+                    render={
+                      <Link
+                        to="/projects/$projectId/users/$userId"
+                        params={{ projectId, userId: user.userId }}
+                        search={environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }}
+                        aria-current={chosen ? "true" : undefined}
+                        {...ROW_LINK}
+                        onClick={selectOnPlainClick(select, user.userId)}
+                      />
+                    }
+                  />
+                  {user.deletionPending && (
+                    <StatusBadge
+                      tone="neutral"
+                      className="font-sans"
+                      icon={
+                        <LoaderCircleIcon
+                          aria-hidden="true"
+                          className="animate-spin motion-reduce:animate-none"
+                        />
+                      }
+                    >
+                      Deleting
+                    </StatusBadge>
+                  )}
+                </div>
               </TableCell>
               <TableCell
                 className="truncate py-2.5"
@@ -314,9 +353,13 @@ export function UsersPage({
   }
 
   const noneYet = first !== undefined && users.length === 0 && search === "";
-  const unverified = first !== undefined && !first.signedUserIdsRequired && (
-    <UnverifiedIdsNotice projectId={projectId} />
-  );
+  const notices = first !== undefined &&
+    (!first.signedUserIdsRequired || first.pendingDeletions.count > 0) && (
+      <div className="flex flex-col gap-3">
+        <PendingDeletionsNotice pending={first.pendingDeletions} />
+        {!first.signedUserIdsRequired && <UnverifiedIdsNotice projectId={projectId} />}
+      </div>
+    );
   const filterBar = (
     <FilterBar
       label="Environment and search"
@@ -376,7 +419,7 @@ export function UsersPage({
       <div className="flex flex-col">
         {filterBar}
         <div className="flex flex-col gap-4 px-gutter py-5">
-          {unverified}
+          {notices}
           {list.isPending ? (
             <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
               <Skeleton className="h-10 w-full" />
@@ -416,7 +459,7 @@ export function UsersPage({
   return (
     <div className="flex flex-col min-[64rem]:h-full min-[64rem]:min-h-0">
       {filterBar}
-      {unverified && <div className="px-gutter pt-4">{unverified}</div>}
+      {notices && <div className="px-gutter pt-4">{notices}</div>}
       <Workbench
         label="Users"
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"

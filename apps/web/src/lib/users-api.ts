@@ -14,6 +14,17 @@ export interface User {
   events: number;
 }
 
+/** A user in the list, and whether the deletion of their data is pending. */
+export interface ListedUser extends User {
+  deletionPending: boolean;
+}
+
+/** The project's deletions of users' data still to be done: how many, and the oldest few. */
+export interface PendingDeletions {
+  count: number;
+  users: { userId: string; requestedAt: string }[];
+}
+
 /** One page of GET /api/projects/:id/users. */
 export interface UserList {
   timeZone: string;
@@ -21,7 +32,8 @@ export interface UserList {
   /** Whether the project accepts only user IDs signed by its server; if not, anyone with the public key could send any ID. */
   signedUserIdsRequired: boolean;
   environments: string[];
-  users: User[];
+  pendingDeletions: PendingDeletions;
+  users: ListedUser[];
   hasMore: boolean;
 }
 
@@ -59,6 +71,8 @@ export interface UserActivity {
   environment: string;
   /** Whether the project accepts only user IDs signed by its server; if not, anyone with the public key could send any ID. */
   signedUserIdsRequired: boolean;
+  /** When the deletion of the user's data was asked for, while it is pending; null otherwise. */
+  deletionRequestedAt: string | null;
   user: User;
   activity: Activity[];
   hasMore: boolean;
@@ -78,6 +92,15 @@ const isUser = (value: unknown): value is User =>
   isText(value.lastSeenAt) &&
   typeof value.events === "number";
 
+const isListedUser = (value: unknown): value is ListedUser =>
+  isUser(value) && isRecord(value) && typeof value.deletionPending === "boolean";
+
+const isPendingDeletions = (value: unknown): value is PendingDeletions =>
+  isRecord(value) &&
+  typeof value.count === "number" &&
+  Array.isArray(value.users) &&
+  value.users.every((user) => isRecord(user) && isText(user.userId) && isText(user.requestedAt));
+
 const isUserList = (value: unknown): value is UserList =>
   isRecord(value) &&
   isText(value.timeZone) &&
@@ -85,8 +108,9 @@ const isUserList = (value: unknown): value is UserList =>
   typeof value.signedUserIdsRequired === "boolean" &&
   Array.isArray(value.environments) &&
   value.environments.every(isText) &&
+  isPendingDeletions(value.pendingDeletions) &&
   Array.isArray(value.users) &&
-  value.users.every(isUser) &&
+  value.users.every(isListedUser) &&
   typeof value.hasMore === "boolean";
 
 const isActivityError = (value: unknown): value is ActivityError =>
@@ -115,6 +139,7 @@ const isUserActivity = (value: unknown): value is UserActivity =>
   isText(value.timeZone) &&
   isText(value.environment) &&
   typeof value.signedUserIdsRequired === "boolean" &&
+  isTextOrNull(value.deletionRequestedAt) &&
   isUser(value.user) &&
   Array.isArray(value.activity) &&
   value.activity.every(isActivity) &&
@@ -148,7 +173,13 @@ export const usersQuery = (projectId: string, environment: string, search: strin
       last.hasMore ? pages.reduce((count, page) => count + page.users.length, 0) : undefined,
     // While a new search loads, keep showing the last results.
     placeholderData: keepPreviousData,
+    // While deletions are pending, look again until they are done.
+    refetchInterval: (query) =>
+      (query.state.data?.pages[0]?.pendingDeletions.count ?? 0) > 0 ? PENDING_POLL_MS : false,
   });
+
+/** How often a page with a pending deletion asks again: the worker runs every minute. */
+export const PENDING_POLL_MS = 10_000;
 
 /** Where the next page of activity starts: the last event of the page before. */
 interface ActivityCursor {
@@ -181,4 +212,22 @@ export const userQuery = (projectId: string, userId: string, environment: string
         ? { before: oldest.occurredAt, beforeId: oldest.eventId }
         : undefined;
     },
+    // Until the deletion is done, when the user has no events left (404).
+    refetchInterval: (query) =>
+      query.state.status === "error" ||
+      (query.state.data?.pages[0]?.deletionRequestedAt ?? null) === null
+        ? false
+        : PENDING_POLL_MS,
   });
+
+/**
+ * Starts deleting everything stored about the user in the project
+ * (DELETE /api/projects/:id/users/:userId). The server's worker does it
+ * within a minute or so.
+ */
+export async function deleteUserData(projectId: string, userId: string): Promise<void> {
+  await apiRequest(
+    `/api/projects/${encodeURIComponent(projectId)}/users/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+}

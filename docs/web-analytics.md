@@ -138,7 +138,7 @@ Visitors are anonymous: a daily visitor ID, nothing more ([section 5](#5-visitor
 - **Nothing on the device:** the tracker keeps the ID in memory, so the site names the user on every page load (`data-user-id` on the script tag, [section 3](#3-the-tracker)), and in a single-page app also when someone signs in or out without a page load (`identify()`, `reset()`). Ottertrail stays cookieless.
 - **A user's activity is the events with the user's ID, and only those.** Anonymous events before a sign-in, even in the same visit, are not counted as the user's: on a shared computer they may be someone else's. Different user IDs are never merged.
 - **One environment at a time,** as reports: a user on the staging site is another list.
-- **Why the ID crosses days and visitor IDs don't:** a daily visitor ID exists so that nobody, Ottertrail included, can follow an anonymous visitor from day to day. A signed-in user has told the site who they are, and the site chose to tell Ottertrail; its privacy notice should say so. A user ID is personal data, if pseudonymous, and is deleted with the project or past its retention.
+- **Why the ID crosses days and visitor IDs don't:** a daily visitor ID exists so that nobody, Ottertrail included, can follow an anonymous visitor from day to day. A signed-in user has told the site who they are, and the site chose to tell Ottertrail; its privacy notice should say so. A user ID is personal data, if pseudonymous, and is deleted with the project, past its retention, or on request, one user at a time ([below](#deleting-a-users-data)).
 
 User IDs are also masked in the API's request logs (`/users/…`, `search=…`): logs are not covered by a project's retention or deletion.
 
@@ -181,6 +181,24 @@ Content-Type: application/json
 - **Every event belongs to a user** (`userId`, required, the same rule as in browsers) and to no visitor: it shows in the user's activity (Users), not in web analytics, which counts what browsers send. `path` is optional; the user's page shows an event without one by its name only. `pageview` and `engagement` are the tracker's and are refused.
 - **The server's clock is trusted:** `occurredAt` more than 5 minutes ahead is refused (400), more than 24 hours old is counted as too old, as for browsers. No location, browser, or device is recorded: the request comes from the site's server, not the user's.
 - **The rest is as for browsers:** at most 50 events, 64 KB, the same name and property limits, the project's event budget (shared with its browsers), a retried event counted once, as long as the retry sends the same `id` and the same `occurredAt` (a sender that stamps the time again on each attempt stores its retries twice), 202 only after ClickHouse has written the events. The answers are those in the table below, with 401 (`unauthorized`, `unknown_key`) for a missing, malformed, or unknown key in place of 403, and a 202 body of `{ "stored", "tooOld" }`: the events written, a retry's included, and those more than a day old. Retry only on 429 and 503. None of the [spam checks](#spam) applies: not the per-client event limit, the daily cap per visitor, blocked addresses, or referrer spam.
+
+### Deleting a user's data
+
+When a person asks the site to erase their data, the site's server can ask Ottertrail to delete everything it stores about them in the project, as the Delete data action on the user's page does ([dashboard](dashboard.md#85-users)). What goes and what does not: [data](data.md#deleting-one-users-data). Code: `apps/api/src/identities/server-routes.ts`, `deletions.ts`.
+
+```text
+POST /api/user-deletions
+Authorization: Bearer sk_…
+Content-Type: application/json
+
+{ "userId": "42" }
+```
+
+- **Only the secret key,** checked as for server-side events: a missing or malformed key, a public key among them, gets 401 `unauthorized`, then requests per client address are limited (bursts of 600, then 50 a second), then a key no project has gets 401 `unknown_key`. A public key can never delete anything.
+- **The user ID** follows the same rule as in events: 1 to 200 characters, no control characters or unpaired surrogates (400 `invalid_request` otherwise). It goes in the body, not the address, so no request log holds it.
+- **202** `{ "status": "pending", "requestedAt" }` once the deletion is recorded; the worker does it within about a minute. Asking again while it is pending answers the same time. 429 `too_many_pending` while the project has 1,000 waiting (retry after `Retry-After`), 503 `storage_unavailable` when PostgreSQL could not record it.
+- **Stop sending first.** Events, spans, and logs that name the user after the deletion are stored again.
+- **Anonymous visitors cannot be deleted by name:** their daily visitor ID is not linked to a person.
 
 ### The responses
 

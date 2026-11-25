@@ -24,6 +24,7 @@ import {
   SETTING_POLL_MS,
   UPDATE_CHECK_INTERVAL_MS,
 } from "./enrichment/updates.ts";
+import { runUserDeletions } from "./identities/deletions.ts";
 import { AccountEmailSender } from "./notifications/account-emails.ts";
 import { pruneDeliveries } from "./notifications/deliveries.ts";
 import { smtpMailer } from "./notifications/email.ts";
@@ -103,6 +104,33 @@ const stopPurging = every(PURGE_INTERVAL_MS, async () => {
     log("error", "deleting deleted projects' events and files failed", {
       err: String(error),
     });
+  }
+});
+
+/** Log a failure once until a run succeeds again. */
+let userDeletionsFailing = false;
+
+const stopUserDeletions = every(PURGE_INTERVAL_MS, async () => {
+  try {
+    const { firstError, ...run } = await runUserDeletions(db, clickhouse, objectStore);
+    if (run.done > 0) log("info", "users' data deleted", run);
+    if (run.failed > 0) {
+      if (!userDeletionsFailing) {
+        log("error", "deleting users' data failed; it is tried again", {
+          failed: run.failed,
+          err: String(firstError),
+        });
+      }
+      userDeletionsFailing = true;
+      return;
+    }
+    if (userDeletionsFailing && run.done > 0) log("info", "deleting users' data works again");
+    if (run.done > 0) userDeletionsFailing = false;
+  } catch (error) {
+    if (!userDeletionsFailing) {
+      log("error", "deleting users' data failed", { err: String(error) });
+    }
+    userDeletionsFailing = true;
   }
 });
 
@@ -423,6 +451,7 @@ async function shutdown(signal: NodeJS.Signals) {
   // Runs in progress finish their batch first.
   await Promise.all([
     stopPurging(),
+    stopUserDeletions(),
     stopReplays(),
     stopLinking(),
     stopChecks(),

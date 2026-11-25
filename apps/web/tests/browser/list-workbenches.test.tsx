@@ -884,12 +884,14 @@ describe("the users summary's windows", () => {
       firstSeenAt: new Date(now - (i % 2 === 0 ? 30 * 24 : 24) * HOUR - i * HOUR).toISOString(),
       lastSeenAt: new Date(now - i * HOUR - 60_000).toISOString(),
       events: 10,
+      deletionPending: false,
     }));
     return {
       timeZone: "Asia/Singapore",
       environment: "production",
       signedUserIdsRequired: false,
       environments: ["production"],
+      pendingDeletions: { count: 0, users: [] },
       users: all.slice(offset, offset + 50),
       hasMore: offset + 50 < all.length,
     };

@@ -97,6 +97,7 @@ describe("GET /api/projects/:id/users", () => {
       environment: "production",
       signedUserIdsRequired: false,
       environments: ["production", "staging"],
+      pendingDeletions: { count: 0, users: [] },
       users: [
         {
           userId: "ada",
@@ -104,18 +105,21 @@ describe("GET /api/projects/:id/users", () => {
           lastSeenAt: "2026-11-17T08:00:00.000Z",
           // Two pageviews and a signup; the engagement report is not an event of hers.
           events: 3,
+          deletionPending: false,
         },
         {
           userId: LONG_ID,
           firstSeenAt: "2026-11-16T07:00:00.000Z",
           lastSeenAt: "2026-11-16T07:00:00.000Z",
           events: 1,
+          deletionPending: false,
         },
         {
           userId: "team b/bob",
           firstSeenAt: "2026-11-16T05:00:00.000Z",
           lastSeenAt: "2026-11-16T05:00:00.000Z",
           events: 1,
+          deletionPending: false,
         },
       ],
       hasMore: false,

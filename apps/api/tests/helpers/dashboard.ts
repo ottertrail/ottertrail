@@ -34,6 +34,7 @@ export async function signedInDashboard({
   objectStore,
   sourceMaps,
   replays,
+  userDeletions,
   heatmaps,
   replayPlayerPath,
   telemetry,
@@ -59,6 +60,8 @@ export async function signedInDashboard({
   objectStore?: AppOptions["objectStore"];
   sourceMaps?: AppOptions["sourceMaps"];
   replays?: AppOptions["replays"];
+  /** POST /api/user-deletions' limit (tests/user-deletions.test.ts). */
+  userDeletions?: AppOptions["userDeletions"];
   /** Heatmaps' collection limits (tests/heatmaps.test.ts). */
   heatmaps?: AppOptions["heatmaps"];
   /** The built replay player, served at /replay-player.js; not served when omitted. */
@@ -132,6 +135,7 @@ export async function signedInDashboard({
     ...(objectStore === undefined ? {} : { objectStore }),
     ...(sourceMaps === undefined ? {} : { sourceMaps }),
     ...(replays === undefined ? {} : { replays }),
+    ...(userDeletions === undefined ? {} : { userDeletions }),
     ...(heatmaps === undefined ? {} : { heatmaps }),
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),

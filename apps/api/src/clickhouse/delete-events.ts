@@ -36,7 +36,7 @@ function chunks<T>(items: readonly T[]): T[][] {
  * check results, its signed-in users' first-seen times, its heatmaps, and
  * its AI calls.
  */
-const PROJECT_TABLES = [
+export const PROJECT_TABLES = [
   "events",
   ...TELEMETRY_TABLES,
   "check_results",
@@ -53,9 +53,10 @@ const PROJECT_TABLES = [
  * removeDeletedRows() later takes them off the disk. ClickHouse carries a
  * DELETE out as a mutation of every part that holds such rows, which takes
  * seconds, so callers delete for many projects in one statement, and none
- * is sent when nothing matches, as on most of the worker's runs.
+ * is sent when nothing matches, as on most of the worker's runs. Also one
+ * user's rows (identities/deletions.ts).
  */
-async function deleteWhere(
+export async function deleteWhere(
   clickhouse: ClickHouseClient,
   table: (typeof PROJECT_TABLES)[number],
   where: string,

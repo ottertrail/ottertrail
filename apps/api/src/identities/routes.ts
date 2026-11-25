@@ -3,15 +3,24 @@ import type { Kysely } from "kysely";
 
 import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
+import { requireTrustedOrigin } from "../auth/origin.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
+import { isStorableText } from "../collection/normalize.ts";
 import type { Database } from "../db/schema.ts";
 import { userReplays } from "../replays/list.ts";
 import { replayStatuses } from "../replays/replays.ts";
+import {
+  MAX_PENDING_PER_PROJECT,
+  pendingAmong,
+  pendingDeletion,
+  pendingDeletions,
+  requestUserDeletion,
+} from "./deletions.ts";
 import {
   ACTIVITY_PAGE_SIZE,
   listUsers,
@@ -49,15 +58,22 @@ async function signedUserIdsRequired(db: Kysely<Database>, projectId: string): P
  * Lists known users and their activity (users.ts). Error events include replay state;
  * the first page also includes recent replays (replays/list.ts).
  * Both routes require project access. Both answer whether the project requires
- * signed user IDs, a setting otherwise shown only with the projects permission.
+ * signed user IDs, a setting otherwise shown only with the projects permission,
+ * and which deletions of users' data are pending (deletions.ts).
+ *
+ * DELETE …/users/:userId asks for the user's data to be deleted: it spans
+ * every area, so it needs what deleting the project needs (docs/access.md).
  */
 export const userRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-}> = (app, { db, clickhouse, auth }, done) => {
+  trustedOrigins: readonly string[];
+}> = (app, { db, clickhouse, auth, trustedOrigins }, done) => {
+  const fromDashboard = requireTrustedOrigin(trustedOrigins);
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "users", level: "view" });
+  const canDelete = requireProjectAccess(db, { permission: "projects" });
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
@@ -90,7 +106,7 @@ export const userRoutes: FastifyPluginCallback<{
       const { timeZone, projectId } = accessOf(request);
       const environment = environmentOf(request.query.environment);
       const { search, offset, limit } = request.query;
-      const [page, signed] = await Promise.all([
+      const [page, signed, deletions] = await Promise.all([
         listUsers(reader, {
           projectId,
           environment,
@@ -99,17 +115,31 @@ export const userRoutes: FastifyPluginCallback<{
           ...(limit === undefined ? {} : { limit }),
         }),
         signedUserIdsRequired(db, projectId),
+        pendingDeletions(db, projectId),
       ]);
+      const deleting = await pendingAmong(
+        db,
+        projectId,
+        page.users.map((user) => user.userId),
+      );
       return {
         timeZone,
         environment,
         signedUserIdsRequired: signed,
+        pendingDeletions: {
+          count: deletions.count,
+          users: deletions.users.map((user) => ({
+            userId: user.userId,
+            requestedAt: user.requestedAt.toISOString(),
+          })),
+        },
         // The page reads them from the first page only; later pages skip the scan.
         environments:
           offset === undefined || offset === 0
             ? await userEnvironments(reader, projectId, environment)
             : [],
         ...page,
+        users: page.users.map((user) => ({ ...user, deletionPending: deleting.has(user.userId) })),
       };
     },
   );
@@ -158,7 +188,7 @@ export const userRoutes: FastifyPluginCallback<{
           .code(400)
           .send({ error: "invalid_query", message: "before must be a real time." });
       }
-      const [found, signed] = await Promise.all([
+      const [found, signed, deletionRequestedAt] = await Promise.all([
         userActivity(reader, {
           projectId,
           environment,
@@ -170,6 +200,7 @@ export const userRoutes: FastifyPluginCallback<{
           ...(limit === undefined ? {} : { limit }),
         }),
         signedUserIdsRequired(db, projectId),
+        pendingDeletion(db, projectId, request.params.userId),
       ]);
       if (found === null) {
         return reply.code(404).send({
@@ -192,6 +223,7 @@ export const userRoutes: FastifyPluginCallback<{
         timeZone,
         environment,
         signedUserIdsRequired: signed,
+        deletionRequestedAt: deletionRequestedAt?.toISOString() ?? null,
         ...found,
         activity: found.activity.map(({ replayId, ...activity }) => ({
           ...activity,
@@ -202,6 +234,45 @@ export const userRoutes: FastifyPluginCallback<{
         })),
         replays,
       };
+    },
+  );
+
+  /**
+   * Starts deleting everything stored about the user in the project: the
+   * worker does it within about a minute (deletions.ts). 202 with when it
+   * was asked for; asking again while it is pending answers the same.
+   */
+  app.delete<{ Params: { id: string; userId: string } }>(
+    "/projects/:id/users/:userId",
+    {
+      preHandler: [fromDashboard, signedIn, canDelete],
+      schema: {
+        params: {
+          type: "object",
+          required: ["id", "userId"],
+          properties: {
+            id: { type: "string", pattern: UUID_PATTERN },
+            userId: { type: "string", maxLength: 200, pattern: USER_ID_PATTERN },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, user } = accessOf(request);
+      const { userId } = request.params;
+      if (!isStorableText(userId)) {
+        return reply
+          .code(400)
+          .send({ error: "invalid_request", message: "The user ID cannot be stored." });
+      }
+      const result = await requestUserDeletion(db, { projectId, userId, requestedBy: user.userId });
+      if (!result.ok) {
+        return reply.code(429).send({
+          error: "too_many_pending",
+          message: `${MAX_PENDING_PER_PROJECT.toLocaleString("en-US")} deletions are waiting. Try again once they are done.`,
+        });
+      }
+      return reply.code(202).send({ deletion: { requestedAt: result.requestedAt.toISOString() } });
     },
   );
 

@@ -103,6 +103,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("DELETE", "/heatmaps/snapshots/:device", "/heatmaps/snapshots/desktop?path=%2Fpricing"),
   request("GET", "/users", "/users"),
   request("GET", "/users/:userId", "/users/user-42"),
+  request("DELETE", "/users/:userId", "/users/user-42"),
   request("GET", "/events", "/events?period=7d"),
   request("GET", "/events/:name", "/events/signup?period=7d"),
   request("GET", "/events/:name/sources", "/events/signup/sources?period=7d"),

@@ -12,6 +12,7 @@ const PUBLIC_ROUTES = new Set([
   // Collection, with a project's public or secret key.
   "POST /api/events",
   "POST /api/server-events",
+  "POST /api/user-deletions",
   "POST /api/ai-calls",
   "POST /api/replays",
   "POST /api/heatmaps",
@@ -179,6 +180,7 @@ const EXPECTED: Record<string, string> = {
 
   "GET /api/projects/:id/users": "users:view",
   "GET /api/projects/:id/users/:userId": "users:view",
+  "DELETE /api/projects/:id/users/:userId": "project:permission:projects",
 
   "GET /api/projects/:id/traces": "monitoring:view",
   "GET /api/projects/:id/traces/chart": "monitoring:view",
