@@ -60,6 +60,12 @@ Code: `apps/api/src/product/funnel.ts`. ClickHouse's `windowFunnel` follows each
 
 Choices: count by visitors (the default) or users, and a window of 5 or 30 minutes, 1 hour, 1 day (the default), or, for users, 7, 14, or 30 days. Visitors are refused longer windows: their IDs change at midnight, so a visitor's funnel ends with their day whatever the window says. A person counts once, at the furthest step they reached; times between steps are not shown yet. Two steps in the same millisecond count in either order.
 
+The answer also counts the period before (`previous`: its days, `until`, and each step's `reached`), chosen as the Web analytics summary and the Overview choose it (`previousDays` in `reports/reports.ts`): the same number of days just before, in the instance's timezone, and while the period is still running, only up to the same time of day. Later steps of the period before are read only up to the moment that matches the period's own reading end (`previousReadEnd`): its end plus the window, or now if that comes first, moved back by the period's length. So a running period, whose later steps can only have happened up to now, compares with a period before whose later steps stop at the same point. The dashboard shows each count's change in percent and the overall conversion's in percentage points, and none when fewer than 20 people are counted in both periods, as the summary does.
+
+### Each saved funnel's result
+
+The saved funnels list shows each funnel's overall conversion, and the people at its first and last steps, for the page's period and environment. One request counts them all (`GET /api/projects/:id/funnels/results`): it reads the project's saved funnels from PostgreSQL and runs each one's funnel query through the dashboard's query limit (`telemetry/dashboard-limit.ts`), at most 2 at once for the request and 4 for the process. One request per funnel would have sent up to 50 at once, each with its own queries and no limit, and filled the browser's connections ahead of the rest of the page. The list's answer has no period before. Opening a saved funnel shows the list's counts at once, dimmed, until the funnel's own answer brings the comparison. A saved funnel whose stored steps no longer pass the checks gets no result. If the request fails, each row says so, with a Retry that asks again for all of them.
+
 ### Saved funnels
 
 Code: `apps/api/src/funnels/`. A project can name a funnel to open it again: its steps, who it counts, and its window, checked by the same rules as the funnel report's, so a saved funnel is always one the report can count. The period and the environment are the page's, not the funnel's. A project has at most 50, each with its own name, listed by name. They live in PostgreSQL (`saved_funnels`), the steps as the report's JSON; nothing is stored in ClickHouse, so a funnel saved today counts past events too, and deleting one loses only its definition. Changing one replaces its name and definition together, and names the version it was read at (`updatedAt`): if the funnel was changed since, such as by someone else or in another tab, the change is refused (409 `funnel_changed`) rather than undoing theirs without a word. `updated_at` is kept in whole milliseconds, as JSON carries it, and moves forward with every change.
@@ -79,6 +85,7 @@ GET /api/projects/:id/funnel?period=7d&steps=[{"type":"page","path":"/pricing"},
 GET /api/projects/:id/retention?period=90d
 
 GET    /api/projects/:id/funnels
+GET    /api/projects/:id/funnels/results?period=7d&environment=production
 POST   /api/projects/:id/funnels             { "name": "Pricing to signup", "steps": [{"type":"page","path":"/pricing"},{"type":"event","name":"signup"}], "count": "visitors", "window": 3600 }
 PUT    /api/projects/:id/funnels/:funnelId   (the same, and "updatedAt": the version it was read at)
 DELETE /api/projects/:id/funnels/:funnelId

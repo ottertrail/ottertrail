@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
 import type { NewEvent } from "../src/collection/event-store.ts";
+import { previousReadEnd } from "../src/product/funnel.ts";
 import { parseSteps } from "../src/product/routes.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 /** Noon on Tuesday 17 November 2026 in UTC, the instance's timezone. */
@@ -15,6 +16,9 @@ const at = (iso: string) => new Date(iso);
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 let funnelProject = "";
 let retentionProject = "";
+let compareProject = "";
+let savedProject = "";
+let otherProject = "";
 
 function event(name: string, visitorId: string, occurredAt: Date, more: Partial<NewEvent> = {}) {
   return { eventId: randomUUID(), name, occurredAt, path: "/", visitorId, ...more };
@@ -33,6 +37,20 @@ function get(projectId: string, path: string) {
 const funnelQuery = (steps: unknown[], rest = "") =>
   `/funnel?steps=${encodeURIComponent(JSON.stringify(steps))}${rest}`;
 
+const reachedOf = (body: { steps: { reached: number }[] }) =>
+  body.steps.map((step) => step.reached);
+
+/** Saves a funnel as the dashboard does, or throws. */
+async function save(projectId: string, name: string, steps: unknown[]) {
+  const response = await dashboard.app.inject({
+    method: "POST",
+    url: `/api/projects/${projectId}/funnels`,
+    headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+    payload: { name, steps, count: "visitors", window: 3600 },
+  });
+  if (response.statusCode !== 201) throw new Error(`saving ${name}: ${response.body}`);
+}
+
 /** A funnel's status and error code over the last 7 days. */
 async function status(steps: unknown[]) {
   const response = await get(funnelProject, funnelQuery(steps, "&period=7d"));
@@ -50,6 +68,25 @@ beforeAll(async () => {
   const insert = async (name: string) => (await insertProject(dashboard.db, { name })).id;
   funnelProject = await insert("Funnel");
   retentionProject = await insert("Retention");
+  compareProject = await insert("Compare");
+  savedProject = await insert("Saved");
+  otherProject = await insert("Other");
+
+  await dashboard.store(compareProject, [
+    // Today, up to noon: 11 converts, 12 does not.
+    pricing("11", at("2026-11-17T09:00:00Z")),
+    event("signup", "11", at("2026-11-17T09:10:00Z")),
+    pricing("12", at("2026-11-17T10:00:00Z")),
+    // Yesterday: 21 converts, 22 does not.
+    pricing("21", at("2026-11-16T08:00:00Z")),
+    event("signup", "21", at("2026-11-16T08:20:00Z")),
+    pricing("22", at("2026-11-16T09:00:00Z")),
+    // 23 starts before noon yesterday, and signs up after it.
+    pricing("23", at("2026-11-16T11:50:00Z")),
+    event("signup", "23", at("2026-11-16T12:10:00Z")),
+    // 24 starts after noon yesterday.
+    pricing("24", at("2026-11-16T13:00:00Z")),
+  ]);
 
   await dashboard.store(funnelProject, [
     // 1: all three steps, within the hour.
@@ -227,6 +264,145 @@ describe("GET /api/projects/:id/funnel", () => {
       { type: "event", name: "signup", filter: { key: "plan", value: "team" } },
       { type: "page", path: "/welcome" },
     ]);
+  });
+});
+
+describe("the funnel's period before", () => {
+  const steps = PRICING_SIGNUP_INVITE.slice(0, 2);
+
+  test("compares a running day with the day before, up to the same time", async () => {
+    const response = await get(compareProject, funnelQuery(steps, "&period=today"));
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(reachedOf(body)).toEqual([2, 1]);
+    // 21, 22, and 23 started before noon, and only 21 signed up before noon.
+    expect(body.previous).toEqual({
+      firstDay: "2026-11-16",
+      lastDay: "2026-11-16",
+      until: "2026-11-16T12:00:00.000Z",
+      reached: [3, 1],
+    });
+  });
+
+  test("compares a whole day with the whole day before", async () => {
+    const body = (
+      await get(compareProject, funnelQuery(steps, "&from=2026-11-16&to=2026-11-16"))
+    ).json();
+    expect(reachedOf(body)).toEqual([4, 2]);
+    expect(body.previous).toEqual({
+      firstDay: "2026-11-15",
+      lastDay: "2026-11-15",
+      until: null,
+      reached: [0, 0],
+    });
+  });
+
+  test("answers zeros when the period before has no data", async () => {
+    const body = (
+      await get(funnelProject, funnelQuery(PRICING_SIGNUP_INVITE, "&period=7d"))
+    ).json();
+    expect(body.previous).toMatchObject({
+      firstDay: "2026-11-04",
+      lastDay: "2026-11-10",
+      reached: [0, 0, 0],
+    });
+  });
+
+  test("stops reading the period before where this one stops", () => {
+    const day = 86_400_000;
+    const range = { from: at("2026-11-16T00:00:00Z"), to: at("2026-11-17T00:00:00Z") };
+    const previous = { from: at("2026-11-15T00:00:00Z"), to: at("2026-11-16T00:00:00Z") };
+    // A one-day window from yesterday is cut at now, so the day before is cut a day earlier.
+    expect(previousReadEnd(range, previous, 86_400, NOW)).toEqual(new Date(NOW.getTime() - day));
+    // A five-minute window ends before now: both read five minutes past their end.
+    expect(previousReadEnd(range, previous, 300, NOW)).toEqual(at("2026-11-16T00:05:00Z"));
+  });
+});
+
+describe("GET /api/projects/:id/funnels/results", () => {
+  beforeAll(async () => {
+    await dashboard.store(savedProject, [
+      pricing("31", minutesAgo(60)),
+      event("signup", "31", minutesAgo(50)),
+      pricing("32", minutesAgo(40)),
+      pricing("33", minutesAgo(40), { environment: "staging" }),
+    ]);
+    // Another project: the same visitor, and a saved funnel of its own.
+    await dashboard.store(otherProject, [
+      pricing("32", minutesAgo(30)),
+      event("signup", "32", minutesAgo(20)),
+    ]);
+    const two = PRICING_SIGNUP_INVITE.slice(0, 2);
+    await save(savedProject, "Signup", two);
+    await save(savedProject, "Invite", PRICING_SIGNUP_INVITE);
+    await save(otherProject, "Elsewhere", two);
+  });
+
+  test("counts only the project's own funnels and events", async () => {
+    const body = (await get(otherProject, "/funnels/results?period=today")).json();
+    expect(
+      body.funnels.map((item: { steps: { reached: number }[] }) =>
+        item.steps.map((step) => step.reached),
+      ),
+    ).toEqual([[1, 1]]);
+  });
+
+  test("counts every saved funnel of the project, for the period and environment", async () => {
+    const response = await get(savedProject, "/funnels/results?period=today");
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body).toMatchObject({
+      environment: "production",
+      firstDay: "2026-11-17",
+      lastDay: "2026-11-17",
+    });
+    const byName = new Map(
+      (await get(savedProject, "/funnels"))
+        .json()
+        .funnels.map((item: { id: string; name: string }) => [item.id, item.name]),
+    );
+    expect(
+      body.funnels.map(
+        (item: { id: string; count: string; window: number; steps: { reached: number }[] }) => ({
+          name: byName.get(item.id),
+          count: item.count,
+          window: item.window,
+          reached: item.steps.map((step) => step.reached),
+        }),
+      ),
+    ).toEqual([
+      // By name, as the list is.
+      { name: "Invite", count: "visitors", window: 3600, reached: [2, 1, 0] },
+      { name: "Signup", count: "visitors", window: 3600, reached: [2, 1] },
+    ]);
+    const staging = (
+      await get(savedProject, "/funnels/results?period=today&environment=staging")
+    ).json();
+    expect(
+      staging.funnels.map((item: { steps: { reached: number }[] }) =>
+        item.steps.map((step) => step.reached),
+      ),
+    ).toEqual([
+      [1, 0, 0],
+      [1, 0],
+    ]);
+  });
+
+  test("answers an empty list for a project without saved funnels", async () => {
+    const body = (await get(compareProject, "/funnels/results?period=7d")).json();
+    expect(body.funnels).toEqual([]);
+  });
+
+  test("refuses a bad period", async () => {
+    for (const query of [
+      "period=year",
+      "period=7d&from=2026-11-01&to=2026-11-02",
+      "from=2026-11-01",
+      "environment=%20",
+    ]) {
+      const response = await get(savedProject, `/funnels/results?${query}`);
+      expect({ query, status: response.statusCode }).toEqual({ query, status: 400 });
+    }
   });
 });
 

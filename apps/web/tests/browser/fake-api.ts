@@ -62,6 +62,7 @@ import {
   type ProductEventDetail,
   type ProductEvents,
   type Retention,
+  type SavedFunnelResults,
 } from "../../src/lib/product-api.ts";
 import type { ClientAddress, Project, SpamCounts } from "../../src/lib/projects-api.ts";
 import type {
@@ -224,8 +225,16 @@ export interface FakeApi {
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
   productEvent: (name: string, query: URLSearchParams) => ProductEventDetail | Response;
-  /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. */
-  funnel: (query: URLSearchParams) => Funnel | Response;
+  /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. A promise holds it. */
+  funnel: (query: URLSearchParams) => Funnel | Response | Promise<Funnel | Response>;
+  /**
+   * Answers GET /api/projects/:id/funnels/results; by default,
+   * fakeFunnelResults. A promise holds it.
+   */
+  funnelResults: (
+    query: URLSearchParams,
+    api: FakeApi,
+  ) => SavedFunnelResults | Response | Promise<SavedFunnelResults | Response>;
   /** Answers GET /api/projects/:id/retention; by default, fakeRetention. */
   retention: (query: URLSearchParams) => Retention | Response;
   /**
@@ -3007,6 +3016,38 @@ export function fakeFunnel(query: URLSearchParams): Funnel | Response {
     count,
     window,
     steps: steps.map((step, i) => ({ step, reached: FUNNEL_REACHED[i] ?? 0 })),
+    previous: {
+      firstDay: "2026-11-03",
+      lastDay: "2026-11-09",
+      until: null,
+      reached: steps.map((_, i) => FUNNEL_REACHED_BEFORE[i] ?? 0),
+    },
+  };
+}
+
+/** People reaching each step in the period before: 800 start. */
+export const FUNNEL_REACHED_BEFORE = [800, 400, 100, 50, 0];
+
+/** People reaching each step today: fewer than in a week. */
+export const FUNNEL_REACHED_TODAY = [80, 20, 10, 5, 0];
+
+/**
+ * Every saved funnel's counts, by name: FUNNEL_REACHED, or
+ * FUNNEL_REACHED_TODAY for period=today.
+ */
+export function fakeFunnelResults(query: URLSearchParams, api: FakeApi): SavedFunnelResults {
+  const reached = query.get("period") === "today" ? FUNNEL_REACHED_TODAY : FUNNEL_REACHED;
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    funnels: api.savedFunnels
+      .toSorted((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+      .map((funnel) => ({
+        id: funnel.id,
+        count: funnel.count,
+        window: funnel.window,
+        steps: funnel.steps.map((step, i) => ({ step, reached: reached[i] ?? 0 })),
+      })),
   };
 }
 
@@ -4007,7 +4048,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/funnel$/.test(path)) {
-    const result = api.funnel(url.searchParams);
+    const result = await api.funnel(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/retention$/.test(path)) {
@@ -4021,6 +4062,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return json({
       goals: api.goals.map(({ id, name, step, createdAt }) => ({ id, name, step, createdAt })),
     });
+  }
+  if (/^\/api\/projects\/[^/]+\/funnels\/results$/.test(path)) {
+    const result = await api.funnelResults(url.searchParams, api);
+    return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/funnels$/.test(path)) {
     if (init?.method === "POST") {
@@ -4417,6 +4462,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
     funnel: fakeFunnel,
+    funnelResults: fakeFunnelResults,
     retention: fakeRetention,
     resolutions: fakeResolutions(),
     assignments: {},

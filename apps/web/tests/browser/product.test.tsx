@@ -3,6 +3,7 @@ import { page, userEvent } from "vite-plus/test/browser/context";
 
 import {
   type FakeApi,
+  fakeFunnel,
   fakeProductEvents,
   installFakeApi,
   json,
@@ -46,6 +47,14 @@ function stat(label: string) {
     (element) => element.querySelector("dt")?.textContent === label,
   );
   return item?.querySelector("dd")?.textContent;
+}
+
+/** A figure of the funnel's stats, by its label: its value, then its change, if any. */
+function statParts(label: string) {
+  const item = [...document.querySelectorAll("dl > div")].find(
+    (element) => element.querySelector("dt")?.textContent === label,
+  );
+  return [...(item?.querySelectorAll("dd") ?? [])].map((dd) => dd.textContent);
 }
 
 const sidebarLink = () =>
@@ -451,10 +460,11 @@ describe("the funnel", () => {
 
     const table = "Funnel steps, with the users who reached each";
     await expect.element(page.getByRole("table", { name: table })).toBeVisible();
+    // Each count with its change from the period before (800, 400, 100).
     expect(tableRows(table)).toEqual([
-      ["1.Event signup where plan = team", "1,000", "100%", "–"],
-      ["2.Page /pricing", "420", "42%", "42%"],
-      ["3.Event purchase", "126", "13%", "30%"],
+      ["1.Event signup where plan = team", "1,00025%Up 25% from 800", "100%", "–"],
+      ["2.Page /pricing", "4205%Up 5% from 400", "42%", "42%"],
+      ["3.Event purchase", "12626%Up 26% from 100", "13%", "30%"],
     ]);
     await expect
       .element(
@@ -480,6 +490,38 @@ describe("the funnel", () => {
     await expect.element(page.getByText(/Other events between steps are allowed/)).toBeVisible();
     await expect.element(page.getByText(/Step 1 must occur in the selected period/)).toBeVisible();
     await expect.element(page.getByText(/Their IDs change daily/)).toBeVisible();
+  });
+
+  test("compares the conversion and the counts with the period before", async () => {
+    installFakeApi();
+    const steps = '[{"type":"event","name":"signup"},{"type":"event","name":"purchase"}]';
+    renderApp(`${FUNNEL}?steps=${encodeURIComponent(steps)}`);
+
+    await expect.element(page.getByText(/Changes compare with 3 to 9 Nov 2026\./)).toBeVisible();
+    // 42% now, 50% before: a share changes in points.
+    expect(statParts("Overall conversion")).toEqual(["42%", "8 ptsDown 8 points from 50%"]);
+    expect(statParts("Visitors at step 1")).toEqual(["1,000", "25%Up 25% from 800"]);
+    expect(statParts("Visitors at step 2")).toEqual(["420", "5%Up 5% from 400"]);
+  });
+
+  test("says when the period before has no one to compare with", async () => {
+    installFakeApi({
+      funnel: (query) => {
+        const funnel = fakeFunnel(query);
+        if (funnel instanceof Response || funnel.previous === undefined) return funnel;
+        return { ...funnel, previous: { ...funnel.previous, reached: [0, 0] } };
+      },
+    });
+    const steps = '[{"type":"event","name":"signup"},{"type":"event","name":"purchase"}]';
+    renderApp(`${FUNNEL}?steps=${encodeURIComponent(steps)}`);
+
+    await expect
+      .element(page.getByText(/No visitors did step 1 in 3 to 9 Nov 2026 to compare with\./))
+      .toBeVisible();
+    // No percentage from nothing: "New", as the other comparisons say it.
+    for (const label of ["Overall conversion", "Visitors at step 1", "Visitors at step 2"]) {
+      expect(statParts(label)[1]).toBe("NewNew: none in the period before");
+    }
   });
 
   test("drops a window visitors cannot have from the address", async () => {

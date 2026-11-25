@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type UseQueryResult, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { LoaderCircleIcon, OctagonAlertIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import * as React from "react";
@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -34,11 +35,14 @@ import {
   savedFunnelsKey,
   updateFunnel,
 } from "@/lib/funnels-api";
+import { MISSING } from "@/lib/missing";
+import type { SavedFunnelResult, SavedFunnelResults } from "@/lib/product-api";
 
-import { countLine, stepsLine } from "./format";
+import { formatWhole } from "../analytics/format";
+import { countLine, formatShare, stepsLine } from "./format";
 import { FunnelNameDialog } from "./funnel-name-dialog";
 import { LoadFailed, LoadingRows } from "./report-state";
-import { type FunnelSearch, funnelSearchOf, stepsFrom } from "./search";
+import { type FunnelSearch, funnelSearchOf, isShownFunnel, stepsFrom } from "./search";
 
 function RenameFunnelDialog({ projectId, funnel }: { projectId: string; funnel: SavedFunnel }) {
   const [open, setOpen] = React.useState(false);
@@ -152,8 +156,83 @@ function DeleteFunnelDialog({
   );
 }
 
+/** The saved funnel's counts, if the answer holds them for its current definition. */
+function resultFor(
+  results: SavedFunnelResults | undefined,
+  funnel: SavedFunnel,
+): SavedFunnelResult | undefined {
+  const result = results?.funnels.find((item) => item.id === funnel.id);
+  // A funnel changed since the answer was read has none until it is read again.
+  return result !== undefined &&
+    isShownFunnel(
+      { steps: result.steps.map((item) => item.step), count: result.count, window: result.window },
+      { steps: stepsFrom(funnel.steps), count: funnel.count, window: funnel.window },
+    )
+    ? result
+    : undefined;
+}
+
+/** The overall conversion, with the people at the first and last steps under it. */
+function ConversionCell({
+  funnel,
+  results,
+}: {
+  funnel: SavedFunnel;
+  results: UseQueryResult<SavedFunnelResults>;
+}) {
+  const result = resultFor(results.data, funnel);
+  if (result === undefined) {
+    if (results.isError) {
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-destructive">Not loaded</span>
+          <Button
+            variant="outline"
+            size="xs"
+            aria-label={`Retry the conversion of ${funnel.name}`}
+            onClick={() => void results.refetch()}
+          >
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (results.isFetching || results.isPending) {
+      return (
+        <div className="flex flex-col gap-1" aria-busy="true" aria-label="Loading">
+          <Skeleton className="h-4 w-10" />
+          <Skeleton className="h-3 w-20" />
+        </div>
+      );
+    }
+    return <span className="text-ink-subtle">{MISSING}</span>;
+  }
+  const first = result.steps[0]?.reached ?? 0;
+  const last = result.steps.at(-1)?.reached ?? 0;
+  const who = result.count === "users" ? "users" : "visitors";
+  return (
+    <div
+      className="flex flex-col tabular-nums transition-opacity data-[stale=true]:opacity-60"
+      data-stale={results.isPlaceholderData}
+    >
+      <span aria-hidden="true" className="text-ink">
+        {formatShare(last, first)}
+      </span>
+      <span aria-hidden="true" className="text-xs whitespace-nowrap text-ink-subtle">
+        {formatWhole(first)} → {formatWhole(last)}
+      </span>
+      <span className="sr-only">
+        {first === 0
+          ? `No ${who} did step 1`
+          : `${formatShare(last, first)}: ${formatWhole(last)} of ${formatWhole(first)} ${who}`}
+      </span>
+    </div>
+  );
+}
+
 function SavedFunnelTable({
   funnels,
+  results,
   projectId,
   search,
   openId,
@@ -161,6 +240,7 @@ function SavedFunnelTable({
   onDeleted,
 }: {
   funnels: SavedFunnel[];
+  results: UseQueryResult<SavedFunnelResults>;
   projectId: string;
   search: FunnelSearch;
   openId: string | undefined;
@@ -169,7 +249,7 @@ function SavedFunnelTable({
 }) {
   return (
     <ScrollHint>
-      <Table className="table-fixed max-sm:min-w-[36rem]">
+      <Table className="table-fixed max-sm:min-w-[42rem]">
         <caption className="sr-only">Saved funnels, by name</caption>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -178,6 +258,9 @@ function SavedFunnelTable({
               className={`h-8 w-1/4 pl-0 text-xs font-normal text-ink-subtle ${PINNED}`}
             >
               Name
+            </TableHead>
+            <TableHead scope="col" className="h-8 w-32 text-xs font-normal text-ink-subtle">
+              Conversion
             </TableHead>
             <TableHead scope="col" className="h-8 text-xs font-normal text-ink-subtle">
               Steps
@@ -220,6 +303,9 @@ function SavedFunnelTable({
                     }
                   />
                 </th>
+                <TableCell className="py-1.5">
+                  <ConversionCell funnel={funnel} results={results} />
+                </TableCell>
                 <TableCell className="py-1.5 text-ink">
                   <TruncatedText text={steps} />
                 </TableCell>
@@ -256,6 +342,7 @@ export function SavedFunnelsCard({
   search,
   openId,
   onDeleted,
+  results,
   action,
 }: {
   projectId: string;
@@ -265,6 +352,8 @@ export function SavedFunnelsCard({
   search: FunnelSearch;
   openId: string | undefined;
   onDeleted: (funnel: SavedFunnel) => void;
+  /** Every saved funnel's counts for the period and environment shown. */
+  results: UseQueryResult<SavedFunnelResults>;
   /** Beside the heading, as Add rule is on the Alerts page: New funnel. */
   action?: React.ReactNode;
 }) {
@@ -305,6 +394,7 @@ export function SavedFunnelsCard({
       ) : (
         <SavedFunnelTable
           funnels={funnels}
+          results={results}
           projectId={projectId}
           search={search}
           openId={openId}

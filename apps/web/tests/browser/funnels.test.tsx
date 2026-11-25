@@ -2,8 +2,15 @@ import { describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
-import type { FunnelStep } from "../../src/lib/product-api.ts";
-import { type FakeApi, installFakeApi, PROJECT } from "./fake-api.ts";
+import type { Funnel, FunnelStep } from "../../src/lib/product-api.ts";
+import {
+  type FakeApi,
+  fakeFunnel,
+  fakeFunnelResults,
+  installFakeApi,
+  json,
+  PROJECT,
+} from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
 const FUNNEL = `/projects/${PROJECT.id}/product/funnel`;
@@ -35,15 +42,40 @@ function lastFunnelQuery(api: FakeApi): Record<string, string> {
   return at === -1 ? {} : Object.fromEntries(new URLSearchParams(request.slice(at + 1)));
 }
 
-/** Each saved funnel's row as its cells' text: name, steps, and who it counts for how long. */
-function savedRows(): string[][] {
-  const table = [...document.querySelectorAll("table")].find(
-    (item) => item.caption?.textContent === "Saved funnels, by name",
-  );
-  return [...(table?.tBodies[0]?.rows ?? [])].map((row) =>
-    [...row.cells].slice(0, 3).map((cell) => cell.textContent ?? ""),
-  );
+/** An answer held until the test resolves it. */
+function hold<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  const parts: { done?: (value: T) => void } = {};
+  const promise = new Promise<T>((done) => {
+    parts.done = done;
+  });
+  return { promise, resolve: (value) => parts.done?.(value) };
 }
+
+/** The API's answer while the dashboard's queries are busy. */
+const busy = () => json({ error: "reports_busy", message: "Try again in a few seconds." }, 503);
+
+const savedTableRows = () => [
+  ...([...document.querySelectorAll("table")].find(
+    (item) => item.caption?.textContent === "Saved funnels, by name",
+  )?.tBodies[0]?.rows ?? []),
+];
+
+/** Each saved funnel's row as its cells' text: name, steps, and who it counts for how long. */
+const savedRows = (): string[][] =>
+  savedTableRows().map((row) => [0, 2, 3].map((index) => row.cells[index]?.textContent ?? ""));
+
+/** Each saved funnel's name and conversion cell, as shown and as read out. */
+const conversionRows = () =>
+  savedTableRows().map((row) => {
+    const cell = row.cells[1];
+    return [
+      row.cells[0]?.textContent ?? "",
+      [...(cell?.querySelectorAll("[aria-hidden=true]") ?? [])]
+        .map((item) => item.textContent)
+        .join(" "),
+      cell?.querySelector(".sr-only")?.textContent ?? "",
+    ];
+  });
 
 const savedHeading = () => page.getByRole("heading", { name: "Saved funnels" });
 /** The funnel view's heading: the saved funnel's name, or "Unsaved funnel". */
@@ -93,6 +125,86 @@ describe("saved funnels", () => {
     expect(page.getByRole("button", { name: "Save funnel" }).elements()).toEqual([]);
     expect(page.getByText("No funnels yet").elements()).toEqual([]);
     expect(page.getByRole("button", { name: "Try this example" }).elements()).toEqual([]);
+  });
+
+  test("shows each one's conversion for the period, and follows a change of period", async () => {
+    const api = installFakeApi();
+    renderApp(FUNNEL);
+
+    await expect.poll(conversionRows).toEqual([
+      ["pricing to signup", "42% 1,000 → 420", "42%: 420 of 1,000 visitors"],
+      ["Team trial", "42% 1,000 → 420", "42%: 420 of 1,000 users"],
+    ]);
+    // One request for every row.
+    expect(api.requests.filter((item) => item.includes("/funnels/results"))).toEqual([
+      `${FUNNELS_PATH}/results?period=7d`,
+    ]);
+
+    await page.getByRole("combobox", { name: "Period" }).click();
+    await page.getByRole("option", { name: "Today" }).click();
+
+    await expect.poll(conversionRows).toEqual([
+      ["pricing to signup", "25% 80 → 20", "25%: 20 of 80 visitors"],
+      ["Team trial", "25% 80 → 20", "25%: 20 of 80 users"],
+    ]);
+  });
+
+  test("shows each conversion loading, then a failure with a retry", async () => {
+    const held = hold<Response>();
+    const api = installFakeApi({ funnelResults: () => held.promise });
+    renderApp(FUNNEL);
+
+    await expect.poll(savedRows).toHaveLength(2);
+    expect(
+      savedTableRows().map((row) => row.cells[1]?.querySelector("[aria-busy=true]") !== null),
+    ).toEqual([true, true]);
+
+    // Busy, and still busy when retried.
+    api.funnelResults = busy;
+    held.resolve(busy());
+    await expect.element(page.getByText("Not loaded").first()).toBeVisible();
+    expect(page.getByText("Not loaded").elements()).toHaveLength(2);
+
+    api.funnelResults = fakeFunnelResults;
+    await page.getByRole("button", { name: "Retry the conversion of Team trial" }).click();
+    await expect.poll(conversionRows).toEqual([
+      ["pricing to signup", "42% 1,000 → 420", "42%: 420 of 1,000 visitors"],
+      ["Team trial", "42% 1,000 → 420", "42%: 420 of 1,000 users"],
+    ]);
+  });
+
+  test("opening one shows the list's counts at once, then the comparison", async () => {
+    const held = hold<Funnel>();
+    let asked = new URLSearchParams();
+    installFakeApi({
+      funnel: (query) => {
+        asked = query;
+        return held.promise;
+      },
+    });
+    renderApp(FUNNEL);
+    await expect.poll(conversionRows).toHaveLength(2);
+
+    await page.getByRole("link", { name: "Team trial" }).click();
+
+    const table = page.getByRole("table", {
+      name: "Funnel steps, with the users who reached each",
+    });
+    await expect.element(table).toBeVisible();
+    // The list's counts, without a change from the period before yet.
+    const counts = () =>
+      [...table.element().querySelectorAll("tbody tr")].map(
+        (row) => row.querySelector("td")?.textContent,
+      );
+    expect(counts()).toEqual(["1,000", "420"]);
+    expect(asked.get("count")).toBe("users");
+    await expect.element(page.getByText(/Changes compare with/)).not.toBeInTheDocument();
+
+    const funnel = fakeFunnel(asked);
+    if (funnel instanceof Response) throw new Error("the funnel was refused");
+    held.resolve(funnel);
+    await expect.element(page.getByText(/Changes compare with 3 to 9 Nov 2026\./)).toBeVisible();
+    expect(counts()).toEqual(["1,00025%Up 25% from 800", "4205%Up 5% from 400"]);
   });
 
   test("opens one from its link, keeping the period and the environment", async () => {
@@ -445,7 +557,12 @@ describe("saved funnels", () => {
     await expect.element(confirm.getByText(/Your events are kept/)).toBeVisible();
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect.element(confirm).not.toBeInTheDocument();
-    expect(api.requests.some((path) => path.startsWith(`${FUNNELS_PATH}/`))).toBe(false);
+    expect(
+      api.requests.some(
+        (path) =>
+          path.startsWith(`${FUNNELS_PATH}/`) && !path.startsWith(`${FUNNELS_PATH}/results`),
+      ),
+    ).toBe(false);
     await expect
       .element(page.getByRole("button", { name: "Delete the funnel Team trial" }))
       .toHaveFocus();

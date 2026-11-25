@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, MinusIcon } from "lucide-react";
-import type * as React from "react";
+import { ArrowUpRightIcon } from "lucide-react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
+import { ChangedValue } from "@/components/changed-value";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/table";
 import { formatUsd, MIN_CALLS_FOR_CHANGE } from "@/features/ai/format";
 import {
-  type Change,
   formatConversion,
   formatCount,
   formatDay,
@@ -37,7 +36,6 @@ import { environmentSearch } from "@/features/telemetry/search";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime } from "@/features/uptime/format";
 import { useAccess } from "@/lib/access";
 import { DEFAULT_PERIOD } from "@/lib/analytics-api";
-import { type ChangeCounts, shownChange } from "@/lib/change";
 import { AI_DOCS_URL } from "@/lib/docs";
 import { goalStepText } from "@/lib/goals-api";
 import { MISSING } from "@/lib/missing";
@@ -67,51 +65,6 @@ export interface WidgetProps {
 }
 
 const headLink = "text-sm whitespace-nowrap text-link hover:underline";
-
-/** Use lib/change.ts thresholds. Show "New" when the previous period had none. */
-function Changed({
-  value,
-  change,
-  counts,
-  min,
-}: {
-  value: React.ReactNode;
-  change: Change | null;
-  counts: ChangeCounts;
-  min: number;
-}) {
-  const shown = shownChange(change, counts, min);
-  const Icon =
-    shown === null || shown === "new"
-      ? MinusIcon
-      : shown.direction === "up"
-        ? ArrowUpIcon
-        : shown.direction === "down"
-          ? ArrowDownIcon
-          : MinusIcon;
-  return (
-    <span className="inline-flex flex-col items-end">
-      <span>{value}</span>
-      {shown === "new" && (
-        <span className="text-xs text-ink-subtle">
-          <span aria-hidden="true">New</span>
-          <span className="sr-only">New: none in the period before</span>
-        </span>
-      )}
-      {shown !== null && shown !== "new" && (
-        <span className="inline-flex items-center gap-0.5 text-xs text-ink-subtle">
-          <Icon aria-hidden="true" className="size-3" />
-          <span aria-hidden="true">{shown.text}</span>
-          <span className="sr-only">
-            {shown.direction === "same"
-              ? "No change from the period before"
-              : `${shown.direction === "up" ? "Up" : "Down"} ${shown.spoken} from the period before`}
-          </span>
-        </span>
-      )}
-    </span>
-  );
-}
 
 const headClass = "h-8 text-xs font-normal text-ink-subtle";
 const numHeadClass = `${headClass} text-right`;
@@ -617,7 +570,7 @@ export function ServicesWidget(props: WidgetProps) {
                             </Link>
                           </TableCell>
                           <TableCell className={`py-1.5 ${numClass}`}>
-                            <Changed
+                            <ChangedValue
                               value={formatWhole(item.requests)}
                               change={relativeChange(item.requests, item.previous.requests)}
                               counts={counts}
@@ -625,7 +578,7 @@ export function ServicesWidget(props: WidgetProps) {
                             />
                           </TableCell>
                           <TableCell className={`py-1.5 ${numClass}`}>
-                            <Changed
+                            <ChangedValue
                               value={formatPercent(failedShare(item.failed, item.requests))}
                               change={pointsChange(
                                 failedShare(item.failed, item.requests),
@@ -636,7 +589,7 @@ export function ServicesWidget(props: WidgetProps) {
                             />
                           </TableCell>
                           <TableCell className={`py-1.5 pr-0 ${numClass}`}>
-                            <Changed
+                            <ChangedValue
                               value={item.p95Us === null ? MISSING : formatDuration(item.p95Us)}
                               change={relativeChange(item.p95Us, item.previous.p95Us)}
                               counts={counts}
@@ -1210,7 +1163,7 @@ export function GoalsWidget(props: WidgetProps) {
                         )}
                       </TableCell>
                       <TableCell className={`py-1.5 ${numClass}`}>
-                        <Changed
+                        <ChangedValue
                           value={formatWhole(goal.visitors)}
                           change={relativeChange(goal.visitors, goal.previous.visitors)}
                           counts={{ current: goal.visitors, previous: goal.previous.visitors }}
@@ -1221,7 +1174,7 @@ export function GoalsWidget(props: WidgetProps) {
                         {formatWhole(goal.events)}
                       </TableCell>
                       <TableCell className={`py-1.5 pr-0 ${numClass}`}>
-                        <Changed
+                        <ChangedValue
                           value={formatConversion(goal.conversionRate)}
                           change={pointsChange(goal.conversionRate, goal.previous.conversionRate)}
                           counts={{ current: data.visitors, previous: data.previousVisitors }}

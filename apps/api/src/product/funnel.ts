@@ -81,7 +81,8 @@ export interface FunnelStepResult {
 
 /**
  * Read through the range end plus the window so late starts can finish.
- * Only step 1 inside the range starts a funnel.
+ * Only step 1 inside the range starts a funnel. `until`, when given, ends
+ * the reading earlier (previousReadEnd).
  */
 export async function funnel(
   reader: Reader,
@@ -89,9 +90,9 @@ export async function funnel(
   steps: readonly FunnelStep[],
   count: FunnelCount,
   windowSeconds: FunnelWindow,
+  { until = new Date(range.to.getTime() + windowSeconds * 1000) }: { until?: Date } = {},
 ): Promise<FunnelStepResult[]> {
   const params = new QueryParams();
-  const until = new Date(range.to.getTime() + windowSeconds * 1000);
   const conditions = steps.map((step) => stepSql(params, step));
   const [first = "false", ...rest] = conditions;
   const startsInRange = `(${first} AND occurred_at < ${params.time(range.to)})`;
@@ -124,4 +125,25 @@ export async function funnel(
     step,
     reached: [...atLevel].reduce((sum, [level, people]) => (level > index ? sum + people : sum), 0),
   }));
+}
+
+/**
+ * Where to stop reading the period before (reports.ts, previousDays): the
+ * current period's reading end, or now if that comes first, moved back by
+ * the distance between the two periods' starts. Later steps of the period
+ * before then count only up to the same moment as this period's can.
+ * Never before the period's own end, which a daylight saving change could
+ * otherwise move by an hour.
+ */
+export function previousReadEnd(
+  range: { from: Date; to: Date },
+  previous: { from: Date; to: Date },
+  windowSeconds: FunnelWindow,
+  now: Date,
+): Date {
+  const windowMs = windowSeconds * 1000;
+  const currentEnd = Math.min(range.to.getTime() + windowMs, now.getTime());
+  const shift = range.from.getTime() - previous.from.getTime();
+  const end = Math.min(previous.to.getTime() + windowMs, currentEnd - shift);
+  return new Date(Math.max(previous.to.getTime(), end));
 }

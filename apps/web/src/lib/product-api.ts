@@ -98,6 +98,19 @@ export const isFunnelWindow = (value: unknown): value is FunnelWindow =>
 export const windowAllowed = (count: FunnelCount, window: FunnelWindow) =>
   count === "users" || window <= MAX_VISITOR_WINDOW;
 
+/**
+ * The period before, of the same length (apps/api/src/reports/reports.ts,
+ * previousDays): its days, its cut-off while the period runs, and the
+ * people who reached each step.
+ */
+export interface FunnelPrevious {
+  firstDay: string;
+  lastDay: string;
+  /** While the period runs: the moment it is compared up to; null otherwise. */
+  until: string | null;
+  reached: number[];
+}
+
 /** GET /api/projects/:id/funnel */
 export interface Funnel extends Answered {
   /** The environments with pageviews or product events, for the picker. */
@@ -105,6 +118,21 @@ export interface Funnel extends Answered {
   count: FunnelCount;
   window: number;
   steps: { step: FunnelStep; reached: number }[];
+  /** Left out only while the saved funnels list's counts stand in for the answer. */
+  previous?: FunnelPrevious;
+}
+
+/** One saved funnel's counts, in GET /api/projects/:id/funnels/results. */
+export interface SavedFunnelResult {
+  id: string;
+  count: FunnelCount;
+  window: number;
+  steps: { step: FunnelStep; reached: number }[];
+}
+
+/** GET /api/projects/:id/funnels/results: every saved funnel's counts, by name. */
+export interface SavedFunnelResults extends Answered {
+  funnels: SavedFunnelResult[];
 }
 
 export interface Cohort {
@@ -181,17 +209,34 @@ export const isFunnelStep = (value: unknown): value is FunnelStep =>
       isText(value.name) &&
       (value.filter === undefined || isFilter(value.filter))));
 
+const isStepResult = (item: unknown): item is Funnel["steps"][number] =>
+  isRecord(item) && isFunnelStep(item.step) && isNumber(item.reached);
+
+const isPrevious = (value: unknown): value is FunnelPrevious =>
+  isRecord(value) &&
+  isText(value.firstDay) &&
+  isText(value.lastDay) &&
+  (value.until === null || isText(value.until)) &&
+  isListOf(value.reached, isNumber);
+
 const isFunnel = (value: unknown): value is Funnel =>
   isRecord(value) &&
   isAnswered(value) &&
   isListOf(value.environments, isText) &&
   isFunnelCount(value.count) &&
   isNumber(value.window) &&
-  isListOf(
-    value.steps,
-    (item): item is Funnel["steps"][number] =>
-      isRecord(item) && isFunnelStep(item.step) && isNumber(item.reached),
-  );
+  isListOf(value.steps, isStepResult) &&
+  isPrevious(value.previous);
+
+const isSavedFunnelResult = (value: unknown): value is SavedFunnelResult =>
+  isRecord(value) &&
+  isText(value.id) &&
+  isFunnelCount(value.count) &&
+  isNumber(value.window) &&
+  isListOf(value.steps, isStepResult);
+
+const isSavedFunnelResults = (value: unknown): value is SavedFunnelResults =>
+  isRecord(value) && isAnswered(value) && isListOf(value.funnels, isSavedFunnelResult);
 
 const isCohort = (value: unknown): value is Cohort =>
   isRecord(value) &&
@@ -283,6 +328,24 @@ export const funnelQuery = (
         }),
         signal,
         isFunnel,
+      ),
+    placeholderData: keepPreviousData,
+  });
+
+/**
+ * Every saved funnel's counts in a range and an environment, in one request.
+ * The key starts with the saved funnels' own (funnels-api.ts, savedFunnelsKey),
+ * so saving, changing, or deleting a funnel refreshes it too.
+ */
+export const savedFunnelResultsQuery = (projectId: string, range: PageRange, environment: string) =>
+  queryOptions({
+    queryKey: ["saved-funnels", projectId, "results", range, environment],
+    queryFn: ({ signal }) =>
+      get(
+        `${projectPath(projectId)}/funnels/results`,
+        new URLSearchParams(rangeQuery(range, environment)),
+        signal,
+        isSavedFunnelResults,
       ),
     placeholderData: keepPreviousData,
   });

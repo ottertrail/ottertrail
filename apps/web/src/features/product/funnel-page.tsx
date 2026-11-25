@@ -26,6 +26,7 @@ import {
   funnelQuery,
   MIN_STEPS,
   productEventsQuery,
+  savedFunnelResultsQuery,
 } from "@/lib/product-api";
 
 import { ReportFilterBar } from "../errors/range-controls";
@@ -37,7 +38,7 @@ import { stepText } from "./funnel-steps";
 import { LoadFailed, Refreshing } from "./report-state";
 import { SaveFunnelActions } from "./save-funnel-actions";
 import { SavedFunnelsCard } from "./saved-funnels-card";
-import { type FunnelSearch, funnelSearchOf, productSearchOf } from "./search";
+import { type FunnelSearch, funnelSearchOf, isShownFunnel, productSearchOf } from "./search";
 
 /** The definitions the funnel counts by (docs/product-analytics.md, "Funnel"). */
 function FunnelNotes({ window }: { window: FunnelWindow }) {
@@ -143,13 +144,45 @@ export function FunnelPage({
 }) {
   const navigate = useNavigate();
   const ready = steps.length >= MIN_STEPS;
-  const query = useQuery({
-    ...funnelQuery(projectId, range, environment, steps, count, window),
-    enabled: ready,
-  });
   // Suggestions are optional; the funnel works without them.
   const events = useQuery(productEventsQuery(projectId, range, environment));
   const saved = useQuery(savedFunnelsQuery(projectId));
+  // Read for the list only; a funnel shown uses what the list left in the cache.
+  const results = useQuery({
+    ...savedFunnelResultsQuery(projectId, range, environment),
+    enabled: !ready && (saved.data?.length ?? 0) > 0,
+  });
+  const listed =
+    ready && results.data !== undefined && !results.isPlaceholderData
+      ? results.data.funnels.find((item) =>
+          isShownFunnel(
+            {
+              steps: item.steps.map((result) => result.step),
+              count: item.count,
+              window: item.window,
+            },
+            { steps, count, window },
+          ),
+        )
+      : undefined;
+  const query = useQuery({
+    ...funnelQuery(projectId, range, environment, steps, count, window),
+    enabled: ready,
+    // Show the list's counts at once, dimmed, until the answer with the comparison arrives.
+    placeholderData: (previous) =>
+      listed === undefined || results.data === undefined
+        ? previous
+        : {
+            timeZone: results.data.timeZone,
+            environment: results.data.environment,
+            firstDay: results.data.firstDay,
+            lastDay: results.data.lastDay,
+            environments: previous?.environments ?? events.data?.environments ?? [environment],
+            count: listed.count,
+            window: listed.window,
+            steps: listed.steps,
+          },
+  });
   const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
   // Saving removes the trigger, so return focus to the funnel's heading.
   const titleRef = React.useRef<HTMLHeadingElement>(null);
@@ -164,7 +197,8 @@ export function FunnelPage({
   if (
     (query.error instanceof ApiError && query.error.status === 404) ||
     (events.error instanceof ApiError && events.error.status === 404) ||
-    (saved.error instanceof ApiError && saved.error.status === 404)
+    (saved.error instanceof ApiError && saved.error.status === 404) ||
+    (results.error instanceof ApiError && results.error.status === 404)
   ) {
     return <NoSuchProject />;
   }
@@ -220,6 +254,7 @@ export function FunnelPage({
             <SavedFunnelsCard
               projectId={projectId}
               funnels={saved.data}
+              results={results}
               failure={saved.isError ? saved.error.message : null}
               onRetry={() => void saved.refetch()}
               search={search}

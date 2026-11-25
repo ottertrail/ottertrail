@@ -111,6 +111,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("POST", "/goals", "/goals", { name: "A goal", step: { type: "page", path: "/" } }),
   request("DELETE", "/goals/:goalId", `/goals/${SOME_ID}`),
   request("GET", "/funnels", "/funnels"),
+  request("GET", "/funnels/results", "/funnels/results?period=7d"),
   request("POST", "/funnels", "/funnels", SOME_FUNNEL),
   request("PUT", "/funnels/:funnelId", `/funnels/${SOME_ID}`, SOME_FUNNEL),
   request("DELETE", "/funnels/:funnelId", `/funnels/${SOME_ID}`),

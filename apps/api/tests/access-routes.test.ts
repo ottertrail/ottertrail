@@ -153,6 +153,7 @@ const EXPECTED: Record<string, string> = {
   "POST /api/projects/:id/goals": "product_analytics:manage",
   "DELETE /api/projects/:id/goals/:goalId": "product_analytics:manage",
   "GET /api/projects/:id/funnels": "product_analytics:view",
+  "GET /api/projects/:id/funnels/results": "product_analytics:view",
   "POST /api/projects/:id/funnels": "product_analytics:manage",
   "PUT /api/projects/:id/funnels/:funnelId": "product_analytics:manage",
   "DELETE /api/projects/:id/funnels/:funnelId": "product_analytics:manage",

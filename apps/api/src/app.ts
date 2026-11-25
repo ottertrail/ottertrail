@@ -560,11 +560,14 @@ export function buildApp({
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
     });
+    // One limit on the dashboard's ClickHouse queries, shared by every page that reads them.
+    const limiter = new DashboardQueryLimiter();
     app.register(productRoutes, {
       prefix: "/api",
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+      limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(speedRoutes, {
@@ -593,8 +596,6 @@ export function buildApp({
       sourceMaps: { store: objectStore, cache: new SourceMapCache() },
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
-    // One limit on the dashboard's ClickHouse queries, shared by every page that reads them.
-    const limiter = new DashboardQueryLimiter();
     app.register(telemetryDashboardRoutes, {
       prefix: "/api",
       db,

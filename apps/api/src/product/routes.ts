@@ -10,8 +10,10 @@ import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
-import { localDays } from "../reports/reports.ts";
+import { listSavedFunnels } from "../funnels/saved-funnels.ts";
+import { localDays, previousDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
+import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import {
   COUNTED,
@@ -33,6 +35,7 @@ import {
   type FunnelWindow,
   INVALID_STEPS,
   MAX_VISITOR_WINDOW,
+  previousReadEnd,
 } from "./funnel.ts";
 import { retention } from "./retention.ts";
 import { KEY, VALUE } from "./steps.ts";
@@ -87,8 +90,14 @@ export const productRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
+  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results. */
+  limiter?: DashboardQueryLimiter;
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
+}> = (
+  app,
+  { db, clickhouse, auth, limiter = new DashboardQueryLimiter(), now = () => new Date() },
+  done,
+) => {
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "product_analytics", level: "view" });
   const reader: Reader = { client: clickhouse };
@@ -97,9 +106,13 @@ export const productRoutes: FastifyPluginCallback<{
   async function rangeOf(request: {
     query: RangeQuery;
     projectAccess: ProjectAccess | null;
-  }): Promise<{ range: ProductRange } | { problem: { error: string; message: string } }> {
+  }): Promise<
+    { range: ProductRange; moment: Date } | { problem: { error: string; message: string } }
+  > {
     const { projectId, timeZone } = accessOf(request);
-    const days = requestDays(request.query, dayIn(timeZone)(now()));
+    // One reading of the clock: the period's days and the comparison's cut-off agree.
+    const moment = now();
+    const days = requestDays(request.query, dayIn(timeZone)(moment));
     if ("problem" in days) return days;
     const { from, to } = await localDays(db, days.from, days.to, timeZone);
     return {
@@ -112,6 +125,7 @@ export const productRoutes: FastifyPluginCallback<{
         from,
         to,
       },
+      moment,
     };
   }
 
@@ -220,12 +234,83 @@ export const productRoutes: FastifyPluginCallback<{
       if (refusal !== null) return reply.code(400).send(refusal);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range } = asked;
-      const [results, environments] = await Promise.all([
+      const { range, moment } = asked;
+      // The period before, compared as the Web analytics summary is (reports.ts, previousDays).
+      const previous = await previousDays(
+        db,
+        range.firstDay,
+        range.lastDay,
+        range.timeZone,
+        moment,
+      );
+      const before: ProductRange = {
+        ...range,
+        firstDay: previous.firstDay,
+        lastDay: previous.lastDay,
+        from: previous.from,
+        to: previous.to,
+      };
+      const [results, earlier, environments] = await Promise.all([
         funnel(reader, range, steps, count, window),
+        funnel(reader, before, steps, count, window, {
+          until: previousReadEnd(range, previous, window, moment),
+        }),
         productEnvironments(reader, range, COUNTED.funnel),
       ]);
-      return { ...answer(range), environments, count, window, steps: results };
+      return {
+        ...answer(range),
+        environments,
+        count,
+        window,
+        steps: results,
+        previous: {
+          firstDay: previous.firstDay,
+          lastDay: previous.lastDay,
+          until: previous.until,
+          reached: earlier.map((step) => step.reached),
+        },
+      };
+    },
+  );
+
+  /**
+   * Every saved funnel's counts for one period and environment, for the
+   * saved funnels list: one request whose queries stay within the
+   * dashboard's query limit, rather than one request per funnel.
+   */
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/funnels/results",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string", pattern: UUID_PATTERN } },
+        },
+        querystring: { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES },
+      },
+    },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range } = asked;
+      const saved = await listSavedFunnels(db, range.projectId);
+      const limited = dashboardReader(clickhouse, limiter, reply);
+      // A stored definition that no longer passes the checks gets no result.
+      const valid = saved.filter(
+        (item) =>
+          item.steps.length > 0 && funnelRefusal(item.steps, item.count, item.window) === null,
+      );
+      const funnels = await Promise.all(
+        valid.map(async (item) => ({
+          id: item.id,
+          count: item.count,
+          window: item.window,
+          steps: await funnel(limited, range, item.steps, item.count, item.window),
+        })),
+      );
+      return { ...answer(range), funnels };
     },
   );
 

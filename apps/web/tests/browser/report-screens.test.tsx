@@ -367,7 +367,12 @@ describe("the strips of figures", () => {
         .getByRole("table", { name: "Funnel steps, with the users who reached each" })
         .element()
         .querySelectorAll("tbody tr"),
-    ].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
+    ].map((row) =>
+      // A count's own figure, without its change from the period before.
+      [...row.querySelectorAll("td")].map(
+        (cell) => (cell.querySelector(":scope > span > span:first-child") ?? cell).textContent,
+      ),
+    );
     expect(shown[1]?.[1]).toBe(rows[0]?.[0]);
     expect(shown[2]?.[1]).toBe(rows[1]?.[0]);
     expect(shown[0]?.[1]).toBe(rows[1]?.[1]);
