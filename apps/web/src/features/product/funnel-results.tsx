@@ -4,6 +4,7 @@ import { ScrollHint } from "@/components/scroll-hint";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -13,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { MISSING } from "@/lib/missing";
-import type { Funnel, FunnelStep } from "@/lib/product-api";
+import type { Funnel, FunnelStep, FunnelStepTime, FunnelTimes } from "@/lib/product-api";
 
 import {
   formatDay,
@@ -24,7 +25,7 @@ import {
   relativeChange,
 } from "../analytics/format";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
-import { formatShare, windowLabel } from "./format";
+import { formatShare, formatWait, windowLabel } from "./format";
 import type { PeopleList } from "./funnel-people-dialog";
 import { stepText } from "./funnel-steps";
 
@@ -76,6 +77,27 @@ function PeopleCell({
   );
 }
 
+/** The median time to a step, with its 75th percentile under it. */
+function StepTimeCell({ time, loading }: { time: FunnelStepTime | undefined; loading: boolean }) {
+  if (time === undefined) {
+    return loading ? (
+      <div className="flex flex-col items-end gap-1" aria-busy="true" aria-label="Loading">
+        <Skeleton className="h-4 w-12" />
+        <Skeleton className="h-3 w-16" />
+      </div>
+    ) : (
+      <span className="text-ink-subtle">{MISSING}</span>
+    );
+  }
+  if (time.median === null) return <span className="text-ink-subtle">{MISSING}</span>;
+  return (
+    <div className="flex flex-col items-end">
+      <span className="text-ink">{formatWait(time.median)}</span>
+      <span className="text-xs whitespace-nowrap text-ink-subtle">p75 {formatWait(time.p75)}</span>
+    </div>
+  );
+}
+
 const share = (part: number, whole: number) => (whole === 0 ? null : part / whole);
 
 /** A count's change from the period before, when there is one to compare with. */
@@ -95,9 +117,12 @@ function countChange(current: number, previous: number | undefined): Partial<Sta
  */
 export function FunnelResults({
   funnel,
+  times,
   onPeople,
 }: {
   funnel: Funnel;
+  /** The time between steps, read on its own (GET …/funnel/times). */
+  times?: { data: FunnelTimes | undefined; loading: boolean } | undefined;
   /** Opens a list of the users at a step; left out when the viewer cannot see users. */
   onPeople?: ((list: PeopleList) => void) | undefined;
 }) {
@@ -129,6 +154,22 @@ export function FunnelResults({
       value: formatWhole(last),
       ...countChange(last, beforeLast),
     },
+    {
+      label: "Median time to convert",
+      value:
+        times?.data === undefined ? (
+          times?.loading === true ? (
+            <Skeleton className="mt-1 h-6 w-16" aria-label="Loading" />
+          ) : (
+            MISSING
+          )
+        ) : (
+          formatWait(times.data.overall.median)
+        ),
+      ...(times?.data !== undefined && times.data.overall.median !== null
+        ? { detail: `p75 ${formatWait(times.data.overall.p75)}, step 1 to ${funnel.steps.length}` }
+        : {}),
+    },
   ];
   const note = comparisonNote(funnel, who);
   return (
@@ -146,7 +187,7 @@ export function FunnelResults({
         label="Conversion"
         stats={stats}
         minCount={MIN_LOADS_FOR_CHANGE}
-        className="sm:grid-cols-3 lg:max-w-3xl"
+        className="sm:grid-cols-4 lg:max-w-4xl"
       />
       <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
         <span>
@@ -158,7 +199,7 @@ export function FunnelResults({
       </p>
       <ScrollHint>
         <Table
-          className={`table-fixed lg:max-w-5xl ${people === undefined ? "max-sm:min-w-[30rem]" : "max-sm:min-w-[38rem]"}`}
+          className={`table-fixed lg:max-w-5xl ${people === undefined ? "max-sm:min-w-[36rem]" : "max-sm:min-w-[44rem]"}`}
         >
           <caption className="sr-only">Funnel steps, with the {who} who reached each</caption>
           <TableHeader>
@@ -183,9 +224,15 @@ export function FunnelResults({
               </TableHead>
               <TableHead
                 scope="col"
-                className={`h-8 w-32 text-right text-xs font-normal text-ink-subtle ${people === undefined ? "pr-0" : ""}`}
+                className="h-8 w-32 text-right text-xs font-normal text-ink-subtle"
               >
                 Of the step before
+              </TableHead>
+              <TableHead
+                scope="col"
+                className={`h-8 w-28 text-right text-xs font-normal text-ink-subtle ${people === undefined ? "pr-0" : ""}`}
+              >
+                Median time
               </TableHead>
               {people !== undefined && (
                 <TableHead
@@ -234,12 +281,22 @@ export function FunnelResults({
                   <TableCell className="py-2 text-right align-top text-ink tabular-nums">
                     {formatShare(item.reached, first)}
                   </TableCell>
-                  <TableCell
-                    className={`py-2 text-right align-top text-ink-subtle tabular-nums ${people === undefined ? "pr-0" : ""}`}
-                  >
+                  <TableCell className="py-2 text-right align-top text-ink-subtle tabular-nums">
                     {stepBefore === undefined
                       ? MISSING
                       : formatShare(item.reached, stepBefore.reached)}
+                  </TableCell>
+                  <TableCell
+                    className={`py-2 text-right align-top tabular-nums ${people === undefined ? "pr-0" : ""}`}
+                  >
+                    {index === 0 ? (
+                      <span className="text-ink-subtle">{MISSING}</span>
+                    ) : (
+                      <StepTimeCell
+                        time={times?.data?.between[index - 1]}
+                        loading={times?.loading ?? false}
+                      />
+                    )}
                   </TableCell>
                   {people !== undefined && (
                     <TableCell className="py-2 pr-0 text-right align-top tabular-nums">

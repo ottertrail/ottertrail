@@ -178,6 +178,38 @@ export interface FunnelPeople extends Answered {
   users: { userId: string; reachedAt: string }[];
 }
 
+/** One day (or the Monday of one week) of a funnel's conversion over time. */
+export interface FunnelTrendPoint {
+  day: string;
+  /** People whose first step 1 in the period was that day or week. */
+  started: number;
+  /** Of them, those who reached the last step. */
+  converted: number;
+}
+
+/** GET /api/projects/:id/funnel/trend: days with nobody at step 1 are left out. */
+export interface FunnelTrend extends Answered {
+  count: FunnelCount;
+  window: number;
+  unit: "day" | "week";
+  points: FunnelTrendPoint[];
+}
+
+/** The time between two steps, in seconds, for those who reached the later one. */
+export interface FunnelStepTime {
+  people: number;
+  median: number | null;
+  p75: number | null;
+}
+
+/** GET /api/projects/:id/funnel/times: `between[0]` is step 1 to step 2. */
+export interface FunnelTimes extends Answered {
+  count: FunnelCount;
+  window: number;
+  between: FunnelStepTime[];
+  overall: FunnelStepTime;
+}
+
 /** One saved funnel's counts, in GET /api/projects/:id/funnels/results. */
 export interface SavedFunnelResult {
   id: string;
@@ -310,6 +342,30 @@ const isFunnelPeople = (value: unknown): value is FunnelPeople =>
   isNumber(value.total) &&
   isListOf(value.users, isPerson);
 
+const isTrendPoint = (value: unknown): value is FunnelTrendPoint =>
+  isRecord(value) && isText(value.day) && isNumber(value.started) && isNumber(value.converted);
+
+const isFunnelTrend = (value: unknown): value is FunnelTrend =>
+  isRecord(value) &&
+  isAnswered(value) &&
+  isFunnelCount(value.count) &&
+  isNumber(value.window) &&
+  (value.unit === "day" || value.unit === "week") &&
+  isListOf(value.points, isTrendPoint);
+
+const isSeconds = (value: unknown): value is number | null => value === null || isNumber(value);
+
+const isStepTime = (value: unknown): value is FunnelStepTime =>
+  isRecord(value) && isNumber(value.people) && isSeconds(value.median) && isSeconds(value.p75);
+
+const isFunnelTimes = (value: unknown): value is FunnelTimes =>
+  isRecord(value) &&
+  isAnswered(value) &&
+  isFunnelCount(value.count) &&
+  isNumber(value.window) &&
+  isListOf(value.between, isStepTime) &&
+  isStepTime(value.overall);
+
 const isSavedFunnelResult = (value: unknown): value is SavedFunnelResult =>
   isRecord(value) &&
   isText(value.id) &&
@@ -441,6 +497,48 @@ export const funnelBreakdownQuery = (
         new URLSearchParams({ ...funnelParams(range, environment, steps, count, window), by }),
         signal,
         isFunnelBreakdown,
+      ),
+    placeholderData: keepPreviousData,
+  });
+
+/** The funnel's overall conversion per day, or per week for a long period. */
+export const funnelTrendQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  window: FunnelWindow,
+) =>
+  queryOptions({
+    queryKey: ["funnel", projectId, range, environment, steps, count, window, "trend"],
+    queryFn: ({ signal }) =>
+      get(
+        `${projectPath(projectId)}/funnel/trend`,
+        new URLSearchParams(funnelParams(range, environment, steps, count, window)),
+        signal,
+        isFunnelTrend,
+      ),
+    placeholderData: keepPreviousData,
+  });
+
+/** The median and 75th percentile time from each step to the next, and overall. */
+export const funnelTimesQuery = (
+  projectId: string,
+  range: PageRange,
+  environment: string,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  window: FunnelWindow,
+) =>
+  queryOptions({
+    queryKey: ["funnel", projectId, range, environment, steps, count, window, "times"],
+    queryFn: ({ signal }) =>
+      get(
+        `${projectPath(projectId)}/funnel/times`,
+        new URLSearchParams(funnelParams(range, environment, steps, count, window)),
+        signal,
+        isFunnelTimes,
       ),
     placeholderData: keepPreviousData,
   });

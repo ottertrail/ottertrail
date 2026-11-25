@@ -60,7 +60,7 @@ Properties are stored as each event's JSON (`properties`), so a breakdown reads 
 
 Code: `apps/api/src/product/funnel.ts`. ClickHouse's `windowFunnel` follows each visitor or user through the steps: it finds the longest chain of steps in order, each within the window from that chain's step 1. The query reads events from the range's start to its end plus the window, so a funnel started near the end can finish, and only a step 1 inside the range starts one. A page step is a pageview of exactly that path; an event step is a product event of that name, with its property filter if it has one.
 
-Choices: count by visitors (the default) or users, and a window of 5 or 30 minutes, 1 hour, 1 day (the default), or, for users, 7, 14, or 30 days. Visitors are refused longer windows: their IDs change at midnight, so a visitor's funnel ends with their day whatever the window says. A person counts once, at the furthest step they reached; times between steps are not shown yet. Two steps in the same millisecond count in either order.
+Choices: count by visitors (the default) or users, and a window of 5 or 30 minutes, 1 hour, 1 day (the default), or, for users, 7, 14, or 30 days. Visitors are refused longer windows: their IDs change at midnight, so a visitor's funnel ends with their day whatever the window says. A person counts once, at the furthest step they reached. Two steps in the same millisecond count in either order.
 
 The answer also counts the period before (`previous`: its days, `until`, and each step's `reached`), chosen as the Web analytics summary and the Overview choose it (`previousDays` in `reports/reports.ts`): the same number of days just before, in the instance's timezone, and while the period is still running, only up to the same time of day. Later steps of the period before are read only up to the moment that matches the period's own reading end (`previousReadEnd`): its end plus the window, or now if that comes first, moved back by the period's length. So a running period, whose later steps can only have happened up to now, compares with a period before whose later steps stop at the same point. The dashboard shows each count's change in percent and the overall conversion's in percentage points, and none when fewer than 20 people are counted in both periods, as the summary does.
 
@@ -71,6 +71,16 @@ A funnel can be split by one dimension (`GET /api/projects/:id/funnel/breakdown`
 Each person counts once, under the value on their first step 1 event in the range (`argMinIf` beside `windowFunnel`, in the same pass over the events), so the rows add up to the funnel. The answer is the five values with the most people at step 1 (ties by name), then Other for the rest of the values, then Unknown for no value (an unrecognized browser, no location, an event without the property): at most seven rows, `{ kind, value, reached[] }` each, whatever the dimension holds. A property is compared as text, as a step filter compares it. The query runs through the dashboard's query limit, like the saved funnels' results. There is no period before for a breakdown.
 
 The visit's source and campaign are not offered: an event's own referrer is the page before it in the site, and its UTM tags those of its own page, so on a step 1 that is not the visit's first page they would read as "Direct". Splitting by them needs the visit's first event, not built.
+
+### Conversion over time
+
+`GET /api/projects/:id/funnel/trend` (the funnel's own parameters) answers the overall conversion per day of each person's first step 1 in the range, in the instance's timezone, or per week (from Monday) when the period is longer than 60 days (`TREND_DAILY_DAYS`). Each point is `{ day, started, converted }`: the people whose first step 1 fell on that day or in that week, and how many of them reached the last step. It is one pass, the funnel's own query with `minIf(occurred_at, step 1 in the range)` beside `windowFunnel`, grouped by that day, so each person counts once and the points add up to the funnel. A day on which nobody did step 1 has no point, rather than a 0% one. The period bounds it: at most 366 days, so at most 366 points. It runs through the dashboard's query limit. The dashboard draws it under the result as a line, with gaps for the days without a point, and leaves it out for a single day.
+
+### Time between steps
+
+`GET /api/projects/:id/funnel/times` (the funnel's own parameters) answers, for each step after the first, the median and 75th percentile time from the step before (`between`, step 1 to 2 first), and from step 1 to the last step (`overall`), with how many people each is measured on, in seconds; `null` when nobody reached the step. Only the people who reached a step count for it.
+
+`windowFunnel` gives only a person's furthest step, not when they did each one, so the same pass over the events also collects each person's matching events in time order and folds over them the way `windowFunnel` follows them (`arrayFold`): a new step 1 starts a new chain, a later step joins the chain at the step before while it is within the window of that chain's step 1, and the first chain to reach the last step ends the search. A step repeated in the same chain keeps its first time. Each person's times come from the chain at their furthest step, the level `windowFunnel` gives, so someone who repeats step 1 is measured from the latest step 1 that led on. The quantiles are exact (`quantilesExactInclusive`, interpolated between the two middle values). It reads what the funnel reads, filtered the same way, and runs through the dashboard's query limit.
 
 ### Who dropped off
 
@@ -101,6 +111,8 @@ GET /api/projects/:id/funnel?period=7d&steps=[{"type":"page","path":"/pricing"},
 GET /api/projects/:id/funnel/breakdown?(the funnel's parameters)&by=deviceType
 GET /api/projects/:id/funnel/breakdown?(the funnel's parameters)&by=p.plan
 GET /api/projects/:id/funnel/people?(the funnel's parameters, count=users)&step=2&outcome=dropped
+GET /api/projects/:id/funnel/trend?(the funnel's parameters)
+GET /api/projects/:id/funnel/times?(the funnel's parameters)
 GET /api/projects/:id/retention?period=90d
 
 GET    /api/projects/:id/funnels
@@ -115,7 +127,8 @@ Like every project route, each runs the access check first. Saving, changing, or
 ## Not done yet
 
 - Goals by signed-in user instead of visitor, and a goal's trend over time.
-- Time between funnel steps.
+- Looser funnel steps (path patterns, "not equals" and "contains", goals as steps), order modes, and excluded steps.
+- A distribution of the time between funnel steps, beyond the median and 75th percentile.
 - A funnel's breakdown by the visit's source or campaign, and by more than one dimension.
 - Retention by a chosen event instead of any event, and by day or month.
 - Property filters on the web analytics page, and other comparisons than "equals".

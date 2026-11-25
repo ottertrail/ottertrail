@@ -59,6 +59,8 @@ import {
   type FunnelBreakdown,
   type FunnelBreakdownRow,
   type FunnelPeople,
+  type FunnelTimes,
+  type FunnelTrend,
   isFunnelCount,
   isFunnelStep,
   isFunnelWindow,
@@ -234,6 +236,10 @@ export interface FakeApi {
   funnelBreakdown: (query: URLSearchParams) => FunnelBreakdown | Response;
   /** Answers GET /api/projects/:id/funnel/people; by default, fakeFunnelPeople. */
   funnelPeople: (query: URLSearchParams) => FunnelPeople | Response;
+  /** Answers GET /api/projects/:id/funnel/trend; by default, fakeFunnelTrend. */
+  funnelTrend: (query: URLSearchParams) => FunnelTrend | Response;
+  /** Answers GET /api/projects/:id/funnel/times; by default, fakeFunnelTimes. */
+  funnelTimes: (query: URLSearchParams) => FunnelTimes | Response;
   /**
    * Answers GET /api/projects/:id/funnels/results; by default,
    * fakeFunnelResults. A promise holds it.
@@ -3115,6 +3121,62 @@ export function fakeFunnelPeople(query: URLSearchParams): FunnelPeople | Respons
   };
 }
 
+/**
+ * Conversion per day of the week: nobody did step 1 on 13 November, so it
+ * has no point; 1,000 start in all, as in the funnel.
+ */
+export const FUNNEL_TREND_POINTS = [
+  { day: "2026-11-10", started: 200, converted: 20 },
+  { day: "2026-11-11", started: 150, converted: 9 },
+  { day: "2026-11-12", started: 250, converted: 10 },
+  { day: "2026-11-14", started: 1_200, converted: 30 },
+  { day: "2026-11-15", started: 100, converted: 1 },
+  { day: "2026-11-16", started: 100, converted: 0 },
+];
+
+/** A funnel's conversion per day: FUNNEL_TREND_POINTS. */
+export function fakeFunnelTrend(query: URLSearchParams): FunnelTrend | Response {
+  if (funnelStepsOf(query) === null) {
+    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+  }
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    count: query.get("count") === "users" ? "users" : "visitors",
+    window: Number(query.get("window") ?? 86_400),
+    unit: "day",
+    points: FUNNEL_TREND_POINTS,
+  };
+}
+
+/**
+ * Seconds from each step to the next: 4 min (p75 15 min), 2 h 10 min
+ * (p75 1 day 2 h), then 3 days (p75 5 days) and nobody for the fifth step;
+ * overall 3 days (p75 6 days).
+ */
+export const FUNNEL_STEP_TIMES = [
+  { people: 420, median: 240, p75: 900 },
+  { people: 126, median: 7_800, p75: 93_600 },
+  { people: 50, median: 259_200, p75: 432_000 },
+  { people: 0, median: null, p75: null },
+];
+
+/** A funnel's time between steps: FUNNEL_STEP_TIMES, cut to the steps asked for. */
+export function fakeFunnelTimes(query: URLSearchParams): FunnelTimes | Response {
+  const steps = funnelStepsOf(query);
+  if (steps === null) {
+    return json({ error: "invalid_steps", message: "steps must be 2 to 5 steps." }, 400);
+  }
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    count: query.get("count") === "users" ? "users" : "visitors",
+    window: Number(query.get("window") ?? 86_400),
+    between: FUNNEL_STEP_TIMES.slice(0, steps.length - 1),
+    overall: { people: 50, median: 259_200, p75: 518_400 },
+  };
+}
+
 /** People reaching each step in the period before: 800 start. */
 export const FUNNEL_REACHED_BEFORE = [800, 400, 100, 50, 0];
 
@@ -4141,6 +4203,14 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.funnelBreakdown(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/funnel\/trend$/.test(path)) {
+    const result = api.funnelTrend(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (/^\/api\/projects\/[^/]+\/funnel\/times$/.test(path)) {
+    const result = api.funnelTimes(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/funnel\/people$/.test(path)) {
     const result = api.funnelPeople(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -4562,6 +4632,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     funnel: fakeFunnel,
     funnelBreakdown: fakeFunnelBreakdown,
     funnelPeople: fakeFunnelPeople,
+    funnelTrend: fakeFunnelTrend,
+    funnelTimes: fakeFunnelTimes,
     funnelResults: fakeFunnelResults,
     retention: fakeRetention,
     resolutions: fakeResolutions(),

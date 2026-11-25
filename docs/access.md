@@ -36,7 +36,7 @@ A member's access has two parts (`dashboard_member_access`, `dashboard_member_pr
 | Area                | Pages                                                                 | View                        | Manage                                                                           |
 | ------------------- | --------------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------- |
 | `web_analytics`     | Analytics, Speed, Heatmaps                                            | All three pages             | (none)                                                                           |
-| `product_analytics` | Events, Funnel, Retention, and the goals on the Analytics page        | Every report, saved funnels | Saving, renaming, and deleting funnels; adding and deleting goals                |
+| `product_analytics` | Events, Funnel, Retention, and the goals on the Analytics page        | Every report, saved funnels | Saving, renaming, duplicating, and deleting funnels; adding and deleting goals   |
 | `errors`            | Errors, an error's page                                               | Groups, occurrences, stacks | Resolving and reopening; assigning; deleting source maps                         |
 | `replays`           | Replays, a replay's page, the player, the replay in an error's dialog | Every replay                | (none)                                                                           |
 | `users`             | Users, a user's page (identified end users and their activity)        | Both pages                  | (none)                                                                           |
@@ -109,7 +109,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`, `…/heatmaps/snapshots`, `GET …/heatmaps/snapshots/:device`, `…/player`, `…/heatmap` | `web_analytics` view                |
 | `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                                                                 | `web_analytics` view                |
 | `POST /api/heatmap-overlay/:projectId/snapshot` (an overlay session token, no cookie)                                                                                                               | `projects`                          |
-| `…/events`, `…/events/:name`, `…/funnel`, `…/funnel/breakdown`, `…/retention`, `GET …/goals`, `GET …/funnels`, `…/funnels/results`                                                                  | `product_analytics` view            |
+| `…/events`, `…/events/:name`, `…/funnel`, `…/funnel/breakdown`, `…/funnel/trend`, `…/funnel/times`, `…/retention`, `GET …/goals`, `GET …/funnels`, `…/funnels/results`                              | `product_analytics` view            |
 | `…/funnel/people` (the users who dropped off at a step, [product analytics](product-analytics.md#who-dropped-off)); the handler also needs `users` view, and answers 403 without it                 | `product_analytics` view            |
 | `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                                                         | `product_analytics` manage          |
 | `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                                                             | `errors` view                       |
@@ -187,7 +187,7 @@ These need no session, and declare nothing: health, collection with a project's 
 - The project list hides "New project" and allowed sites from members.
 - The Settings page's General, Location data, Backups, and Server log tabs show to the owner, and its Storage, AI models, and Notification channels tabs to the owner and admins. A member gets "You don't have access". The workspace menu's Members link, to `/settings/members`, shows to the owner and admins.
 - Where one area's page links into another, the link shows only when the user has that area: an error's user, trace, and replay; a user's errors, replays, and AI usage (which needs AI); an AI call's trace (which needs monitoring: without it, the trace ID shows as text and the latest calls have no trace column); a replay's error and user; the alert rules on an error's page; "Add an alert rule" on the monitoring pages; links to the project's settings.
-- Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, and deleting funnels; adding and deleting goals.
+- Buttons that change something show only with manage: Resolve and Reopen; adding, editing, pausing, and deleting checks and rules (the rules' switches are disabled); saving, renaming, duplicating, and deleting funnels; adding and deleting goals.
 
 The API refuses all of these regardless. Hiding them only saves the user a refusal.
 

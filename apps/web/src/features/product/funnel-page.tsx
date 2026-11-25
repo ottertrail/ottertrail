@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WhenAllowed } from "@/components/when-allowed";
+import { WorkbenchKeyHints } from "@/components/workbench";
 import { useAccess } from "@/lib/access";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
@@ -26,6 +27,7 @@ import {
   type FunnelStep,
   type FunnelWindow,
   funnelQuery,
+  funnelTimesQuery,
   MIN_STEPS,
   productEventsQuery,
   savedFunnelResultsQuery,
@@ -39,8 +41,10 @@ import { FunnelEditorDialog } from "./funnel-editor-dialog";
 import { FunnelPeopleDialog, type PeopleList } from "./funnel-people-dialog";
 import { FunnelResults } from "./funnel-results";
 import { stepText } from "./funnel-steps";
+import { FunnelTrendSection } from "./funnel-trend";
 import { LoadFailed, Refreshing } from "./report-state";
 import { SaveFunnelActions } from "./save-funnel-actions";
+import { SAVED_FUNNEL_KEYS } from "./saved-funnels";
 import { SavedFunnelsCard } from "./saved-funnels-card";
 import {
   breakdownFor,
@@ -83,6 +87,16 @@ function FunnelNotes({ window }: { window: FunnelWindow }) {
         <li>
           A page step matches pageviews with exactly that path. An event step's property filter
           compares values as text. Numbers, true, false, and null use their JSON representations.
+        </li>
+        <li>
+          Conversion over time puts each person on the day of their first step 1 in the period, or
+          its week when the period is longer than 60 days. A day when nobody did step 1 has no
+          point.
+        </li>
+        <li>
+          Time between steps is measured for the people who reached the later step, between the
+          events the funnel counted. When someone repeats step 1, the latest time before they go on
+          counts. A repeated later step keeps its first time.
         </li>
         <li>A breakdown counts each person under the value on their first step 1 in the period.</li>
         <li>Counted by users, each step lists who dropped off after it.</li>
@@ -200,6 +214,10 @@ export function FunnelPage({
             steps: listed.steps,
           },
   });
+  const times = useQuery({
+    ...funnelTimesQuery(projectId, range, environment, steps, count, window),
+    enabled: ready,
+  });
   const [editing, setEditing] = React.useState<"new" | "edit" | null>(null);
   const [people, setPeople] = React.useState<PeopleList | null>(null);
   // Saving removes the trigger, so return focus to the funnel's heading.
@@ -263,6 +281,11 @@ export function FunnelPage({
       answered={data ?? events.data}
       onRange={(next) => show({ range: next })}
       onEnvironment={(next) => show({ environment: next })}
+      actions={
+        !ready && (saved.data?.length ?? 0) > 0 ? (
+          <WorkbenchKeyHints hints={SAVED_FUNNEL_KEYS} />
+        ) : undefined
+      }
     />
   );
 
@@ -377,10 +400,22 @@ export function FunnelPage({
           <Refreshing stale={query.isPlaceholderData}>
             <FunnelResults
               funnel={data}
+              times={{
+                data: times.isPlaceholderData ? undefined : times.data,
+                loading: times.isFetching,
+              }}
               onPeople={access.canUse("users") ? setPeople : undefined}
             />
           </Refreshing>
         )}
+        <FunnelTrendSection
+          projectId={projectId}
+          range={range}
+          environment={environment}
+          steps={steps}
+          count={count}
+          window={window}
+        />
         <FunnelBreakdownSection
           projectId={projectId}
           range={range}

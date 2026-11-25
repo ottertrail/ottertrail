@@ -18,6 +18,9 @@ import {
 import { DefinitionSummary, FunnelNameDialog } from "./funnel-name-dialog";
 import { isShownFunnel } from "./search";
 
+/** Why Save, Save as new funnel, and Duplicate are off at the limit. */
+export const LIMIT_REASON = `A project has at most ${MAX_SAVED_FUNNELS} saved funnels. Delete one to save another.`;
+
 /** Keep inactive Save focusable (docs/design-system.md, "The save rule"). */
 const RESTING = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 
@@ -39,7 +42,7 @@ function SaveNewButton({
     <>
       {atLimit && (
         <span id={reasonId} className="text-xs text-ink-subtle">
-          A project has at most {MAX_SAVED_FUNNELS} saved funnels. Delete one to save another.
+          {LIMIT_REASON}
         </span>
       )}
       <Button

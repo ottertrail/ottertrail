@@ -84,7 +84,7 @@ const SCREENS = [
     path: FUNNEL,
     ready: () => page.getByRole("table", { name: "Saved funnels, by name" }),
     tables: ["Saved funnels, by name"],
-    phone: { scroll: ["Saved funnels, by name"], end: ["Saved funnels, by name"] },
+    phone: { stack: ["Saved funnels, by name"] },
   },
   {
     name: "a funnel",
@@ -365,7 +365,7 @@ describe("the strips of figures", () => {
     ]);
   });
 
-  test("a funnel: the overall conversion, and who did the first and last step", async () => {
+  test("a funnel: the overall conversion, who did the first and last step, and how long it took", async () => {
     installFakeApi();
     renderApp(funnelAddress(STEPS, "&count=users&window=3600"));
     await expect
@@ -376,6 +376,7 @@ describe("the strips of figures", () => {
       "Overall conversion",
       "Users at step 1",
       "Users at step 2",
+      "Median time to convert",
     ]);
     // The figures are the table's: step 1's users, and the last step's share of them.
     const rows = [
@@ -622,6 +623,58 @@ describe("each report fits", () => {
       }
     });
   }
+
+  test("the saved funnels at 390 wide: each funnel stacks, its steps wrapping onto lines", async () => {
+    await page.viewport(390, 844);
+    const long: FunnelStep[] = [
+      { type: "page", path: "/pricing/enterprise-plans" },
+      { type: "event", name: "checkout_started" },
+      { type: "event", name: "payment_details_entered" },
+      { type: "event", name: "subscription_created" },
+    ];
+    installFakeApi({
+      savedFunnels: [
+        {
+          id: PRICING_FUNNEL,
+          name: "Enterprise checkout",
+          steps: long,
+          count: "users",
+          window: 604_800,
+          createdAt: "2026-11-01T00:00:00.000Z",
+          updatedAt: "2026-11-01T00:00:00.000Z",
+        },
+      ],
+    });
+    renderApp(FUNNEL);
+    const table = page.getByRole("table", { name: "Saved funnels, by name" });
+    await expect.element(table).toBeVisible();
+    expectNoSidewaysScroll(390);
+
+    const row = table.element().querySelector("tbody tr");
+    if (row === null) throw new Error("No row");
+    const [name, , steps, counted] = [...row.querySelectorAll("th, td")];
+    const text = steps?.querySelector("[data-truncated-text]");
+    if (!(name instanceof HTMLElement) || !(text instanceof HTMLElement) || counted === undefined) {
+      throw new Error("Missing cells");
+    }
+    // All of the steps show, on more than one line, inside the screen.
+    expect(text.textContent).toBe(
+      "/pricing/enterprise-plans → checkout_started → payment_details_entered → subscription_created",
+    );
+    expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth + 1);
+    const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight);
+    expect(text.getBoundingClientRect().height).toBeGreaterThan(lineHeight * 1.5);
+    expect(text.getBoundingClientRect().right).toBeLessThanOrEqual(390);
+    // The name first, then the steps, then who it counts and the conversion.
+    const nameBox = name.getBoundingClientRect();
+    const stepsBox = text.getBoundingClientRect();
+    const countedBox = counted.getBoundingClientRect();
+    expect(nameBox.bottom).toBeLessThanOrEqual(stepsBox.top + 1);
+    expect(stepsBox.bottom).toBeLessThanOrEqual(countedBox.top + 1);
+    // The actions stay beside the name.
+    const rename = page.getByRole("button", { name: "Rename the funnel Enterprise checkout" });
+    expect(rename.element().getBoundingClientRect().top).toBeLessThan(nameBox.bottom);
+  });
 
   test("Services at 390 wide: a marked route keeps its highlight under its pinned cells", async () => {
     await page.viewport(390, 844);

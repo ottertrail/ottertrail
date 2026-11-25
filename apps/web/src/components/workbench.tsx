@@ -452,7 +452,24 @@ function useFitsOnBar(ref: React.RefObject<HTMLUListElement | null>): boolean {
   return fits;
 }
 
-export function WorkbenchKeyHints({ action }: { action?: Pick<WorkbenchAction, "key" | "label"> }) {
+/** One line of the key hints: keys that do the same thing, and what it is. */
+export interface KeyHintItem {
+  keys: string[];
+  text: string;
+}
+
+/**
+ * The filter bar's key hints: a workbench's "j k move", its action, and
+ * "Esc clear"; or `hints` in their place, for a list that keeps the same
+ * keys without a detail pane (the saved funnels' "Enter open").
+ */
+export function WorkbenchKeyHints({
+  action,
+  hints,
+}: {
+  action?: Pick<WorkbenchAction, "key" | "label">;
+  hints?: KeyHintItem[];
+}) {
   const ref = React.useRef<HTMLUListElement>(null);
   const fits = useFitsOnBar(ref);
   return (
@@ -467,9 +484,15 @@ export function WorkbenchKeyHints({ action }: { action?: Pick<WorkbenchAction, "
         !fits && "pointer-events-none invisible absolute top-0 right-0",
       )}
     >
-      <KeyHint keys={["j", "k"]} text="move" />
-      {action !== undefined && <KeyHint keys={[action.key]} text={action.label} />}
-      <KeyHint keys={["Esc"]} text="clear" />
+      {hints === undefined ? (
+        <>
+          <KeyHint keys={["j", "k"]} text="move" />
+          {action !== undefined && <KeyHint keys={[action.key]} text={action.label} />}
+          <KeyHint keys={["Esc"]} text="clear" />
+        </>
+      ) : (
+        hints.map((hint) => <KeyHint key={hint.text} keys={hint.keys} text={hint.text} />)
+      )}
     </ul>
   );
 }

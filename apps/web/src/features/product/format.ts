@@ -28,3 +28,17 @@ export const stepsLine = (steps: readonly FunnelStep[]) => steps.map(stepText).j
 
 export const countLine = (count: FunnelCount, window: number) =>
   `${FUNNEL_COUNTS.find((item) => item.value === count)?.label ?? count}, within ${windowLabel(window)}`;
+
+/** Seconds written plainly: "45 s", "4 min", "2 h 10 min", "1 day 3 h", "3 days". */
+export function formatWait(seconds: number | null): string {
+  if (seconds === null) return MISSING;
+  if (seconds < 59.5) return `${Math.round(seconds)} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
+  const days = Math.floor(hours / 24);
+  const dayText = `${days} ${days === 1 ? "day" : "days"}`;
+  // Hours matter only in the first days.
+  return days < 3 && hours % 24 !== 0 ? `${dayText} ${hours % 24} h` : dayText;
+}

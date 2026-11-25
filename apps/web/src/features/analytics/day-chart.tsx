@@ -42,12 +42,15 @@ export function DayChart({
   tooltipRows,
   formatValue = formatCount,
   plotHeight = DEFAULT_PLOT_HEIGHT,
+  pointLabel = (day) => formatDay(day, { weekday: true }),
 }: {
   points: DayValue[];
   label: string;
   tooltipRows: (index: number) => TooltipRow[];
   formatValue?: (value: number) => string;
   plotHeight?: number;
+  /** A point's name in its tooltip and readout: "Tue 17 Nov", or "Week of 16 Nov" for weeks. */
+  pointLabel?: (day: string) => string;
 }) {
   const height = 12 + plotHeight + AXIS_BAND;
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -114,7 +117,7 @@ export function DayChart({
   const readout =
     shownPoint === undefined
       ? ""
-      : `${formatDay(shownPoint.day, { weekday: true })}: ${tooltipRows(shown)
+      : `${pointLabel(shownPoint.day)}: ${tooltipRows(shown)
           .map((row) => `${row.value} ${row.label}`)
           .join(", ")}`;
   const activePoint = active === null ? undefined : points[active];
@@ -234,7 +237,7 @@ export function DayChart({
           className="pointer-events-none absolute top-2 z-10 min-w-36 rounded-lg border bg-popover px-3 py-2 text-xs shadow-md"
           style={tooltipOnLeft ? { right: width - x(active) + 12 } : { left: x(active) + 12 }}
         >
-          <p className="mb-1.5 text-ink-subtle">{formatDay(activePoint.day, { weekday: true })}</p>
+          <p className="mb-1.5 text-ink-subtle">{pointLabel(activePoint.day)}</p>
           <ul className="flex flex-col gap-1">
             {rows.map((row) => (
               <li key={row.label} className="flex items-center gap-2">
