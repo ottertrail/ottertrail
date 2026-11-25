@@ -32,13 +32,42 @@ The spec asks for these before any report: each report below counts by them.
 
 **Environments:** every report reads one environment, production unless another is chosen, as the other pages do.
 
-**Funnel:** two to five ordered steps, each an event name or a page path (up to 500 characters), with at most one property filter each. Two steps in a row must not be able to match the same event: the same page, or the same event name unless both filter one property by different values. One event would count for both, so such a funnel always converts; put another step between, such as a page. Someone reaches step _k_ if they did steps 1 to _k_ in that order, other events in between allowed, all within the conversion window that starts at their step 1; a step 1 in the report's range starts a funnel. Counted by visitors, the window can reach at most to the end of that visitor's day; counted by users, up to 30 days.
+**Funnel:** two to eight ordered steps ([steps](#steps)). Someone reaches step _k_ if they did steps 1 to _k_ in that order, other events in between allowed, all within the conversion window that starts at their step 1; a step 1 in the report's range starts a funnel. Counted by visitors, the window can reach at most to the end of that visitor's day; counted by users, up to 30 days.
 
 **Retention:** signed-in users only, since visitor IDs change daily. A user's cohort is the week of their first event in the environment, over all the time the project keeps. They are retained in week _n_ if they did anything themselves (any event but time on page and Web Vitals) in the _n_-th week after it. Week 0 is everyone, 100%; the current week is marked as not over.
 
+## Steps
+
+Code: `apps/api/src/product/steps.ts`, shared by funnels and goals. A step is a page or a product event.
+
+- **A page:** a path of up to 500 characters, matched against a pageview's path, which is stored without its query or fragment. In a path, `*` matches any run of characters, none included, `/` included: `/docs/*` matches `/docs/`, `/docs/a`, and `/docs/a/b`, not `/docs`; `/*/settings` matches every page called settings one or more levels down. A path without `*` matches only itself. ClickHouse reads a pattern with `LIKE`, `\`, `%`, and `_` escaped so they stay literal, and a path without `*` with `=`. A literal `*` cannot be matched.
+- **An event:** a product event's name, with at most one property filter. The filter compares the property's text (as in [Definitions](#definitions)) with a value: it equals it, it does not equal it (`"operator": "notEquals"`), or it contains it (`"operator": "contains"`). Not equals and contains are case-sensitive, as equals is. A filter without `operator` is equals, so steps saved or linked before operators existed mean what they did.
+- **A missing property matches no filter, "not equals" included.** "plan does not equal free" means "has a plan, and it is not free": an event without a plan is not counted. This keeps one rule for every filter, and an event the site sent without the property is usually a different event.
+
+```json
+[
+  { "type": "page", "path": "/docs/*" },
+  {
+    "type": "event",
+    "name": "signup",
+    "filter": { "key": "plan", "value": "free", "operator": "notEquals" }
+  }
+]
+```
+
+**Two steps in a row must not be able to match the same event.** `windowFunnel` would count that one event for both, so the funnel would always convert. The check is exact: it refuses two steps only when some event could match both, and the editor says so before asking, with the same rule (`features/product/funnel-steps.ts`).
+
+- Two pages: two paths without `*` when they are the same; a pattern and a path when the pattern matches the path; two patterns when one's text before its first `*` starts the other's, or the other way round, and one's text after its last `*` ends the other's, or the other way round. The `*`s between can then take up the rest: `/a/*/b` and `/a/x*` both match `/a/x/b`; `/a/*/b` and `/a/x*/c` cannot both match anything.
+- Two events of one name, filtered by one property: two equals only on the same value; equals and not equals only on different values; equals and contains when the value contains the text; every other pair can both match. Without a filter on either, or filtered by different properties, they can.
+- A page and an event, or two events of different names, never match the same event.
+
+Put another step between two that overlap, such as a page.
+
+**Saved goals as steps:** the funnel editor's "Copy from a goal" menu on each step copies a saved goal's definition into the step. It is a copy, not a reference by ID: deleting the goal leaves the step, and a saved funnel, as they are.
+
 ## Goals
 
-Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked by the same rules. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
+Code: `apps/api/src/goals/`. A goal is a named conversion a project saves: a page viewed, or a product event with an optional property filter, the same shape as a funnel step (`product/steps.ts`), checked and matched by the same rules ([steps](#steps)): a path may be a pattern such as `/docs/*`, and a filter may say "not equals" or "contains". `goals.filter_operator` holds the operator, null for equals. A project has at most 20, each with its own name. They live in PostgreSQL (`goals`); nothing about them is stored in ClickHouse, so a goal added today counts past events too, and deleting one loses only its definition.
 
 The web analytics page counts them, in the same visits and filters as the rest of the page: for each goal, the **visitors** who reached it (daily visitor IDs, as the summary counts them), how many **times** it happened, and its **conversion rate**, those visitors as a share of the page's visitors. A filtered page counts the goals among its own visits only. So filtering the page by a source or campaign shows each goal's conversions from it: a goal event on the visit's third page counts under the source of its first. Counting by visitors means an event goal counts browser events only: an event from the site's server has no visitor.
 
@@ -137,7 +166,8 @@ Like every project route, each runs the access check first. Saving, changing, or
 ## Not done yet
 
 - Goals by signed-in user instead of visitor, and a goal's trend over time.
-- Looser funnel steps (path patterns, "not equals" and "contains", goals as steps), order modes, and excluded steps.
+- Funnel order modes (strict, or any order) and excluded steps.
+- Matching a literal `*` in a path, and case-insensitive filters.
 - A distribution of the time between funnel steps, beyond the median and 75th percentile.
 - A funnel's breakdown by more than one dimension, or by the visit's medium.
 - Filtering the Events page by a source or campaign.
