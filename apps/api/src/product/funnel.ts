@@ -260,6 +260,168 @@ export async function funnelBreakdown(
     );
 }
 
+/** Periods longer than this many days show conversion per week rather than per day. */
+export const TREND_DAILY_DAYS = 60;
+
+export type TrendUnit = "day" | "week";
+
+export interface TrendPoint {
+  /** The day, or the Monday that starts the week, "YYYY-MM-DD" in the range's timezone. */
+  day: string;
+  /** People whose first step 1 in the range was on that day or in that week. */
+  started: number;
+  /** Of them, those who reached the last step. */
+  converted: number;
+}
+
+/** Per day, or per week for periods longer than TREND_DAILY_DAYS. */
+export const trendUnit = (range: { firstDay: string; lastDay: string }): TrendUnit =>
+  (Date.parse(range.lastDay) - Date.parse(range.firstDay)) / 86_400_000 + 1 > TREND_DAILY_DAYS
+    ? "week"
+    : "day";
+
+/**
+ * The funnel's overall conversion by the day (or week) of each person's
+ * first step 1 in the range, in the range's timezone: one pass, so each
+ * person counts once and the points add up to the funnel. Days on which
+ * nobody did step 1 have no point.
+ */
+export async function funnelTrend(
+  reader: Reader,
+  range: ProductRange,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  windowSeconds: FunnelWindow,
+  unit: TrendUnit,
+): Promise<TrendPoint[]> {
+  const params = new QueryParams();
+  const perPerson = perPersonSql(
+    params,
+    { range, steps, count, windowSeconds, until: readEnd(range, windowSeconds) },
+    ({ startsInRange }) => [`minIf(occurred_at, ${startsInRange}) AS started_at`],
+  );
+  const timeZone = params.add(range.timeZone, "String");
+  const day = `toDate(started_at, ${timeZone})`;
+  const rows = await queryRows<{ day: string; started: string; converted: string }>(
+    reader,
+    `SELECT toString(${unit === "week" ? `toMonday(${day})` : day}) AS day,
+            count() AS started,
+            countIf(level = ${params.add(steps.length, "UInt8")}) AS converted
+     FROM (${perPerson})
+     WHERE level > 0
+     GROUP BY day
+     ORDER BY day`,
+    params,
+  );
+  return rows.map((row) => ({
+    day: row.day,
+    started: Number(row.started),
+    converted: Number(row.converted),
+  }));
+}
+
+export interface StepTime {
+  /** People the time is measured for: those who reached the step. */
+  people: number;
+  /** In seconds; null when nobody reached the step. */
+  median: number | null;
+  p75: number | null;
+}
+
+export interface FunnelTimes {
+  /** From each step to the next: the first entry is step 1 to step 2. */
+  between: StepTime[];
+  /** From step 1 to the last step, for those who converted. */
+  overall: StepTime;
+}
+
+/** A step's people and its time quantiles in milliseconds, as seconds. */
+function timeOf(people: unknown, times: unknown): StepTime {
+  const counted = Number(people ?? 0);
+  const [median, p75] = Array.isArray(times) ? times.map(Number) : [];
+  const seconds = (ms: number | undefined) =>
+    counted === 0 || ms === undefined || !Number.isFinite(ms) ? null : ms / 1000;
+  return { people: counted, median: seconds(median), p75: seconds(p75) };
+}
+
+/**
+ * The time from each step to the next, and from step 1 to the last, for
+ * the people who reached it, in one pass. windowFunnel gives only a
+ * person's level, so each person's step events are folded in time order
+ * the way windowFunnel follows them: a new step 1 starts a new chain, a
+ * step joins the chain of the step before while within the window of its
+ * step 1, and the first chain to reach the last step ends the search. A
+ * step repeated within the same chain keeps its first time. Each person's
+ * times come from the chain at their furthest step.
+ */
+export async function funnelTimes(
+  reader: Reader,
+  range: ProductRange,
+  steps: readonly FunnelStep[],
+  count: FunnelCount,
+  windowSeconds: FunnelWindow,
+): Promise<FunnelTimes> {
+  const params = new QueryParams();
+  // Step counts and the window are validated constants, never input.
+  const n = steps.length;
+  const windowMs = windowSeconds * 1000;
+  const perPerson = perPersonSql(
+    params,
+    { range, steps, count, windowSeconds, until: readEnd(range, windowSeconds) },
+    ({ conditions, startsInRange }) => {
+      const matched = [startsInRange, ...conditions.slice(1)].map(
+        (condition, index) =>
+          `(toInt64(toUnixTimestamp64Milli(occurred_at)), toUInt8(if(${condition}, ${index + 1}, 0)))`,
+      );
+      const entries = `arraySort(arrayFlatten(groupArray(
+          arrayFilter(entry -> entry.2 > 0,
+            [${matched.join(", ")}]
+          )
+        )))`;
+      // acc[i]: the timestamps of the chain at step i, empty when there is none.
+      return [
+        `arrayFold((acc, entry) -> if(notEmpty(acc[${n}]), acc,
+           arrayMap(i -> multiIf(
+             i != entry.2, acc[i],
+             i = 1, [entry.1],
+             notEmpty(acc[i - 1])
+               AND entry.1 <= acc[i - 1][1] + ${windowMs}
+               AND (empty(acc[i]) OR acc[i][1] != acc[i - 1][1]),
+             arrayPushBack(acc[i - 1], entry.1),
+             acc[i]
+           ), range(1, ${n + 1}))
+         ), ${entries}, arrayWithConstant(${n}, CAST([], 'Array(Int64)'))) AS chains`,
+      ];
+    },
+  );
+  const between = steps.slice(1).map((_, index) => {
+    const step = index + 2;
+    const reached = `level >= ${step} AND length(chain) >= ${step}`;
+    return `countIf(${reached}) AS people${step},
+            quantilesExactInclusiveIf(0.5, 0.75)(chain[${step}] - chain[${step - 1}], ${reached}) AS times${step}`;
+  });
+  const converted = `level = ${n} AND length(chain) = ${n}`;
+  const rows = await queryRows<Record<string, string | number[]>>(
+    reader,
+    `SELECT ${between.join(", ")},
+            countIf(${converted}) AS people_overall,
+            quantilesExactInclusiveIf(0.5, 0.75)(chain[${n}] - chain[1], ${converted}) AS times_overall
+     FROM (
+       SELECT level, chains[level] AS chain
+       FROM (${perPerson})
+       WHERE level > 0
+     )`,
+    params,
+  );
+  const row = rows[0] ?? {};
+  return {
+    between: steps
+      .slice(1)
+      .map((_, index) => timeOf(row[`people${index + 2}`], row[`times${index + 2}`])),
+    overall: timeOf(row.people_overall, row.times_overall),
+  };
+}
+
 /** Users listed per step; the total says how many there are in all. */
 export const PEOPLE_LIMIT = 100;
 

@@ -36,6 +36,8 @@ import {
   funnelRefusal,
   type FunnelStep,
   funnelStepsOf,
+  funnelTimes,
+  funnelTrend,
   type FunnelWindow,
   INVALID_STEPS,
   MAX_STEPS,
@@ -44,6 +46,7 @@ import {
   PEOPLE_OUTCOMES,
   type PeopleOutcome,
   previousReadEnd,
+  trendUnit,
 } from "./funnel.ts";
 import { retention } from "./retention.ts";
 import { KEY, VALUE } from "./steps.ts";
@@ -136,7 +139,7 @@ export const productRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
-  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results, a breakdown, and a list of people. */
+  /** The dashboard's query limit (telemetry/dashboard-limit.ts), for the saved funnels' results, a breakdown, the trend, the times between steps, and a list of people. */
   limiter?: DashboardQueryLimiter;
   now?: () => Date;
 }> = (
@@ -350,6 +353,53 @@ export const productRoutes: FastifyPluginCallback<{
         by,
       );
       return { ...answer(range), count, window, by: request.query.by, rows };
+    },
+  );
+
+  /**
+   * The funnel's overall conversion per day, or per week for a long period,
+   * by each person's first step 1 (funnel.ts, funnelTrend): one query,
+   * within the dashboard's query limit.
+   */
+  app.get<{ Params: { id: string }; Querystring: FunnelQuery }>(
+    "/projects/:id/funnel/trend",
+    { preHandler: [signedIn, canView], schema: funnelSchema() },
+    async (request, reply) => {
+      const asked = await funnelOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range, steps, count, window } = asked;
+      const unit = trendUnit(range);
+      const points = await funnelTrend(
+        dashboardReader(clickhouse, limiter, reply),
+        range,
+        steps,
+        count,
+        window,
+        unit,
+      );
+      return { ...answer(range), count, window, unit, points };
+    },
+  );
+
+  /**
+   * The time from each step to the next and from step 1 to the last
+   * (funnel.ts, funnelTimes): one query, within the dashboard's query limit.
+   */
+  app.get<{ Params: { id: string }; Querystring: FunnelQuery }>(
+    "/projects/:id/funnel/times",
+    { preHandler: [signedIn, canView], schema: funnelSchema() },
+    async (request, reply) => {
+      const asked = await funnelOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range, steps, count, window } = asked;
+      const times = await funnelTimes(
+        dashboardReader(clickhouse, limiter, reply),
+        range,
+        steps,
+        count,
+        window,
+      );
+      return { ...answer(range), count, window, ...times };
     },
   );
 

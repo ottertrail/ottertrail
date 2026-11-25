@@ -116,6 +116,8 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
     "/funnel/people",
     `/funnel/people?period=7d&steps=${FUNNEL_STEPS}&count=users&window=3600&step=1&outcome=dropped`,
   ),
+  request("GET", "/funnel/trend", `/funnel/trend?period=7d&steps=${FUNNEL_STEPS}`),
+  request("GET", "/funnel/times", `/funnel/times?period=7d&steps=${FUNNEL_STEPS}`),
   request("GET", "/retention", "/retention?period=30d"),
   request("GET", "/goals", "/goals"),
   request("POST", "/goals", "/goals", { name: "A goal", step: { type: "page", path: "/" } }),
