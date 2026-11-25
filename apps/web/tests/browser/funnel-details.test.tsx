@@ -105,6 +105,37 @@ describe("a funnel's breakdown", () => {
     ]);
   });
 
+  test("by the visit's source and campaign, named as the Analytics page names them", async () => {
+    const api = installFakeApi();
+    const router = renderApp(funnelAddress(SIGNUP_PURCHASE));
+    await breakdownPicker().click();
+    await page.getByRole("option", { name: "By source", exact: true }).click();
+
+    const source = "Funnel steps by source, with the visitors who reached each";
+    await expect.element(page.getByRole("table", { name: source })).toBeVisible();
+    expect(router.state.location.search).toMatchObject({ by: "source" });
+    expect(lastQuery(api, "/funnel/breakdown")).toMatchObject({ by: "source" });
+    expect(rowsOf(source)).toEqual([
+      ["google.com", "380", "180", "47%"],
+      ["Direct / none", "300", "110", "37%"],
+      ["newsletter", "160", "80", "50%"],
+      ["news.ycombinator.com", "90", "30", "33%"],
+      ["github.com", "40", "12", "30%"],
+      ["Other", "20", "5", "25%"],
+      ["Unknown", "10", "3", "30%"],
+    ]);
+
+    await breakdownPicker().click();
+    await page.getByRole("option", { name: "By campaign", exact: true }).click();
+    const campaign = "Funnel steps by campaign, with the visitors who reached each";
+    await expect.element(page.getByRole("table", { name: campaign })).toBeVisible();
+    expect(rowsOf(campaign).map((row) => row[0])).toEqual([
+      "No campaign",
+      "launch-week",
+      "Unknown",
+    ]);
+  });
+
   test("a funnel starting on a page offers no properties, and drops one from the address", async () => {
     const api = installFakeApi();
     renderApp(funnelAddress(PAGE_FIRST, "&by=p.plan"));

@@ -160,6 +160,28 @@ describe("product events", () => {
     ]);
   });
 
+  test("an event's sources: its visit's source and campaign, with the page's filters", async () => {
+    const api = installFakeApi();
+    renderApp(`${SIGNUP}?p.plan=team`);
+
+    const source = "Source: the most frequent values of the events' visits";
+    await expect.element(page.getByRole("table", { name: source })).toBeVisible();
+    expect(lastQuery(api, "/events/signup/sources")).toEqual({ period: "7d", "p.plan": "team" });
+    // Named as the Analytics page names them; a server's events are Unknown.
+    expect(tableRows(source)).toEqual([
+      ["Direct / none", "52"],
+      ["google.com", "41"],
+      ["newsletter", "25"],
+      ["news.ycombinator.com", "14"],
+      ["Unknown", "8"],
+    ]);
+    expect(tableRows("Campaign: the most frequent values of the events' visits")).toEqual([
+      ["No campaign", "107"],
+      ["launch-week", "25"],
+      ["Unknown", "8"],
+    ]);
+  });
+
   test("a value adds a filter to the address and the request; its chip removes it", async () => {
     const api = installFakeApi();
     const router = renderApp(SIGNUP);

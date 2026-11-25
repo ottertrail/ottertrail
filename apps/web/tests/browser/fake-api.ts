@@ -66,6 +66,7 @@ import {
   isFunnelWindow,
   type ProductEventDetail,
   type ProductEvents,
+  type ProductEventSources,
   type Retention,
   type SavedFunnelResults,
 } from "../../src/lib/product-api.ts";
@@ -230,6 +231,8 @@ export interface FakeApi {
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
   productEvent: (name: string, query: URLSearchParams) => ProductEventDetail | Response;
+  /** Answers GET /api/projects/:id/events/:name/sources; by default, fakeProductEventSources. */
+  productEventSources: (name: string, query: URLSearchParams) => ProductEventSources | Response;
   /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. A promise holds it. */
   funnel: (query: URLSearchParams) => Funnel | Response | Promise<Funnel | Response>;
   /** Answers GET /api/projects/:id/funnel/breakdown; by default, fakeFunnelBreakdown. */
@@ -2998,6 +3001,37 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
   };
 }
 
+/**
+ * One event by its visit's source and campaign: signup's 140 events, the
+ * rest with no events. Unknown (null) holds a server's events.
+ */
+export function fakeProductEventSources(name: string, query: URLSearchParams): ProductEventSources {
+  const signup = name === "signup";
+  return {
+    ...WEEK,
+    environment: query.get("environment") ?? "production",
+    filters: [...query.entries()]
+      .filter(([param]) => param.startsWith("p."))
+      .map(([param, value]) => ({ key: param.slice(2), value })),
+    source: signup
+      ? [
+          { value: "Direct / none", events: 52 },
+          { value: "google.com", events: 41 },
+          { value: "newsletter", events: 25 },
+          { value: "news.ycombinator.com", events: 14 },
+          { value: null, events: 8 },
+        ]
+      : [],
+    utmCampaign: signup
+      ? [
+          { value: "", events: 107 },
+          { value: "launch-week", events: 25 },
+          { value: null, events: 8 },
+        ]
+      : [],
+  };
+}
+
 /** People reaching each step: 1,000 start, fewer at each next one. */
 export const FUNNEL_REACHED = [1000, 420, 126, 50, 0];
 
@@ -3043,6 +3077,20 @@ export function fakeFunnel(query: URLSearchParams): Funnel | Response {
  * five browsers, Other, and Unknown, each cut to the funnel's steps.
  */
 export const FUNNEL_BREAKDOWN_ROWS: Record<string, FunnelBreakdownRow[]> = {
+  source: [
+    { kind: "value", value: "google.com", reached: [380, 180, 55, 22, 0] },
+    { kind: "value", value: "Direct / none", reached: [300, 110, 33, 13, 0] },
+    { kind: "value", value: "newsletter", reached: [160, 80, 24, 10, 0] },
+    { kind: "value", value: "news.ycombinator.com", reached: [90, 30, 9, 3, 0] },
+    { kind: "value", value: "github.com", reached: [40, 12, 3, 1, 0] },
+    { kind: "other", value: null, reached: [20, 5, 1, 0, 0] },
+    { kind: "unknown", value: null, reached: [10, 3, 1, 1, 0] },
+  ],
+  utmCampaign: [
+    { kind: "value", value: "", reached: [830, 335, 101, 39, 0] },
+    { kind: "value", value: "launch-week", reached: [160, 80, 24, 10, 0] },
+    { kind: "unknown", value: null, reached: [10, 5, 1, 1, 0] },
+  ],
   deviceType: [
     { kind: "value", value: "desktop", reached: [600, 300, 90, 40, 0] },
     { kind: "value", value: "mobile", reached: [350, 100, 30, 8, 0] },
@@ -4194,6 +4242,11 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.productEvents(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const sourcesPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)\/sources$/.exec(path);
+  if (sourcesPath?.[1] !== undefined) {
+    const result = api.productEventSources(decodeURIComponent(sourcesPath[1]), url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   const productEventPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)$/.exec(path);
   if (productEventPath?.[1] !== undefined) {
     const result = api.productEvent(decodeURIComponent(productEventPath[1]), url.searchParams);
@@ -4629,6 +4682,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     deleteHeatmapSnapshot: () => new Response(null, { status: 204 }),
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
+    productEventSources: fakeProductEventSources,
     funnel: fakeFunnel,
     funnelBreakdown: fakeFunnelBreakdown,
     funnelPeople: fakeFunnelPeople,

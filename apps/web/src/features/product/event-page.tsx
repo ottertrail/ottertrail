@@ -22,15 +22,18 @@ import {
   type PropertyBreakdown,
   type PropertyFilter,
   productEventQuery,
+  productEventSourcesQuery,
+  type VisitSourceValue,
 } from "@/lib/product-api";
 
 import { DayChart } from "../analytics/day-chart";
 import { formatDay, formatWhole } from "../analytics/format";
+import { valueText } from "../analytics/list-rows";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { WhoNote } from "./events-page";
 import { filterText } from "./format";
-import { LoadFailed, Refreshing } from "./report-state";
+import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { filterSearchOf, type ProductSearch, productSearchOf } from "./search";
 
 interface EventSearch extends ProductSearch {
@@ -141,6 +144,96 @@ function PropertyTable({
   );
 }
 
+/** One visit dimension's values: null is an event without a visit. */
+function VisitSourceTable({
+  title,
+  name,
+  values,
+}: {
+  title: string;
+  name: "source" | "utmCampaign";
+  values: VisitSourceValue[];
+}) {
+  return (
+    <BreakdownTable
+      title={title}
+      headingLevel={4}
+      caption={`${title}: the most frequent values of the events' visits`}
+      nameHeading={title}
+      figureHeadings={["Events"]}
+      rows={values.map((row) => {
+        const text = row.value === null ? "Unknown" : valueText(name, row.value);
+        return {
+          key: row.value === null ? "unknown" : `value:${row.value}`,
+          title: text,
+          bar: row.events,
+          figures: [formatWhole(row.events)],
+          label: (
+            <span className={row.value === null || row.value === "" ? "text-ink-subtle" : ""}>
+              {text}
+            </span>
+          ),
+        };
+      })}
+      empty="No values."
+    />
+  );
+}
+
+/**
+ * The event by the source and campaign of the visit it happened in, as
+ * the Analytics page counts them: its own request, so the rest of the
+ * page does not wait for it.
+ */
+function VisitSources({
+  projectId,
+  name,
+  search,
+}: {
+  projectId: string;
+  name: string;
+  search: EventSearch;
+}) {
+  const query = useQuery(
+    productEventSourcesQuery(projectId, name, search.range, search.environment, search.filters),
+  );
+  const data = query.data;
+  return (
+    <section
+      aria-labelledby="sources-heading"
+      className="@container flex flex-col gap-4 border-t pt-5"
+    >
+      <div className="flex flex-col gap-1">
+        <h3 id="sources-heading" className="text-sm font-medium text-ink">
+          Sources
+        </h3>
+        <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+          Where the visit each event happened in came from, as on the Analytics page. Events without
+          a visit, such as those sent by a server, are Unknown.
+        </p>
+      </div>
+      {query.isError && (
+        <LoadFailed
+          what="The sources"
+          message={query.error.message}
+          hasData={data !== undefined}
+          onRetry={() => void query.refetch()}
+        />
+      )}
+      {data === undefined ? (
+        !query.isError && <LoadingRows className="grid gap-8 @3xl:grid-cols-2" rows={2} />
+      ) : (
+        <Refreshing stale={query.isPlaceholderData}>
+          <div className="grid gap-x-8 gap-y-8 @3xl:grid-cols-2 @6xl:grid-cols-3">
+            <VisitSourceTable title="Source" name="source" values={data.source} />
+            <VisitSourceTable title="Campaign" name="utmCampaign" values={data.utmCampaign} />
+          </div>
+        </Refreshing>
+      )}
+    </section>
+  );
+}
+
 function NoMatch({ name, filtered }: { name: string; filtered: boolean }) {
   return (
     <Empty className="border border-dashed p-10">
@@ -230,6 +323,7 @@ function Detail({
     <>
       <Stats detail={detail} />
       <EventsPerDay days={detail.days} />
+      <VisitSources projectId={projectId} name={detail.name} search={search} />
       <section
         aria-labelledby="properties-heading"
         className="@container flex flex-col gap-4 border-t pt-5"

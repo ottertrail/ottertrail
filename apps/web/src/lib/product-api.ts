@@ -49,6 +49,25 @@ export interface PropertyBreakdown {
   values: { value: string; events: number }[];
 }
 
+/**
+ * One value of an event's visit source or campaign: null for events
+ * without a visit, "" for visits without a campaign.
+ */
+export interface VisitSourceValue {
+  value: string | null;
+  events: number;
+}
+
+/**
+ * GET /api/projects/:id/events/:name/sources: the event by its visit's
+ * source and campaign, as the Analytics page names them, 10 values each.
+ */
+export interface ProductEventSources extends Answered {
+  filters: PropertyFilter[];
+  source: VisitSourceValue[];
+  utmCampaign: VisitSourceValue[];
+}
+
 /** GET /api/projects/:id/events/:name: zeros, never 404, when nothing matches. */
 export interface ProductEventDetail extends Answered, ProductEventRow {
   filters: PropertyFilter[];
@@ -124,10 +143,13 @@ export interface Funnel extends Answered {
 
 /**
  * What a funnel can be broken down by (apps/api/src/product/funnel.ts,
- * BREAKDOWN_COLUMNS), named as the Web analytics page names them; or
- * "p.<key>", a property of step 1's event.
+ * BREAKDOWN_NAMES), named as the Web analytics page names them: step 1's
+ * visit's source and campaign, or a column of its event; or "p.<key>", a
+ * property of step 1's event.
  */
 export const BREAKDOWN_COLUMNS = [
+  { value: "source", label: "Source" },
+  { value: "utmCampaign", label: "Campaign" },
   { value: "deviceType", label: "Device" },
   { value: "browser", label: "Browser" },
   { value: "os", label: "Operating system" },
@@ -278,6 +300,16 @@ const isBreakdown = (value: unknown): value is PropertyBreakdown =>
   isText(value.key) &&
   isNumber(value.events) &&
   isListOf(value.values, isValueRow);
+
+const isSourceValue = (value: unknown): value is VisitSourceValue =>
+  isRecord(value) && (value.value === null || isText(value.value)) && isNumber(value.events);
+
+const isEventSources = (value: unknown): value is ProductEventSources =>
+  isRecord(value) &&
+  isAnswered(value) &&
+  isListOf(value.filters, isFilter) &&
+  isListOf(value.source, isSourceValue) &&
+  isListOf(value.utmCampaign, isSourceValue);
 
 const isDay = (value: unknown): value is ProductEventDetail["days"][number] =>
   isRecord(value) && isText(value.day) && isNumber(value.events);
@@ -439,6 +471,31 @@ export const productEventQuery = (
         query,
         signal,
         isEventDetail,
+      );
+    },
+    placeholderData: keepPreviousData,
+  });
+
+/** The event by its visit's source and campaign: its own request, with the page's filters. */
+export const productEventSourcesQuery = (
+  projectId: string,
+  name: string,
+  range: PageRange,
+  environment: string,
+  filters: readonly PropertyFilter[],
+) =>
+  queryOptions({
+    queryKey: ["product-event", projectId, name, range, environment, filters, "sources"],
+    queryFn: ({ signal }) => {
+      const query = new URLSearchParams(rangeQuery(range, environment));
+      for (const filter of filters) {
+        query.append(`p.${filter.key}`, filter.value);
+      }
+      return get(
+        `${projectPath(projectId)}/events/${encodeURIComponent(name)}/sources`,
+        query,
+        signal,
+        isEventSources,
       );
     },
     placeholderData: keepPreviousData,
