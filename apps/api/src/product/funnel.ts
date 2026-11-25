@@ -25,7 +25,7 @@ export type FunnelWindow = (typeof FUNNEL_WINDOWS)[number];
 export const MAX_VISITOR_WINDOW = 86_400;
 
 export const MIN_STEPS = 2;
-export const MAX_STEPS = 5;
+export const MAX_STEPS = 8;
 
 export function funnelStepsOf(value: unknown): FunnelStep[] | null {
   if (!Array.isArray(value) || value.length < MIN_STEPS || value.length > MAX_STEPS) {
@@ -67,7 +67,7 @@ export function funnelRefusal(
   if (overlap !== null) {
     return {
       error: "steps_overlap",
-      message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or filter both by different values of one property.`,
+      message: `Step ${overlap + 1} could match the same event as step ${overlap}, which would count it twice. Put another step between them, or make them match different pages or property values.`,
     };
   }
   if (count === "visitors" && windowSeconds > MAX_VISITOR_WINDOW) {

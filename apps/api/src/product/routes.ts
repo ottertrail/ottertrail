@@ -120,7 +120,7 @@ function eventFiltersOf(
   return { filters };
 }
 
-/** Parse 2 to 5 page or event steps; return null on invalid input. */
+/** Parse 2 to 8 page or event steps; return null on invalid input. */
 export function parseSteps(text: string): FunnelStep[] | null {
   try {
     return funnelStepsOf(JSON.parse(text));

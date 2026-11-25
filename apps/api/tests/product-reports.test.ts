@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { previousReadEnd } from "../src/product/funnel.ts";
 import { parseSteps } from "../src/product/routes.ts";
+import { type Step, stepsOverlap } from "../src/product/steps.ts";
 import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
@@ -195,7 +196,7 @@ describe("GET /api/projects/:id/funnel", () => {
     for (const steps of [
       "not json",
       JSON.stringify([{ type: "page", path: "/one" }]),
-      JSON.stringify(Array.from({ length: 6 }, () => ({ type: "page", path: "/" }))),
+      JSON.stringify(Array.from({ length: 9 }, () => ({ type: "page", path: "/" }))),
       JSON.stringify([
         { type: "page", path: "pricing" },
         { type: "page", path: "/" },
@@ -403,6 +404,174 @@ describe("GET /api/projects/:id/funnels/results", () => {
       const response = await get(savedProject, `/funnels/results?${query}`);
       expect({ query, status: response.statusCode }).toEqual({ query, status: 400 });
     }
+  });
+});
+
+const pageStep = (path: string): Step => ({ type: "page", path });
+const pagesOverlap = (a: string, b: string) => stepsOverlap(pageStep(a), pageStep(b));
+const signupWhere = (filter?: object) =>
+  ({ type: "event", name: "signup", ...(filter === undefined ? {} : { filter }) }) as Step;
+const planIs = (value: string, operator?: "notEquals" | "contains") =>
+  signupWhere({ key: "plan", value, ...(operator === undefined ? {} : { operator }) });
+
+describe("steps that match more than one exact thing", () => {
+  let matchProject = "";
+  let longProject = "";
+  /** Each step 1 alone: a funnel with a step nobody did after it. */
+  const firstStep = async (step: unknown) => {
+    const response = await get(
+      matchProject,
+      funnelQuery([step, { type: "event", name: "never" }], "&period=today"),
+    );
+    expect(response.statusCode).toBe(200);
+    return response.json().steps[0].reached;
+  };
+  const EIGHT = Array.from({ length: 8 }, (_, index) => ({ type: "page", path: `/s${index + 1}` }));
+
+  beforeAll(async () => {
+    const insert = async (name: string) => (await insertProject(dashboard.db, { name })).id;
+    matchProject = await insert("Match");
+    longProject = await insert("Long");
+    await dashboard.store(matchProject, [
+      event("pageview", "101", minutesAgo(60), { path: "/docs/" }),
+      event("pageview", "102", minutesAgo(60), { path: "/docs/a/b" }),
+      event("pageview", "103", minutesAgo(60), { path: "/docs" }),
+      event("pageview", "104", minutesAgo(60), { path: "/blog/docs/a" }),
+      // % and _ are literal in a pattern: only the first matches /50%_off/*.
+      event("pageview", "105", minutesAgo(60), { path: "/50%_off/a" }),
+      event("pageview", "106", minutesAgo(60), { path: "/50xyoff/a" }),
+      event("signup", "201", minutesAgo(60), { properties: { plan: "team" } }),
+      event("signup", "202", minutesAgo(60), { properties: { plan: "free" } }),
+      event("signup", "203", minutesAgo(60), { properties: { plan: "teamplus" } }),
+      event("signup", "204", minutesAgo(60)),
+      event("signup", "205", minutesAgo(60), { properties: { plan: 5 } }),
+    ]);
+    await dashboard.store(longProject, [
+      // u1 does all eight pages, u2 the first five, u3 the first one.
+      ...EIGHT.map((step, index) =>
+        event("pageview", "1", minutesAgo(80 - index), { path: step.path, userId: "u1" }),
+      ),
+      ...EIGHT.slice(0, 5).map((step, index) =>
+        event("pageview", "2", minutesAgo(80 - index), {
+          path: step.path,
+          userId: "u2",
+          client: { browser: "Safari" },
+        }),
+      ),
+      event("pageview", "3", minutesAgo(80), { path: "/s1", userId: "u3" }),
+    ]);
+  });
+
+  test("a path with * matches any run of characters, none included", async () => {
+    expect(await firstStep({ type: "page", path: "/docs/*" })).toBe(2);
+    expect(await firstStep({ type: "page", path: "/docs*" })).toBe(3);
+    expect(await firstStep({ type: "page", path: "/*docs/*" })).toBe(3);
+    expect(await firstStep({ type: "page", path: "/50%_off/*" })).toBe(1);
+    // Without *, a path matches only itself, % and _ included.
+    expect(await firstStep({ type: "page", path: "/50%_off/a" })).toBe(1);
+    expect(await firstStep({ type: "page", path: "/docs" })).toBe(1);
+  });
+
+  test("a filter compares by equals, not equals, or contains; a missing property matches none", async () => {
+    const plan = async (value: string, operator?: "notEquals" | "contains") =>
+      firstStep(planIs(value, operator));
+    expect(await plan("team")).toBe(1);
+    // free is left out, and so is e4, which has no plan.
+    expect(await plan("free", "notEquals")).toBe(3);
+    expect(await plan("team", "contains")).toBe(2);
+    // Case-sensitive, as equals is; numbers compare as their text.
+    expect(await plan("Team", "contains")).toBe(0);
+    expect(await plan("5", "contains")).toBe(1);
+    expect(await firstStep(signupWhere({ key: "seats", value: "1", operator: "notEquals" }))).toBe(
+      0,
+    );
+  });
+
+  test("refuses an unknown operator", async () => {
+    expect(
+      await status([signupWhere({ key: "plan", value: "a", operator: "startsWith" }), EIGHT[0]]),
+    ).toEqual([400, "invalid_steps"]);
+  });
+
+  test("refuses patterns and filters in a row that one event could both match", async () => {
+    const page = pageStep;
+    expect(await status([page("/docs/*"), page("/docs/a")])).toEqual([400, "steps_overlap"]);
+    expect(await status([page("/docs/*"), page("/*/a")])).toEqual([400, "steps_overlap"]);
+    expect((await status([page("/docs/*"), page("/blog/*")]))[0]).toBe(200);
+    const plan = planIs;
+    expect(await status([plan("team"), plan("free", "notEquals")])).toEqual([400, "steps_overlap"]);
+    expect((await status([plan("team"), plan("team", "notEquals")]))[0]).toBe(200);
+  });
+
+  test("counts two steps as overlapping exactly when some event could match both", () => {
+    const pages = pagesOverlap;
+    // [first, second, could one path match both]
+    for (const [a, b, both] of [
+      ["/docs", "/docs", true],
+      ["/docs", "/doc", false],
+      ["/docs/*", "/docs/a", true],
+      ["/docs/*", "/docs", false],
+      ["/docs/*", "/blog/*", false],
+      ["/docs/*", "/*", true],
+      ["/docs/*", "/*/a", true],
+      ["/*.html", "/*.pdf", false],
+      ["/*.html", "/docs/*", true],
+      ["/a/*/b", "/a/x*", true],
+      ["/a/*/b", "/a/x*/c", false],
+      ["/a/*/b", "/c/*/b", false],
+      ["/a/*/b", "/a/*/*/b", true],
+      ["/a*b*c", "/a*c", true],
+      ["/a*b*c", "/x*c", false],
+      ["/a/*/b", "/a/x/b", true],
+      ["/a/*/b", "/a/b", false],
+    ] as const) {
+      expect({ a, b, both: pages(a, b) }).toEqual({ a, b, both });
+      expect({ a: b, b: a, both: pages(b, a) }).toEqual({ a: b, b: a, both });
+    }
+    const [signup, plan] = [signupWhere, planIs];
+    for (const [a, b, both] of [
+      [plan("team"), plan("team"), true],
+      [plan("team"), plan("free"), false],
+      [plan("team"), plan("free", "notEquals"), true],
+      [plan("team"), plan("team", "notEquals"), false],
+      [plan("teamplus"), plan("team", "contains"), true],
+      [plan("free"), plan("team", "contains"), false],
+      [plan("a", "notEquals"), plan("a", "notEquals"), true],
+      [plan("a", "notEquals"), plan("a", "contains"), true],
+      [plan("a", "contains"), plan("b", "contains"), true],
+      [plan("team"), signup({ key: "seats", value: "1" }), true],
+      [plan("team"), signup(), true],
+      [plan("team"), { type: "event", name: "invite" } as Step, false],
+      [plan("team"), { type: "page", path: "/*" } as Step, false],
+    ] as const) {
+      expect([a, b, stepsOverlap(a, b)]).toEqual([a, b, both]);
+      expect([b, a, stepsOverlap(b, a)]).toEqual([b, a, both]);
+    }
+  });
+
+  test("follows eight steps through every view", async () => {
+    const steps = `?steps=${encodeURIComponent(JSON.stringify(EIGHT))}&period=today&count=users&window=3600`;
+    const funnel = (await get(longProject, `/funnel${steps}`)).json();
+    expect(reachedOf(funnel)).toEqual([3, 2, 2, 2, 2, 1, 1, 1]);
+    const breakdown = (await get(longProject, `/funnel/breakdown${steps}&by=browser`)).json();
+    expect(breakdown.rows).toEqual([
+      { kind: "value", value: "Safari", reached: [1, 1, 1, 1, 1, 0, 0, 0] },
+      { kind: "unknown", value: null, reached: [2, 1, 1, 1, 1, 1, 1, 1] },
+    ]);
+    const trend = (await get(longProject, `/funnel/trend${steps}`)).json();
+    expect(trend.points).toEqual([{ day: "2026-11-17", started: 3, converted: 1 }]);
+    const times = (await get(longProject, `/funnel/times${steps}`)).json();
+    expect(times.between).toHaveLength(7);
+    expect(times.between[6]).toEqual({ people: 1, median: 60, p75: 60 });
+    expect(times.overall).toEqual({ people: 1, median: 420, p75: 420 });
+    const people = async (step: number, outcome: string) =>
+      (await get(longProject, `/funnel/people${steps}&step=${step}&outcome=${outcome}`))
+        .json()
+        .users.map((user: { userId: string }) => user.userId);
+    expect(await people(8, "converted")).toEqual(["u1"]);
+    expect(await people(5, "dropped")).toEqual(["u2"]);
+    // Nine steps are refused.
+    expect(await status([...EIGHT, { type: "page", path: "/s9" }])).toEqual([400, "invalid_steps"]);
   });
 });
 

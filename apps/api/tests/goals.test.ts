@@ -192,6 +192,80 @@ describe("goals, at their edges", () => {
     }
   });
 
+  test("match a path pattern and a filter's operator, and keep them", async () => {
+    const project = await otherProject("Patterns");
+    await dashboard.store(project, [
+      event("pageview", "1", { path: "/docs/start" }),
+      event("pageview", "2", { path: "/docs/api/keys" }),
+      event("pageview", "3", { path: "/docs" }),
+      event("signup", "1", { properties: { plan: "team" } }),
+      event("signup", "2", { properties: { plan: "free" } }),
+      event("signup", "3"),
+    ]);
+    const docs = { type: "page", path: "/docs/*" };
+    const paid = {
+      type: "event",
+      name: "signup",
+      filter: { key: "plan", value: "free", operator: "notEquals" },
+    };
+    const team = {
+      type: "event",
+      name: "signup",
+      filter: { key: "plan", value: "tea", operator: "contains" },
+    };
+    for (const [name, step] of [
+      ["Read the docs", docs],
+      ["Paid signup", paid],
+      ["Team signup", team],
+    ] as const) {
+      const added = await post(project, { name, step });
+      expect(added.statusCode).toBe(201);
+      expect(added.json().goal.step).toEqual(step);
+    }
+    const listed = await dashboard.app.inject({
+      url: `/api/projects/${project}/goals`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(listed.json().goals.map((goal: { step: object }) => goal.step)).toEqual([
+      docs,
+      paid,
+      team,
+    ]);
+    const body = (
+      await dashboard.app.inject({
+        url: `/api/projects/${project}/analytics?period=today`,
+        headers: { cookie: dashboard.cookie },
+      })
+    ).json();
+    // Visitor 3 has neither a page under /docs/ nor a plan.
+    expect(body.goals).toMatchObject([
+      { name: "Read the docs", visitors: 2 },
+      { name: "Paid signup", visitors: 1 },
+      { name: "Team signup", visitors: 1 },
+    ]);
+    const bad = await post(project, {
+      name: "Bad",
+      step: { ...team, filter: { key: "plan", value: "a", operator: "startsWith" } },
+    });
+    expect([bad.statusCode, bad.json().error]).toEqual([400, "invalid_step"]);
+    // The database holds an operator only with a filter.
+    await expect(
+      dashboard.db
+        .insertInto("goals")
+        .values({
+          project_id: project,
+          name: "No filter",
+          kind: "event",
+          event_name: "signup",
+          path: null,
+          filter_key: null,
+          filter_value: null,
+          filter_operator: "contains",
+        })
+        .execute(),
+    ).rejects.toThrow(/goals_filter_operator_filter_check/);
+  });
+
   test("hold the limit when goals are added at the same moment", async () => {
     const project = await otherProject("Busy");
     for (let index = 0; index < MAX_GOALS - 1; index += 1) {

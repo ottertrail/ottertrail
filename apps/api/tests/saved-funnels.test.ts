@@ -102,7 +102,9 @@ describe("saved funnels", () => {
       }).toEqual({ name: payload.name, status: 400, error });
     }
     for (const payload of [
-      funnel("Six steps", { steps: [PRICING, SIGNUP, PRICING, SIGNUP, PRICING, SIGNUP] }),
+      funnel("Nine steps", {
+        steps: [PRICING, SIGNUP, PRICING, SIGNUP, PRICING, SIGNUP, PRICING, SIGNUP, PRICING],
+      }),
       funnel("Odd window", { window: 60 }),
       funnel("Odd count", { count: "sessions" }),
     ]) {
@@ -120,6 +122,32 @@ describe("saved funnels", () => {
     );
     expect(elsewhere.statusCode).toBe(403);
     expect((await call("GET", `${project}/funnels`)).json().funnels).toHaveLength(1);
+  });
+
+  test("keep eight steps, path patterns, and filter operators", async () => {
+    const project = await newProject("Eight");
+    const steps = [
+      { type: "page", path: "/docs/*" },
+      { type: "event", name: "signup", filter: { key: "plan", value: "free" } },
+      {
+        type: "event",
+        name: "signup",
+        filter: { key: "plan", value: "free", operator: "notEquals" },
+      },
+      INVITE,
+      { type: "page", path: "/pricing*" },
+      {
+        type: "event",
+        name: "invite",
+        filter: { key: "role", value: "admin", operator: "contains" },
+      },
+      PRICING,
+      SIGNUP,
+    ];
+    const saved = await call("POST", `${project}/funnels`, funnel("Eight", { steps }));
+    expect(saved.statusCode).toBe(201);
+    const list = (await call("GET", `${project}/funnels`)).json().funnels;
+    expect(JSON.stringify(list[0].steps)).toBe(JSON.stringify(steps));
   });
 
   test("are named once each, and at most MAX_SAVED_FUNNELS, even saved at once", async () => {

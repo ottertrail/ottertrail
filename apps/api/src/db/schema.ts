@@ -346,6 +346,8 @@ export interface GoalsTable {
   event_name: Nullable<string>;
   filter_key: Nullable<string>;
   filter_value: Nullable<string>;
+  /** How the filter compares: null for equals. */
+  filter_operator: Nullable<"notEquals" | "contains">;
   created_at: ColumnType<Date, Date | undefined, never>;
 }
 

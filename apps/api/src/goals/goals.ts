@@ -25,7 +25,13 @@ function goalOf(row: Selectable<GoalsTable>): Goal {
           name: row.event_name ?? "",
           ...(row.filter_key === null || row.filter_value === null
             ? {}
-            : { filter: { key: row.filter_key, value: row.filter_value } }),
+            : {
+                filter: {
+                  key: row.filter_key,
+                  value: row.filter_value,
+                  ...(row.filter_operator === null ? {} : { operator: row.filter_operator }),
+                },
+              }),
         };
   return { id: row.id, name: row.name, step, createdAt: row.created_at };
 }
@@ -77,6 +83,7 @@ export async function createGoal(
           event_name: step.type === "event" ? step.name : null,
           filter_key: step.type === "event" ? (step.filter?.key ?? null) : null,
           filter_value: step.type === "event" ? (step.filter?.value ?? null) : null,
+          filter_operator: step.type === "event" ? (step.filter?.operator ?? null) : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();

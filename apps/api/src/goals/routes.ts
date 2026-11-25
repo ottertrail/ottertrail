@@ -79,7 +79,7 @@ export const goalRoutes: FastifyPluginCallback<{
           .send(
             problem(
               "invalid_step",
-              'A goal is {"type":"page","path":"/…"} or {"type":"event","name":"…"}, with an optional "filter":{"key":"…","value":"…"}.',
+              'A goal is {"type":"page","path":"/…"} or {"type":"event","name":"…"}, with an optional "filter":{"key":"…","value":"…"}, which may add "operator":"notEquals" or "contains". A path may hold * for any run of characters.',
             ),
           );
       }
