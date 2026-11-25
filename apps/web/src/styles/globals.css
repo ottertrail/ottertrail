@@ -112,15 +112,25 @@
   --chart-8: #e66767;
 
   /*
-   * Heatmaps use chart-1 blue from low to high magnitude.
-   * Cells also show values as text; ink stays above 4.5:1 on every step
-   * (tests/tokens.test.ts).
+   * Heatmaps use chart-1's blue (OKLCH hue 255) from low to high magnitude,
+   * L 0.29 to 0.80, at least 0.07 apart. A cell writes its value in its
+   * step's on-seq color, at least 4.5:1 (tests/tokens.test.ts): ink on the
+   * dark steps, the light theme's ink on the bright ones.
    */
-  --seq-1: #172437;
-  --seq-2: #1a3354;
-  --seq-3: #1d4371;
-  --seq-4: #20538f;
-  --seq-5: #2563ad;
+  --seq-1: #002a5a;
+  --seq-2: #003b7a;
+  --seq-3: #004e9b;
+  --seq-4: #0261bd;
+  --seq-5: #388cf0;
+  --seq-6: #60a7ff;
+  --seq-7: #91c1ff;
+  --on-seq-1: var(--ink);
+  --on-seq-2: var(--ink);
+  --on-seq-3: var(--ink);
+  --on-seq-4: var(--ink);
+  --on-seq-5: #191419;
+  --on-seq-6: #191419;
+  --on-seq-7: #191419;
 
   /*
    * Neutral info logs and error-free traces let warnings and errors stand out.
@@ -203,14 +213,23 @@
   --chart-8: #e34948;
 
   /*
-   * Larger values are darker on light surfaces. Reference blue steps
-   * 100 to 400 keep ink at least 5:1 on the darkest step.
+   * Larger values are darker on light surfaces: L 0.93 to 0.43. Ink on the
+   * pale steps, white on the two darkest.
    */
-  --seq-1: #cde2fb;
-  --seq-2: #9ec5f4;
-  --seq-3: #6da7ec;
-  --seq-4: #5598e7;
-  --seq-5: #3987e5;
+  --seq-1: #d9eaff;
+  --seq-2: #b3d4ff;
+  --seq-3: #8bbeff;
+  --seq-4: #60a7ff;
+  --seq-5: #3c8ff4;
+  --seq-6: #0367c7;
+  --seq-7: #004e9b;
+  --on-seq-1: var(--ink);
+  --on-seq-2: var(--ink);
+  --on-seq-3: var(--ink);
+  --on-seq-4: var(--ink);
+  --on-seq-5: var(--ink);
+  --on-seq-6: #ffffff;
+  --on-seq-7: #ffffff;
 
   /*
    * A state chart's normal part: a dark neutral here, so the status parts
@@ -315,6 +334,15 @@
   --color-seq-3: var(--seq-3);
   --color-seq-4: var(--seq-4);
   --color-seq-5: var(--seq-5);
+  --color-seq-6: var(--seq-6);
+  --color-seq-7: var(--seq-7);
+  --color-on-seq-1: var(--on-seq-1);
+  --color-on-seq-2: var(--on-seq-2);
+  --color-on-seq-3: var(--on-seq-3);
+  --color-on-seq-4: var(--on-seq-4);
+  --color-on-seq-5: var(--on-seq-5);
+  --color-on-seq-6: var(--on-seq-6);
+  --color-on-seq-7: var(--on-seq-7);
   --color-chart-neutral: var(--chart-neutral);
   --color-status-good: var(--status-good);
   --color-status-warning: var(--status-warning);

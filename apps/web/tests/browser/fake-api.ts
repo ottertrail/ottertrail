@@ -3306,6 +3306,14 @@ export function retentionFixture(overrides: Partial<Retention> = {}): Retention 
       { week: "2026-11-09", users: 10, retained: [10, 4] },
       { week: "2026-11-16", users: 8, retained: [8] },
     ],
+    // The cohorts that finished each week: weeks in progress are left out.
+    average: [
+      { users: 75, retained: 75 },
+      { users: 65, retained: 30 },
+      { users: 40, retained: 12 },
+      { users: 0, retained: 0 },
+    ],
+    identifiesUsers: true,
     ...overrides,
   };
 }

@@ -253,13 +253,24 @@ export interface Cohort {
   retained: number[];
 }
 
+/** Sums over the cohorts whose week at this offset is over. */
+export interface WeekAverage {
+  users: number;
+  retained: number;
+}
+
 /** GET /api/projects/:id/retention */
 export interface Retention extends Answered {
   /** The environments with signed-in users' events, for the picker. */
   environments: string[];
   /** The Monday of the current week, which is not over. */
   currentWeek: string;
+  /** Every cohort whose first week holds a day of the range, oldest first. */
   cohorts: Cohort[];
+  /** One per week offset, pooled over the cohorts that finished it. */
+  average: WeekAverage[];
+  /** Whether any of the project's events carries a user ID. */
+  identifiesUsers: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -408,12 +419,17 @@ const isCohort = (value: unknown): value is Cohort =>
   isNumber(value.users) &&
   isListOf(value.retained, isNumber);
 
+const isWeekAverage = (value: unknown): value is WeekAverage =>
+  isRecord(value) && isNumber(value.users) && isNumber(value.retained);
+
 const isRetention = (value: unknown): value is Retention =>
   isRecord(value) &&
   isAnswered(value) &&
   isListOf(value.environments, isText) &&
   isText(value.currentWeek) &&
-  isListOf(value.cohorts, isCohort);
+  isListOf(value.cohorts, isCohort) &&
+  isListOf(value.average, isWeekAverage) &&
+  typeof value.identifiesUsers === "boolean";
 
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 

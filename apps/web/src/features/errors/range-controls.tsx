@@ -59,7 +59,8 @@ function CalendarUnavailable({
 }
 
 const CUSTOM = "custom";
-const PERIOD_ITEMS = [...PERIODS, { value: CUSTOM, label: "Custom range" }];
+
+export type PeriodItem = (typeof PERIODS)[number];
 
 export interface Answered {
   timeZone: string;
@@ -73,12 +74,16 @@ export function PeriodSelect({
   range,
   answered,
   onRange,
+  periods = PERIODS,
 }: {
   range: PageRange;
   answered: Answered | undefined;
   onRange: (range: PageRange) => void;
+  /** The presets offered; a page that needs longer periods leaves the short ones out. */
+  periods?: readonly PeriodItem[];
 }) {
   const [choosingDays, setChoosingDays] = React.useState(false);
+  const PERIOD_ITEMS = [...periods, { value: CUSTOM, label: "Custom range" }];
   return (
     <>
       <Select
@@ -168,6 +173,7 @@ export function ReportFilterBar({
   filters,
   actions,
   period,
+  periods,
 }: {
   label?: string;
   range: PageRange;
@@ -179,11 +185,17 @@ export function ReportFilterBar({
   actions?: React.ReactNode;
   /** Replaces both the period picker and dates, as in the Logs live view. */
   period?: React.ReactNode;
+  /** The period presets offered, when not all. */
+  periods?: readonly PeriodItem[];
 }) {
   return (
     <FilterBar
       label={label}
-      period={period ?? <PeriodSelect range={range} answered={answered} onRange={onRange} />}
+      period={
+        period ?? (
+          <PeriodSelect range={range} answered={answered} onRange={onRange} periods={periods} />
+        )
+      }
       environment={
         <EnvironmentSelect
           environment={environment}

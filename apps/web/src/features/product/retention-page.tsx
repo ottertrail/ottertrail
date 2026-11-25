@@ -1,10 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { UserRoundCheckIcon } from "lucide-react";
+import { ArrowUpRightIcon, ChevronRightIcon, UserRoundCheckIcon } from "lucide-react";
+import * as React from "react";
 
+import { ButtonAnchor } from "@/components/button-anchor";
 import { CopyableCode } from "@/components/copyable-code";
+import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
+import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyContent,
@@ -13,11 +17,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
+import { DEFAULT_ENVIRONMENT, type PageRange, PERIODS, type Period } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { type Cohort, type Retention, retentionQuery } from "@/lib/product-api";
+import { DOCS_URL } from "@/lib/docs";
+import { type Cohort, type Retention, retentionQuery, type WeekAverage } from "@/lib/product-api";
 
-import { formatDayRange, formatWhole } from "../analytics/format";
+import { formatDay, formatDayRange, formatWhole } from "../analytics/format";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatShare } from "./format";
@@ -29,12 +34,49 @@ const IDENTIFY_EXAMPLE = `<script defer src="…/tracker.js" data-key="pk_…" d
 // A single-page app, when someone signs in without a page load:
 window.ottertrail?.identify("42");`;
 
-const SHADES = ["bg-seq-1", "bg-seq-2", "bg-seq-3", "bg-seq-4", "bg-seq-5"] as const;
-const LEGEND = ["1–20%", "21–40%", "41–60%", "61–80%", "81–100%"] as const;
+/**
+ * The period picks the cohorts, one a week, so a period under 4 weeks
+ * would show one or two rows. Those presets are not offered here.
+ */
+const RETENTION_PERIODS = PERIODS.filter((item) => item.value !== "today" && item.value !== "7d");
+const RETENTION_DEFAULT: Period = "90d";
+const LONGEST: Period = "12m";
 
-function shadeOf(share: number): string {
-  if (!(share > 0)) return "";
-  return SHADES[Math.min(SHADES.length, Math.ceil(share * SHADES.length)) - 1] ?? "";
+/** The range Retention shows: a preset it does not offer opens its default. */
+const retentionRange = (range: PageRange): PageRange =>
+  "period" in range && !RETENTION_PERIODS.some((item) => item.value === range.period)
+    ? { period: RETENTION_DEFAULT }
+    : range;
+
+/**
+ * Lower bounds, in whole percent, of shades 1 to 7: fixed, so a share looks
+ * the same in every project, and finer where retention usually falls.
+ */
+const SHADE_FROM = [1, 5, 10, 15, 20, 30, 45] as const;
+const SHADES = [
+  "bg-seq-1 text-on-seq-1",
+  "bg-seq-2 text-on-seq-2",
+  "bg-seq-3 text-on-seq-3",
+  "bg-seq-4 text-on-seq-4",
+  "bg-seq-5 text-on-seq-5",
+  "bg-seq-6 text-on-seq-6",
+  "bg-seq-7 text-on-seq-7",
+] as const;
+const SWATCHES = [
+  "bg-seq-1",
+  "bg-seq-2",
+  "bg-seq-3",
+  "bg-seq-4",
+  "bg-seq-5",
+  "bg-seq-6",
+  "bg-seq-7",
+] as const;
+
+/** Shade by the rounded percent the cell shows, so the two always agree. */
+function shadeOf(part: number, whole: number): string {
+  if (whole === 0 || part <= 0) return "text-ink";
+  const percent = Math.max(1, Math.round((part / whole) * 100));
+  return SHADES[SHADE_FROM.findLastIndex((from) => percent >= from)] ?? "text-ink";
 }
 
 const addWeeks = (monday: string, weeks: number) =>
@@ -44,28 +86,85 @@ const endsThisWeek = (cohort: Cohort, currentWeek: string) =>
   cohort.retained.length > 0 && addWeeks(cohort.week, cohort.retained.length - 1) === currentWeek;
 
 function Legend() {
+  const id = React.useId();
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
-      <span>Share of the cohort:</span>
-      <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Shades">
-        <li className="flex items-center gap-1.5">
-          <span aria-hidden="true" className="size-3 rounded-sm ring-1 ring-hairline" />
+    <div className="flex flex-wrap items-start gap-x-3 gap-y-1 text-xs text-ink-subtle">
+      <span id={id}>Share of the cohort:</span>
+      <ul className="flex flex-wrap items-start gap-0.5" aria-labelledby={id}>
+        <li className="flex w-9 flex-col gap-1">
+          <span aria-hidden="true" className="h-3 rounded-sm ring-1 ring-hairline ring-inset" />
           0%
         </li>
-        {SHADES.map((shade, index) => (
-          <li key={shade} className="flex items-center gap-1.5">
-            <span aria-hidden="true" className={`size-3 rounded-sm ${shade}`} />
-            {LEGEND[index]}
-          </li>
-        ))}
+        {SWATCHES.map((swatch, index) => {
+          const from = SHADE_FROM[index] ?? 0;
+          const next = SHADE_FROM[index + 1];
+          return (
+            <li key={swatch} className="flex w-9 flex-col gap-1">
+              <span aria-hidden="true" className={`h-3 rounded-sm ${swatch}`} />
+              <span aria-hidden="true">{from}%</span>
+              <span className="sr-only">
+                {next === undefined ? `${from}% or more` : `${from} to ${next - 1}%`}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
+  );
+}
+
+/** "24 Aug" on a phone, "24 Aug 2026" from 40rem. */
+function WeekName({ week }: { week: string }) {
+  return (
+    <>
+      <span className="sm:hidden">{formatDay(week)}</span>
+      <span className="max-sm:hidden">{formatDayRange(week, week)}</span>
+    </>
+  );
+}
+
+const WEEK_COLUMN = "min-w-12 sm:min-w-14";
+const CELL = "rounded-sm px-1.5 py-1 text-center tabular-nums sm:px-2";
+/** Week 0 is everyone, always 100%: no shade, so it does not outshine the weeks after. */
+const WEEK_ZERO = `${CELL} text-ink-subtle`;
+
+function AverageRow({ average, users }: { average: WeekAverage[]; users: number }) {
+  return (
+    // A transparent border, outside each cell's fill, sets the average apart from the cohorts.
+    <tr
+      data-average="true"
+      className="font-medium [&>*]:border-b-8 [&>*]:border-transparent [&>*]:bg-clip-padding"
+    >
+      <th scope="row" className={`py-1 pr-3 text-left whitespace-nowrap text-ink ${PINNED}`}>
+        Average
+      </th>
+      <td className="py-1 pr-3 text-right text-ink tabular-nums">{formatWhole(users)}</td>
+      {average.map((week, offset) => {
+        if (week.users === 0) {
+          return (
+            <td key={offset} className={`${CELL} text-ink-subtle`}>
+              <Missing label="No cohort has finished this week" />
+            </td>
+          );
+        }
+        return (
+          <td
+            key={offset}
+            title={`${formatWhole(week.retained)} of ${formatWhole(week.users)} users, in the cohorts that finished this week`}
+            className={offset === 0 ? WEEK_ZERO : `${CELL} ${shadeOf(week.retained, week.users)}`}
+          >
+            {formatShare(week.retained, week.users)}
+          </td>
+        );
+      })}
+    </tr>
   );
 }
 
 function CohortTable({ retention }: { retention: Retention }) {
   const weeks = Math.max(0, ...retention.cohorts.map((cohort) => cohort.retained.length));
   const notOver = retention.cohorts.some((cohort) => endsThisWeek(cohort, retention.currentWeek));
+  const users = retention.cohorts.reduce((sum, cohort) => sum + cohort.users, 0);
   return (
     <section aria-labelledby="weekly-retention" className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
@@ -95,13 +194,18 @@ function CohortTable({ retention }: { retention: Retention }) {
                   Users
                 </th>
                 {Array.from({ length: weeks }, (_, week) => (
-                  <th key={week} scope="col" className="min-w-14 pb-2 text-center font-normal">
+                  <th
+                    key={week}
+                    scope="col"
+                    className={`${WEEK_COLUMN} pb-2 text-center font-normal whitespace-nowrap`}
+                  >
                     Week {week}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
+              <AverageRow average={retention.average} users={users} />
               {retention.cohorts.map((cohort) => {
                 const current = endsThisWeek(cohort, retention.currentWeek);
                 return (
@@ -110,7 +214,7 @@ function CohortTable({ retention }: { retention: Retention }) {
                       scope="row"
                       className={`py-1 pr-3 text-left font-normal whitespace-nowrap text-ink ${PINNED}`}
                     >
-                      {formatDayRange(cohort.week, cohort.week)}
+                      <WeekName week={cohort.week} />
                     </th>
                     <td className="py-1 pr-3 text-right text-ink tabular-nums">
                       {formatWhole(cohort.users)}
@@ -125,11 +229,13 @@ function CohortTable({ retention }: { retention: Retention }) {
                         );
                       }
                       const last = current && week === cohort.retained.length - 1;
+                      const shade =
+                        week === 0 ? WEEK_ZERO : `${CELL} ${shadeOf(retained, cohort.users)}`;
                       return (
                         <td
                           key={week}
                           title={`${formatWhole(retained)} of ${formatWhole(cohort.users)} users${last ? " so far: this week is not over" : ""}`}
-                          className={`rounded-sm px-2 py-1 text-center text-ink tabular-nums ${shadeOf(cohort.users === 0 ? 0 : retained / cohort.users)} ${last ? "italic" : ""}`}
+                          className={`${shade} ${last ? "italic" : ""}`}
                           data-current={last ? "true" : undefined}
                         >
                           {formatShare(retained, cohort.users)}
@@ -152,7 +258,8 @@ function CohortTable({ retention }: { retention: Retention }) {
       <Legend />
       {notOver && (
         <p className="text-xs text-ink-subtle">
-          <span className="italic">*</span> This week is not over. Its share can still increase.
+          <span className="italic">*</span> This week is not over. Its share can still increase, and
+          the average leaves it out.
         </p>
       )}
     </section>
@@ -160,65 +267,116 @@ function CohortTable({ retention }: { retention: Retention }) {
 }
 
 /** The definitions the report counts by (docs/product-analytics.md, "Retention"). */
-function RetentionNotes({ timeZone }: { timeZone: string | undefined }) {
+function RetentionNotes({ timeZone }: { timeZone: string }) {
   return (
-    <section aria-labelledby="retention-notes" className="flex flex-col gap-2 border-t pt-5">
-      <h2 id="retention-notes" className="text-sm font-medium text-ink">
+    <details className="group border-t pt-5">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon
+          aria-hidden="true"
+          className="size-4 text-ink-subtle transition-transform group-open:rotate-90 motion-reduce:transition-none"
+        />
         How retention counts
-      </h2>
-      <ul className="flex max-w-4xl list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
+      </summary>
+      <ul className="mt-2 flex max-w-prose list-disc flex-col gap-1 pl-5 text-xs text-pretty text-ink-subtle">
         <li>
           Only signed-in users count, identified by your site's user ID. Visitor IDs change daily.
           Someone who returns next week counts as a new visitor.
         </li>
         <li>
           A cohort contains users whose first event in this environment occurred that week, across
-          the project's full retention period. The report selects the latest 13 cohorts whose first
-          week overlaps the selected period. Each cohort continues through the current week,
-          regardless of the selected period.
+          the project's full retention period. The report shows every cohort whose first week
+          overlaps the selected period. Each cohort continues through the current week.
         </li>
         <li>
           A user returned in week <em>n</em> if they triggered any event except time on page or Web
           Vitals in the <em>n</em>-th week after their first week. Week 0 includes everyone: 100%.
         </li>
         <li>
-          Weeks start on Monday in the timezone set in Settings
-          {timeZone === undefined ? "" : ` (${timeZone})`}. Events can arrive up to a day late. A
-          week's counts can increase for a day after it ends.
+          The average adds up the cohorts that finished each week, so a larger cohort counts more. A
+          week that is not over is left out.
+        </li>
+        <li>
+          Weeks start on Monday in the timezone set in Settings ({timeZone}). Events can arrive up
+          to a day late. A week's counts can increase for a day after it ends.
         </li>
       </ul>
-    </section>
+    </details>
   );
 }
 
-function NoCohorts({ environment }: { environment: string }) {
-  const where = environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`;
+const NAMING_USERS_URL = `${DOCS_URL}/users/naming-users/`;
+
+function NoSignedInUsers() {
   return (
     <Empty className="border border-dashed p-10">
-      <EmptyHeader>
+      <EmptyHeader className="max-w-xl">
         <EmptyMedia variant="icon">
           <UserRoundCheckIcon />
         </EmptyMedia>
-        <EmptyTitle>No signed-in users first seen{where} in this period</EmptyTitle>
+        <EmptyTitle>No signed-in users yet</EmptyTitle>
         <EmptyDescription>
-          Retention follows signed-in users across weeks. Your site must identify them. Add{" "}
-          <code className="font-mono">data-user-id</code> with the signed-in user&apos;s ID to the
-          tracking snippet on every page load. In a single-page app, also call{" "}
-          <code className="font-mono">window.ottertrail.identify(id)</code> when someone signs in
-          without a page load. Call <code className="font-mono">reset()</code> when they sign out.
-          Events sent from your server always carry a user ID.
+          Retention follows signed-in users from week to week. Add{" "}
+          <code className="font-mono whitespace-nowrap">data-user-id</code> to the tracking snippet,
+          and call <code className="font-mono">window.ottertrail.identify(id)</code> when someone
+          signs in without a page load.
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent className="max-w-2xl text-left">
-        <CopyableCode text={IDENTIFY_EXAMPLE} copyLabel="Copy the example" />
+      <EmptyContent className="max-w-2xl">
+        <div className="w-full text-left">
+          <CopyableCode text={IDENTIFY_EXAMPLE} copyLabel="Copy the example" />
+        </div>
+        <ButtonAnchor
+          variant="outline"
+          href={NAMING_USERS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          How to name signed-in users
+          <ArrowUpRightIcon aria-hidden="true" />
+          <span className="sr-only">(opens in a new tab)</span>
+        </ButtonAnchor>
       </EmptyContent>
+    </Empty>
+  );
+}
+
+function NoCohorts({
+  retention,
+  environment,
+  onLonger,
+}: {
+  retention: Retention;
+  environment: string;
+  /** Absent when the period is already the longest preset. */
+  onLonger: (() => void) | undefined;
+}) {
+  const where = environment === DEFAULT_ENVIRONMENT ? "" : ` in ${environment}`;
+  return (
+    <Empty className="border border-dashed p-10">
+      <EmptyHeader className="max-w-xl">
+        <EmptyMedia variant="icon">
+          <UserRoundCheckIcon />
+        </EmptyMedia>
+        <EmptyTitle>No new signed-in users in this period</EmptyTitle>
+        <EmptyDescription>
+          No signed-in user was first seen{where} from{" "}
+          {formatDayRange(retention.firstDay, retention.lastDay)}.
+        </EmptyDescription>
+      </EmptyHeader>
+      {onLonger !== undefined && (
+        <EmptyContent>
+          <Button variant="outline" onClick={onLonger}>
+            Show the last 12 months
+          </Button>
+        </EmptyContent>
+      )}
     </Empty>
   );
 }
 
 export function RetentionPage({
   projectId,
-  range,
+  range: asked,
   environment = DEFAULT_ENVIRONMENT,
 }: {
   projectId: string;
@@ -226,6 +384,7 @@ export function RetentionPage({
   environment?: string;
 }) {
   const navigate = useNavigate();
+  const range = retentionRange(asked);
   const query = useQuery(retentionQuery(projectId, range, environment));
   const search: ProductSearch = { range, environment };
   const show = (next: Partial<ProductSearch>) =>
@@ -239,6 +398,7 @@ export function RetentionPage({
     return <NoSuchProject />;
   }
   const data = query.data;
+  const longest = "period" in range && range.period === LONGEST;
 
   return (
     <div className="flex flex-col">
@@ -246,6 +406,7 @@ export function RetentionPage({
         range={range}
         environment={environment}
         answered={data}
+        periods={RETENTION_PERIODS}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
       />
@@ -262,14 +423,22 @@ export function RetentionPage({
           !query.isError && <LoadingRows rows={6} />
         ) : (
           <Refreshing stale={query.isPlaceholderData}>
-            {data.cohorts.length === 0 ? (
-              <NoCohorts environment={environment} />
+            {data.cohorts.length > 0 ? (
+              <div className="flex flex-col gap-6">
+                <CohortTable retention={data} />
+                <RetentionNotes timeZone={data.timeZone} />
+              </div>
+            ) : data.identifiesUsers ? (
+              <NoCohorts
+                retention={data}
+                environment={environment}
+                onLonger={longest ? undefined : () => show({ range: { period: LONGEST } })}
+              />
             ) : (
-              <CohortTable retention={data} />
+              <NoSignedInUsers />
             )}
           </Refreshing>
         )}
-        <RetentionNotes timeZone={data?.timeZone} />
       </div>
     </div>
   );

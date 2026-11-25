@@ -118,7 +118,8 @@ const SCREENS = [
         name: "Weekly retention of signed-in users, by the week of their first event",
       }),
     tables: ["Weekly retention of signed-in users, by the week of their first event"],
-    phone: { scroll: ["Weekly retention of signed-in users, by the week of their first event"] },
+    // Short dates and narrow weeks: four weeks fit on a phone.
+    phone: { fit: ["Weekly retention of signed-in users, by the week of their first event"] },
   },
   {
     name: "Services",

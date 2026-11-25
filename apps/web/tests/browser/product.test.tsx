@@ -590,59 +590,203 @@ describe("the funnel", () => {
   });
 });
 
+/** A cohort's cell in the retention table, by its text. */
+const cohortCell = (text: string) =>
+  [...document.querySelectorAll("tbody tr:not([data-average]) td")].find(
+    (item) => item.textContent === text,
+  );
+
 describe("retention", () => {
-  test("shows each cohort's share per week, shaded, with the current week marked", async () => {
-    const api = installFakeApi();
+  const TABLE = "Weekly retention of signed-in users, by the week of their first event";
+  const NOT_OVER = "* (this week is not over)";
+  /** As tableRows, with a row's name as shown: the short or the full date, not both. */
+  const retentionRows = () =>
+    [...page.getByRole("table", { name: TABLE }).element().querySelectorAll("tbody tr")].map(
+      (row) =>
+        [...row.querySelectorAll<HTMLElement>("th, td")].map((cell) =>
+          cell.tagName === "TH" ? cell.innerText : cell.textContent,
+        ),
+    );
+
+  test("shows the average, then each cohort's share per week, shaded, with the current week marked", async () => {
+    installFakeApi();
     renderApp(RETENTION);
 
-    const table = "Weekly retention of signed-in users, by the week of their first event";
-    await expect.element(page.getByRole("table", { name: table })).toBeVisible();
-    expect(lastQuery(api, "/retention")).toEqual({ period: "7d" });
+    await expect.element(page.getByRole("table", { name: TABLE })).toBeVisible();
     const headings = [
-      ...page.getByRole("table", { name: table }).element().querySelectorAll("thead th"),
+      ...page.getByRole("table", { name: TABLE }).element().querySelectorAll("thead th"),
     ].map((cell) => cell.textContent);
     expect(headings).toEqual(["First week", "Users", "Week 0", "Week 1", "Week 2", "Week 3"]);
-    const notOver = "* (this week is not over)";
-    expect(tableRows(table)).toEqual([
-      ["26 Oct 2026", "40", "100%", "50%", "30%", `25%${notOver}`],
-      ["2 Nov 2026", "25", "100%", "40%", `0%${notOver}`, "Not begun"],
-      ["9 Nov 2026", "10", "100%", `40%${notOver}`, "Not begun", "Not begun"],
-      ["16 Nov 2026", "8", `100%${notOver}`, "Not begun", "Not begun", "Not begun"],
+    expect(retentionRows()).toEqual([
+      // Pooled over the cohorts that finished each week: 30 of 65, 12 of 40.
+      ["Average", "83", "100%", "46%", "30%", "–No cohort has finished this week"],
+      ["26 Oct 2026", "40", "100%", "50%", "30%", `25%${NOT_OVER}`],
+      ["2 Nov 2026", "25", "100%", "40%", `0%${NOT_OVER}`, "Not begun"],
+      ["9 Nov 2026", "10", "100%", `40%${NOT_OVER}`, "Not begun", "Not begun"],
+      ["16 Nov 2026", "8", `100%${NOT_OVER}`, "Not begun", "Not begun", "Not begun"],
     ]);
 
-    const cells = [...document.querySelectorAll("tbody td")];
-    const cell = (text: string) => cells.find((item) => item.textContent === text);
-    expect(cell("50%")?.getAttribute("title")).toBe("20 of 40 users");
-    expect(cell(`25%${notOver}`)?.getAttribute("title")).toBe(
+    const average = [...document.querySelectorAll("tr[data-average] td")];
+    expect(average[2]?.getAttribute("title")).toBe(
+      "30 of 65 users, in the cohorts that finished this week",
+    );
+    expect(cohortCell("50%")?.getAttribute("title")).toBe("20 of 40 users");
+    expect(cohortCell(`25%${NOT_OVER}`)?.getAttribute("title")).toBe(
       "10 of 40 users so far: this week is not over",
     );
     expect(document.querySelectorAll("td[data-current=true]")).toHaveLength(4);
-    expect(cell(`25%${notOver}`)?.className).toMatch(/\bitalic\b/);
-    // Shaded by share: 100% is the top step, 50% the third, 0% none.
-    expect(cell("50%")?.className).toMatch(/\bbg-seq-3\b/);
-    expect(cell(`0%${notOver}`)?.className).not.toMatch(/bg-seq/);
+    expect(cohortCell(`25%${NOT_OVER}`)?.className).toMatch(/\bitalic\b/);
+    // Fixed steps: 45% and up the top one, 30 to 44% the sixth, 20 to 29% the fifth.
+    expect(cohortCell("50%")?.className).toMatch(/\bbg-seq-7\b/);
+    expect(cohortCell("50%")?.className).toMatch(/\btext-on-seq-7\b/);
+    expect(cohortCell("40%")?.className).toMatch(/\bbg-seq-6\b/);
+    expect(cohortCell(`25%${NOT_OVER}`)?.className).toMatch(/\bbg-seq-5\b/);
+    expect(average[2]?.className).toMatch(/\bbg-seq-7\b/);
+    // Week 0 is everyone: never shaded. Nor is 0%.
+    for (const cell of document.querySelectorAll("tbody tr > td:nth-of-type(2)")) {
+      expect(cell.className).not.toMatch(/bg-seq/);
+    }
+    expect(cohortCell(`0%${NOT_OVER}`)?.className).not.toMatch(/bg-seq/);
     await expect
       .element(
-        page.getByText("This week is not over. Its share can still increase.", { exact: false }),
+        page.getByText(
+          "This week is not over. Its share can still increase, and the average leaves it out.",
+          { exact: false },
+        ),
       )
       .toBeVisible();
+
+    const legend = page.getByRole("list", { name: "Share of the cohort:" });
+    expect(
+      legend
+        .getByRole("listitem")
+        .elements()
+        .map((item) => item.textContent),
+    ).toEqual([
+      "0%",
+      "1%1 to 4%",
+      "5%5 to 9%",
+      "10%10 to 14%",
+      "15%15 to 19%",
+      "20%20 to 29%",
+      "30%30 to 44%",
+      "45%45% or more",
+    ]);
+  });
+
+  test("the notes are collapsed, and open on request", async () => {
+    installFakeApi();
+    renderApp(RETENTION);
+
+    const summary = page.getByText("How retention counts");
+    await expect.element(summary).toBeVisible();
+    await expect.element(page.getByText(/Only signed-in users count/)).not.toBeVisible();
+    await summary.click();
     await expect.element(page.getByText(/Only signed-in users count/)).toBeVisible();
+    await expect.element(page.getByText(/The average adds up the cohorts/)).toBeVisible();
     await expect
       .element(page.getByText(/Weeks start on Monday/))
       .toMatchTextContent(/Asia\/Singapore/);
   });
 
-  test("explains how to name signed-in users while there are no cohorts", async () => {
-    installFakeApi({ retention: () => retentionFixture({ cohorts: [] }) });
+  test("opens on the last 90 days, and offers no period shorter than 4 weeks", async () => {
+    const api = installFakeApi();
+    const router = renderApp(`${RETENTION}?period=7d`);
+
+    const period = page.getByRole("combobox", { name: "Period" });
+    await expect.element(period).toMatchTextContent(/^Last 90 days/);
+    expect(lastQuery(api, "/retention")).toEqual({ period: "90d" });
+    await period.click();
+    await expect
+      .poll(() =>
+        page
+          .getByRole("option")
+          .elements()
+          .map((option) => option.textContent),
+      )
+      .toEqual(["Last 30 days", "Last 90 days", "Last 12 months", "Custom range…"]);
+    await page.getByRole("option", { name: "Last 30 days" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({ period: "30d" });
+    await expect.poll(() => lastQuery(api, "/retention")).toEqual({ period: "30d" });
+    await expect.element(period).toMatchTextContent(/^Last 30 days/);
+  });
+
+  test("on a phone: short dates, and weeks 1 and 2 in view without scrolling", async () => {
+    await page.viewport(390, 844);
+    installFakeApi();
     renderApp(RETENTION);
 
-    await expect
-      .element(page.getByText("No signed-in users first seen in this period"))
-      .toBeVisible();
+    await expect.element(page.getByRole("table", { name: TABLE })).toBeVisible();
+    expect(retentionRows().map((row) => row[0])).toEqual([
+      "Average",
+      "26 Oct",
+      "2 Nov",
+      "9 Nov",
+      "16 Nov",
+    ]);
+    const table = page.getByRole("table", { name: TABLE }).element();
+    const scroller = table.closest("[data-slot=table-container]");
+    if (scroller === null) throw new Error("The table has no scroller");
+    expect(scroller.scrollLeft).toBe(0);
+    const right = scroller.getBoundingClientRect().right;
+    const week2 = [...table.querySelectorAll("thead th")].find(
+      (cell) => cell.textContent === "Week 2",
+    );
+    expect(week2?.getBoundingClientRect().right).toBeLessThanOrEqual(right);
+    expect(right).toBeLessThanOrEqual(390);
+  });
+
+  test("explains how to name signed-in users when the project has none", async () => {
+    installFakeApi({
+      retention: () => retentionFixture({ cohorts: [], average: [], identifiesUsers: false }),
+    });
+    renderApp(RETENTION);
+
+    await expect.element(page.getByText("No signed-in users yet")).toBeVisible();
     await expect.element(page.getByText("data-user-id", { exact: true })).toBeVisible();
     await expect
       .element(page.getByText("window.ottertrail.identify(id)", { exact: true }))
       .toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: /How to name signed-in users/ }))
+      .toHaveAttribute("href", "https://docs.ottertrail.app/users/naming-users/");
+    expect(page.getByText("How retention counts").elements()).toHaveLength(0);
+  });
+
+  test("an empty period says so, and offers the last 12 months", async () => {
+    const api = installFakeApi({
+      retention: (query) =>
+        query.get("period") === "12m"
+          ? retentionFixture()
+          : retentionFixture({ cohorts: [], average: [], identifiesUsers: true }),
+    });
+    const router = renderApp(RETENTION);
+
+    await expect.element(page.getByText("No new signed-in users in this period")).toBeVisible();
+    await expect
+      .element(page.getByText("No signed-in user was first seen from 10 to 16 Nov 2026."))
+      .toBeVisible();
+    expect(page.getByText("data-user-id", { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByText("How retention counts").elements()).toHaveLength(0);
+
+    await page.getByRole("button", { name: "Show the last 12 months" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({ period: "12m" });
+    await expect.poll(() => lastQuery(api, "/retention")).toEqual({ period: "12m" });
+    await expect.element(page.getByRole("table", { name: TABLE })).toBeVisible();
+  });
+
+  test("an empty longest period offers nothing longer", async () => {
+    installFakeApi({
+      retention: () => retentionFixture({ cohorts: [], average: [], identifiesUsers: true }),
+    });
+    renderApp(`${RETENTION}?period=12m&env=staging`);
+
+    await expect
+      .element(page.getByText(/No signed-in user was first seen in staging from/))
+      .toBeVisible();
+    expect(page.getByRole("button", { name: "Show the last 12 months" }).elements()).toHaveLength(
+      0,
+    );
   });
 
   test("shows a failed load, and an unknown project", async () => {

@@ -232,11 +232,14 @@ describe.each(["dark", "light"] as const)("the %s theme's tokens", (theme: Theme
     expect(contrast(resolveHex("chart-1"), resolveHex("seq-1"))).toBeGreaterThanOrEqual(3);
   });
 
-  test("text on every step of the sequential scale meets 4.5:1, and a larger value stands out more", () => {
-    const steps = Array.from({ length: 5 }, (_, index) => resolveHex(`seq-${index + 1}`));
-    for (const step of steps) {
-      expect(contrast(resolveHex("foreground"), step)).toBeGreaterThanOrEqual(4.5);
-    }
+  test("each step's text color on the sequential scale meets 4.5:1, and a larger value stands out more", () => {
+    const steps = Array.from({ length: 7 }, (_, index) => resolveHex(`seq-${index + 1}`));
+    steps.forEach((step, index) => {
+      expect(
+        contrast(resolveHex(`on-seq-${index + 1}`), step),
+        `on-seq-${index + 1}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    });
     // Away from the surface: lighter on the dark theme, darker on the light one.
     const lightness = steps.map(luminance);
     const order =
