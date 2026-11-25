@@ -42,12 +42,22 @@ export const propertyText = (key: string) =>
 /** Exclude tracker pageviews, engagement, errors, and Web Vitals. */
 export const PRODUCT_EVENT = `name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}') AND ${analyticsEvent()}`;
 
-function scope(params: QueryParams, range: ProductRange): string {
+/** `from` can start earlier than the range: at the period before's start, to compare. */
+function scope(params: QueryParams, range: ProductRange, from: Date = range.from): string {
   return `project_id = ${params.add(range.projectId, "UUID")}
     AND environment = ${params.add(range.environment, "String")}
-    AND occurred_at >= ${params.time(range.from)}
+    AND occurred_at >= ${params.time(from)}
     AND occurred_at < ${params.time(range.to)}
     AND ${PRODUCT_EVENT}`;
+}
+
+/**
+ * The period before a range (reports.ts, previousDays). While the range
+ * runs, it ends at the same time of day, before the range starts.
+ */
+export interface PreviousPeriod {
+  from: Date;
+  to: Date;
 }
 
 /**
@@ -67,35 +77,71 @@ export function filtersSql(params: QueryParams, filters: readonly PropertyFilter
 const count = (raw: unknown) => Number(raw);
 const text = (raw: unknown) => (typeof raw === "string" ? raw : "");
 
-export interface EventRow {
-  name: string;
+export interface EventCounts {
   events: number;
   /** Daily visitor IDs; a server's events have none. */
   visitors: number;
   users: number;
 }
 
-const COUNTS = `count() AS events, uniqExact(visitor_id) AS visitors,
-  uniqExactIf(user_id, user_id IS NOT NULL) AS users`;
+export interface EventRow extends EventCounts {
+  name: string;
+  /** The same counts in the period before. */
+  previous: EventCounts;
+}
 
-/** The product events of a range, most frequent first. */
-export async function listEvents(reader: Reader, range: ProductRange): Promise<EventRow[]> {
+/** `when` is SQL with placeholders, never input text. */
+const countsWhen = (when: string, prefix: string) =>
+  `countIf(${when}) AS ${prefix}events, uniqExactIf(visitor_id, ${when}) AS ${prefix}visitors,
+   uniqExactIf(user_id, ${when} AND user_id IS NOT NULL) AS ${prefix}users`;
+
+/**
+ * The range's counts and the period before's (`previous_events` …), in one
+ * pass over both: the query reads from the period before's start.
+ */
+function countsSql(params: QueryParams, range: ProductRange, previous: PreviousPeriod): string {
+  return `${countsWhen(`occurred_at >= ${params.time(range.from)}`, "")},
+    ${countsWhen(`occurred_at < ${params.time(previous.to)}`, "previous_")}`;
+}
+
+function countsOf(row: Record<string, unknown> | undefined, prefix = ""): EventCounts {
+  return {
+    events: count(row?.[`${prefix}events`] ?? 0),
+    visitors: count(row?.[`${prefix}visitors`] ?? 0),
+    users: count(row?.[`${prefix}users`] ?? 0),
+  };
+}
+
+/**
+ * The product events of a range, most frequent first, each with its counts
+ * in the period before. `search` keeps the names that contain it, in any case.
+ */
+export async function listEvents(
+  reader: Reader,
+  range: ProductRange,
+  previous: PreviousPeriod,
+  search = "",
+): Promise<EventRow[]> {
   const params = new QueryParams();
+  const named =
+    search === ""
+      ? ""
+      : `AND positionCaseInsensitiveUTF8(name, ${params.add(search, "String")}) > 0`;
   const rows = await queryRows<Record<string, unknown>>(
     reader,
-    `SELECT name, ${COUNTS}
+    `SELECT name, ${countsSql(params, range, previous)}
      FROM events FINAL
-     WHERE ${scope(params, range)}
+     WHERE ${scope(params, range, previous.from)} ${named}
      GROUP BY name
+     HAVING events > 0
      ORDER BY events DESC, name
      LIMIT ${EVENT_NAMES}`,
     params,
   );
   return rows.map((row) => ({
     name: text(row.name),
-    events: count(row.events),
-    visitors: count(row.visitors),
-    users: count(row.users),
+    ...countsOf(row),
+    previous: countsOf(row, "previous_"),
   }));
 }
 
@@ -160,11 +206,12 @@ function eachDay(firstDay: string, lastDay: string): string[] {
 export async function eventDetail(
   reader: Reader,
   range: ProductRange,
+  previous: PreviousPeriod,
   name: string,
   filters: readonly PropertyFilter[],
 ): Promise<EventDetail> {
-  const where = (params: QueryParams) =>
-    `${scope(params, range)} AND name = ${params.add(name, "String")} ${filtersSql(params, filters)}`;
+  const where = (params: QueryParams, from = range.from) =>
+    `${scope(params, range, from)} AND name = ${params.add(name, "String")} ${filtersSql(params, filters)}`;
   const totalParams = new QueryParams();
   const dayParams = new QueryParams();
   const valueParams = new QueryParams();
@@ -179,7 +226,9 @@ export async function eventDetail(
   const [[total], days, values] = await Promise.all([
     queryRows<Record<string, unknown>>(
       reader,
-      `SELECT ${COUNTS} FROM events FINAL WHERE ${where(totalParams)}`,
+      `SELECT ${countsSql(totalParams, range, previous)}
+       FROM events FINAL
+       WHERE ${where(totalParams, previous.from)}`,
       totalParams,
     ),
     queryRows<{ day: string; events: string }>(
@@ -215,9 +264,8 @@ export async function eventDetail(
   const perDay = new Map(days.map((day) => [day.day, count(day.events)]));
   return {
     name,
-    events: count(total?.events ?? 0),
-    visitors: count(total?.visitors ?? 0),
-    users: count(total?.users ?? 0),
+    ...countsOf(total),
+    previous: countsOf(total, "previous_"),
     days: eachDay(range.firstDay, range.lastDay).map((day) => ({
       day,
       events: perDay.get(day) ?? 0,

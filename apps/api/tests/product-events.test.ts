@@ -9,6 +9,8 @@ import { insertProject } from "./helpers/projects.ts";
 /** Noon on 17 November 2026 in UTC, the instance's timezone. */
 const NOW = new Date("2026-11-17T12:00:00.000Z");
 const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000);
+/** Nothing in the period before. */
+const NONE = { events: 0, visitors: 0, users: 0 };
 
 let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
 let projectId = "";
@@ -83,15 +85,89 @@ describe("GET /api/projects/:id/events", () => {
       lastDay: "2026-11-17",
     });
     expect(body.events).toEqual([
-      { name: "signup", events: 3, visitors: 3, users: 1 },
-      { name: "error", events: 1, visitors: 1, users: 0 },
-      { name: "invoice_paid", events: 1, visitors: 0, users: 1 },
+      { name: "signup", events: 3, visitors: 3, users: 1, previous: NONE },
+      { name: "error", events: 1, visitors: 1, users: 0, previous: NONE },
+      { name: "invoice_paid", events: 1, visitors: 0, users: 1, previous: NONE },
     ]);
   });
 
   test("counts one environment at a time", async () => {
     const body = (await get("/events?period=7d&environment=staging")).json();
-    expect(body.events).toEqual([{ name: "signup", events: 1, visitors: 1, users: 0 }]);
+    expect(body.events).toEqual([
+      { name: "signup", events: 1, visitors: 1, users: 0, previous: NONE },
+    ]);
+  });
+});
+
+describe("the period before", () => {
+  let other = "";
+  const read = (path: string) =>
+    dashboard.app.inject({
+      url: `/api/projects/${other}${path}`,
+      headers: { cookie: dashboard.cookie },
+    });
+  /** 7d from noon on the 17th runs from the 11th: the period before is the 4th to the 10th, up to noon. */
+  const BEFORE = {
+    firstDay: "2026-11-04",
+    lastDay: "2026-11-10",
+    until: "2026-11-10T12:00:00.000Z",
+  };
+
+  beforeAll(async () => {
+    other = (await insertProject(dashboard.db, { name: "Compare" })).id;
+    await dashboard.store(other, [
+      ...["1", "2", "3"].map((visitorId) => event("checkout", { visitorId, userId: visitorId })),
+      // The 8th: in the period before.
+      event("checkout", { occurredAt: hoursAgo(9 * 24), userId: "1" }),
+      // The 10th at 06:00 counts; at 18:00 it is past the moment this period has reached.
+      event("checkout", { occurredAt: hoursAgo(7 * 24 + 6), visitorId: "2" }),
+      event("checkout", { occurredAt: hoursAgo(7 * 24 - 6), visitorId: "3" }),
+      // Only now: nothing to compare with.
+      event("Invite_Sent"),
+      // Only before: not listed.
+      event("gone", { occurredAt: hoursAgo(9 * 24) }),
+    ]);
+  });
+
+  test("lists each event's counts in the same days before, up to the same time while it runs", async () => {
+    const body = (await read("/events?period=7d")).json();
+    expect(body.previous).toEqual(BEFORE);
+    expect(body.events).toEqual([
+      {
+        name: "checkout",
+        events: 3,
+        visitors: 3,
+        users: 3,
+        previous: { events: 2, visitors: 2, users: 1 },
+      },
+      { name: "Invite_Sent", events: 1, visitors: 1, users: 0, previous: NONE },
+    ]);
+  });
+
+  test("compares a finished period with all of the one before", async () => {
+    const body = (await read("/events?from=2026-11-11&to=2026-11-16")).json();
+    expect(body.previous).toEqual({ firstDay: "2026-11-05", lastDay: "2026-11-10", until: null });
+    expect(body.events).toEqual([]);
+  });
+
+  test("one event's counts in the period before, with its filters", async () => {
+    const body = (await read("/events/checkout?period=7d")).json();
+    expect(body.previous).toEqual({ ...BEFORE, events: 2, visitors: 2, users: 1 });
+    const filtered = (await read("/events/checkout?period=7d&p.plan=team")).json();
+    expect(filtered.previous).toEqual({ ...BEFORE, ...NONE });
+  });
+
+  test("searches the names for a part of one, in any case", async () => {
+    const names = async (search: string) =>
+      (await read(`/events?period=7d&search=${encodeURIComponent(search)}`))
+        .json()
+        .events.map((item: { name: string }) => item.name);
+    expect(await names("invite")).toEqual(["Invite_Sent"]);
+    expect(await names("OUT")).toEqual(["checkout"]);
+    expect(await names("gone")).toEqual([]);
+    expect(await names("")).toEqual(["checkout", "Invite_Sent"]);
+    expect((await read("/events?period=7d&search=%01")).statusCode).toBe(400);
+    expect((await read(`/events?period=7d&search=${"x".repeat(201)}`)).statusCode).toBe(400);
   });
 });
 

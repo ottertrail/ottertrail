@@ -11,7 +11,7 @@ import { environmentOf } from "../collection/environment.ts";
 import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { listSavedFunnels } from "../funnels/saved-funnels.ts";
-import { localDays, previousDays } from "../reports/reports.ts";
+import { localDays, type PreviousDays, previousDays } from "../reports/reports.ts";
 import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -178,6 +178,13 @@ async function ownHostnames(db: Kysely<Database>, projectId: string): Promise<st
   return project?.allowed_hostnames ?? [];
 }
 
+/** Which days the period before covers; `until` is its cut-off while the period runs. */
+const daysOf = (previous: PreviousDays) => ({
+  firstDay: previous.firstDay,
+  lastDay: previous.lastDay,
+  until: previous.until,
+});
+
 const answer = (range: ProductRange) => ({
   timeZone: range.timeZone,
   environment: range.environment,
@@ -254,7 +261,16 @@ export const productRoutes: FastifyPluginCallback<{
     return { ...asked, steps, count, window };
   }
 
-  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+  /**
+   * The period before, compared as the Web analytics summary and the funnel
+   * compare it (reports.ts, previousDays). An event has no window, so the
+   * funnel's later cut-off (previousReadEnd) does not apply.
+   */
+  async function periodBefore(range: ProductRange, moment: Date): Promise<PreviousDays> {
+    return previousDays(db, range.firstDay, range.lastDay, range.timeZone, moment);
+  }
+
+  app.get<{ Params: { id: string }; Querystring: RangeQuery & { search?: string } }>(
     "/projects/:id/events",
     {
       preHandler: [signedIn, canView],
@@ -264,18 +280,31 @@ export const productRoutes: FastifyPluginCallback<{
           required: ["id"],
           properties: { id: { type: "string", pattern: UUID_PATTERN } },
         },
-        querystring: { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES },
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            ...RANGE_PROPERTIES,
+            // Part of a name, as collection allows names: no control characters.
+            search: {
+              type: "string",
+              maxLength: EVENT_NAME_SCHEMA.maxLength,
+              pattern: "^[^\\u0000-\\u001F\\u007F]*$",
+            },
+          },
+        },
       },
     },
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range } = asked;
+      const { range, moment } = asked;
+      const previous = await periodBefore(range, moment);
       const [events, environments] = await Promise.all([
-        listEvents(reader, range),
+        listEvents(reader, range, previous, request.query.search?.trim()),
         productEnvironments(reader, range),
       ]);
-      return { ...answer(range), environments, events };
+      return { ...answer(range), environments, previous: daysOf(previous), events };
     },
   );
 
@@ -290,9 +319,21 @@ export const productRoutes: FastifyPluginCallback<{
       if ("problem" in filters) return reply.code(400).send(filters.problem);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range } = asked;
-      const detail = await eventDetail(reader, range, request.params.name, filters.filters);
-      return { ...answer(range), filters: filters.filters, ...detail };
+      const { range, moment } = asked;
+      const previous = await periodBefore(range, moment);
+      const detail = await eventDetail(
+        reader,
+        range,
+        previous,
+        request.params.name,
+        filters.filters,
+      );
+      return {
+        ...answer(range),
+        filters: filters.filters,
+        ...detail,
+        previous: { ...daysOf(previous), ...detail.previous },
+      };
     },
   );
 
