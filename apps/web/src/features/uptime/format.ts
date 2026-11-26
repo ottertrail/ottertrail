@@ -11,6 +11,8 @@ export const CAUSE_TEXT: Record<CheckCause, string> = {
   word: "Word",
   redirects: "Redirects",
   address: "Address not allowed",
+  no_ping: "No ping",
+  job_failed: "Job failed",
 };
 
 export function intervalText(seconds: number): string {

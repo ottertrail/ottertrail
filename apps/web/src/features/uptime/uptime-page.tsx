@@ -1,6 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ActivityIcon, ExternalLinkIcon, OctagonAlertIcon, PlusIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  ExternalLinkIcon,
+  HeartPulseIcon,
+  OctagonAlertIcon,
+  PlusIcon,
+} from "lucide-react";
 import * as React from "react";
 
 import { ButtonLink } from "@/components/button-link";
@@ -57,11 +63,20 @@ import { CheckActions } from "./check-actions";
 import { CheckFormDialog } from "./check-form-dialog";
 import { CheckView } from "./check-page";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime, intervalText } from "./format";
+import { HeartbeatFormDialog } from "./heartbeat-form-dialog";
+import { heartbeatLine } from "./heartbeat-text";
 import { CheckStateBadge } from "./state-badge";
 
 function LatestCell({ check }: { check: Check }) {
   if (check.lastCheckedAt === null) {
-    return <span className="text-ink-subtle">Not run yet</span>;
+    return (
+      <span className="text-ink-subtle">
+        {check.kind === "heartbeat" ? "No ping yet" : "Not run yet"}
+      </span>
+    );
+  }
+  if (check.kind === "heartbeat") {
+    return <span>{check.lastUp === false ? "Failure reported" : "Ping"}</span>;
   }
   if (check.lastUp === false && check.lastCause !== null) {
     return (
@@ -77,6 +92,7 @@ function LatestCell({ check }: { check: Check }) {
 function CheckTable({
   checks,
   projectId,
+  timeZone,
   canManage,
   onDeleted,
   selected,
@@ -84,6 +100,7 @@ function CheckTable({
 }: {
   checks: readonly Check[];
   projectId: string;
+  timeZone: string;
   canManage: boolean;
   onDeleted: (checkId: string) => void;
 } & WorkbenchListProps) {
@@ -143,7 +160,11 @@ function CheckTable({
                   }
                 />
                 <TruncatedText
-                  text={`${check.method} ${check.url}, ${intervalText(check.intervalSeconds).toLowerCase()}`}
+                  text={
+                    check.kind === "heartbeat"
+                      ? heartbeatLine(check, timeZone)
+                      : `${check.method} ${check.url}, ${intervalText(check.intervalSeconds).toLowerCase()}`
+                  }
                   className="text-xs text-ink-subtle"
                 />
               </TableCell>
@@ -319,6 +340,7 @@ export function UptimePage({ projectId, range }: { projectId: string; range: Pag
   const navigate = useNavigate();
   const list = useQuery(checksQuery(projectId));
   const [adding, setAdding] = React.useState(false);
+  const [addingHeartbeat, setAddingHeartbeat] = React.useState(false);
   const [selected, setSelected] = useSearchParam("check");
   const canManage = useAccess().canUse("uptime_alerts", "manage");
   // Workbench keeps the latest callback; it need not be stable.
@@ -342,12 +364,27 @@ export function UptimePage({ projectId, range }: { projectId: string; range: Pag
   };
   const full = data !== undefined && data.checks.length >= data.maxChecks;
   const addButton = canManage && (
-    <Button onClick={() => setAdding(true)} disabled={full}>
-      <PlusIcon aria-hidden="true" />
-      Add check
-    </Button>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" onClick={() => setAddingHeartbeat(true)} disabled={full}>
+        <HeartPulseIcon aria-hidden="true" />
+        Add heartbeat
+      </Button>
+      <Button onClick={() => setAdding(true)} disabled={full}>
+        <PlusIcon aria-hidden="true" />
+        Add check
+      </Button>
+    </div>
   );
-  const dialog = <CheckFormDialog open={adding} onOpenChange={setAdding} projectId={projectId} />;
+  const dialog = (
+    <>
+      <CheckFormDialog open={adding} onOpenChange={setAdding} projectId={projectId} />
+      <HeartbeatFormDialog
+        open={addingHeartbeat}
+        onOpenChange={setAddingHeartbeat}
+        projectId={projectId}
+      />
+    </>
+  );
   const failure = list.isError && (
     <Alert variant="destructive">
       <OctagonAlertIcon />
@@ -387,7 +424,9 @@ export function UptimePage({ projectId, range }: { projectId: string; range: Pag
               <EmptyTitle>No uptime checks yet</EmptyTitle>
               <EmptyDescription>
                 This instance requests your site or API URL on a schedule. The check is marked down
-                when it fails. You can see when the URL stopped responding and for how long.
+                when it fails. You can see when the URL stopped responding and for how long. A
+                heartbeat works the other way: your job calls its URL, and it is down when the call
+                does not come in time.
               </EmptyDescription>
             </EmptyHeader>
             {canManage && <EmptyContent>{addButton}</EmptyContent>}
@@ -422,6 +461,7 @@ export function UptimePage({ projectId, range }: { projectId: string; range: Pag
             <CheckTable
               checks={data.checks}
               projectId={projectId}
+              timeZone={data.timeZone}
               canManage={canManage}
               onDeleted={afterDelete}
               {...props}

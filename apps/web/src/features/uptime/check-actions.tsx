@@ -25,6 +25,7 @@ import { ApiError } from "@/lib/api";
 import { type Check, deleteCheck, updateCheck } from "@/lib/uptime-api";
 
 import { CheckFormDialog } from "./check-form-dialog";
+import { HeartbeatFormDialog } from "./heartbeat-form-dialog";
 
 function DeleteCheckDialog({
   projectId,
@@ -67,8 +68,9 @@ function DeleteCheckDialog({
         <DialogHeader>
           <DialogTitle>Delete the check “{check.name}”?</DialogTitle>
           <DialogDescription>
-            This stops the check and deletes its incidents. Its results become inaccessible and are
-            deleted after their 90-day retention period. To stop the check temporarily, pause it.
+            {check.kind === "heartbeat"
+              ? "This deletes the heartbeat, its incidents, and its pings. Its ping URL stops working. To stop it temporarily, pause it."
+              : "This stops the check and deletes its incidents. Its results become inaccessible and are deleted after their 90-day retention period. To stop the check temporarily, pause it."}
           </DialogDescription>
         </DialogHeader>
         {remove.error !== null && (
@@ -156,12 +158,21 @@ export function CheckActions({
           {pause.error.message}
         </p>
       )}
-      <CheckFormDialog
-        open={editing}
-        onOpenChange={setEditing}
-        projectId={projectId}
-        check={check}
-      />
+      {check.kind === "heartbeat" ? (
+        <HeartbeatFormDialog
+          open={editing}
+          onOpenChange={setEditing}
+          projectId={projectId}
+          check={check}
+        />
+      ) : (
+        <CheckFormDialog
+          open={editing}
+          onOpenChange={setEditing}
+          projectId={projectId}
+          check={check}
+        />
+      )}
       <DeleteCheckDialog
         projectId={projectId}
         check={check}

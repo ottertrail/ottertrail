@@ -55,6 +55,8 @@ import {
   formatUptime,
   intervalText,
 } from "./format";
+import { HeartbeatStateLine, PingsCard, PingUrlCard } from "./heartbeat-parts";
+import { heartbeatSettings } from "./heartbeat-text";
 import { CheckStateBadge } from "./state-badge";
 
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
@@ -102,28 +104,46 @@ function Stats({
   results: CheckResults | undefined;
   timeZone: string;
 }) {
+  const heartbeat = check.kind === "heartbeat";
   return (
     <dl className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @5xl:grid-cols-5">
       <Stat
         label="Uptime in this period"
         value={results === undefined ? "…" : formatUptime(results.uptime)}
         note={
-          results === undefined ? undefined : `${results.runs} runs, ${results.failures} failed`
+          results === undefined || heartbeat
+            ? undefined
+            : `${results.runs} runs, ${results.failures} failed`
         }
       />
       <Stat label="Last 24 hours" value={formatUptime(check.uptime.day)} />
       <Stat label="Last 7 days" value={formatUptime(check.uptime.week)} />
       <Stat label="Last 30 days" value={formatUptime(check.uptime.month)} />
-      <Stat
-        label="Certificate expires"
-        value={
-          check.tlsExpiresAt === null
-            ? MISSING
-            : (formatMoment(check.tlsExpiresAt, timeZone).split(",")[0] ?? MISSING)
-        }
-        note={check.tlsExpiresAt === null ? "Seen on HTTPS answers" : undefined}
-      />
+      {heartbeat ? (
+        <Stat
+          label="Last ping"
+          value={
+            check.lastCheckedAt === null ? MISSING : formatMoment(check.lastCheckedAt, timeZone)
+          }
+        />
+      ) : (
+        <CertificateStat check={check} timeZone={timeZone} />
+      )}
     </dl>
+  );
+}
+
+function CertificateStat({ check, timeZone }: { check: Check; timeZone: string }) {
+  return (
+    <Stat
+      label="Certificate expires"
+      value={
+        check.tlsExpiresAt === null
+          ? MISSING
+          : (formatMoment(check.tlsExpiresAt, timeZone).split(",")[0] ?? MISSING)
+      }
+      note={check.tlsExpiresAt === null ? "Seen on HTTPS answers" : undefined}
+    />
   );
 }
 
@@ -145,8 +165,9 @@ function IncidentsCard({
           <h3>Incidents</h3>
         </CardTitle>
         <CardDescription>
-          Periods when the check was down in this period, newest first. Each starts at the first
-          failure in the sequence that caused the incident. It ends at the first successful check.
+          {check.kind === "heartbeat"
+            ? "Periods when the heartbeat was down in this period, newest first. Each starts when a ping was due or a failure was reported. It ends at the next ping."
+            : "Periods when the check was down in this period, newest first. Each starts at the first failure in the sequence that caused the incident. It ends at the first successful check."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -358,15 +379,25 @@ export function CheckView({
               <h2 className="text-lg font-medium break-all text-ink">{answer.check.name}</h2>
             )}
             <p className="text-sm break-all text-ink-subtle">
-              {answer.check.method} {answer.check.url},{" "}
-              {intervalText(answer.check.intervalSeconds).toLowerCase()}
-              {answer.check.word === null
-                ? ""
-                : `; "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
+              {answer.check.kind === "heartbeat" ? (
+                heartbeatSettings(answer.check)
+              ) : (
+                <>
+                  {answer.check.method} {answer.check.url},{" "}
+                  {intervalText(answer.check.intervalSeconds).toLowerCase()}
+                  {answer.check.word === null
+                    ? ""
+                    : `; "${answer.check.word}" ${answer.check.wordMode === "present" ? "must" : "must not"} be in the body`}
+                </>
+              )}
             </p>
             <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
               <CheckStateBadge check={answer.check} />
-              <StateLine check={answer.check} timeZone={answer.timeZone} />
+              {answer.check.kind === "heartbeat" ? (
+                <HeartbeatStateLine check={answer.check} timeZone={answer.timeZone} />
+              ) : (
+                <StateLine check={answer.check} timeZone={answer.timeZone} />
+              )}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1">
@@ -386,6 +417,10 @@ export function CheckView({
 
       {answer !== undefined && (
         <Stats check={answer.check} results={data} timeZone={answer.timeZone} />
+      )}
+
+      {answer?.check.kind === "heartbeat" && (
+        <PingUrlCard projectId={projectId} check={answer.check} />
       )}
 
       {answer !== undefined && (
@@ -409,7 +444,12 @@ export function CheckView({
           </AlertAction>
         </Alert>
       )}
-      {data === undefined ? (
+      {answer?.check.kind === "heartbeat" ? (
+        <div className="grid gap-4 @5xl:grid-cols-2">
+          <IncidentsCard projectId={projectId} check={answer.check} range={range} />
+          <PingsCard projectId={projectId} checkId={answer.check.id} />
+        </div>
+      ) : data === undefined ? (
         !results.isError && (
           <Skeleton className="h-72 w-full" aria-busy="true" aria-label="Loading" />
         )

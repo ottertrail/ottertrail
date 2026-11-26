@@ -40,6 +40,8 @@ export function periodPhrase(period: OverviewPeriod): string {
   return period === "today" ? "today" : `the last ${LENGTH[period]} days`;
 }
 
-export function shortUrl(url: string): string {
+/** A check's URL without its scheme, or "Heartbeat" for a check without one. */
+export function shortUrl(url: string | null): string {
+  if (url === null) return "Heartbeat";
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }

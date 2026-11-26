@@ -73,7 +73,7 @@ export interface AttentionWidget extends WidgetHeader {
   down: {
     checkId: string;
     name: string;
-    url: string;
+    url: string | null;
     since: string | null;
     cause: CheckCause | null;
     statusCode: number | null;
@@ -114,7 +114,7 @@ export interface UptimeWidget extends WidgetHeader {
   checks: {
     id: string;
     name: string;
-    url: string;
+    url: string | null;
     state: "pending" | "up" | "down";
     paused: boolean;
     uptime: number | null;
@@ -294,7 +294,7 @@ const SHAPES: { [K in WidgetId]: (value: unknown) => boolean } = {
           has(item, {
             checkId: isText,
             name: isText,
-            url: isText,
+            url: isTextOrNull,
             since: isTextOrNull,
             cause: (cause) => cause === null || isCheckCause(cause),
             statusCode: isNumberOrNull,
@@ -343,7 +343,7 @@ const SHAPES: { [K in WidgetId]: (value: unknown) => boolean } = {
           has(item, {
             id: isText,
             name: isText,
-            url: isText,
+            url: isTextOrNull,
             state: (state) => state === "pending" || state === "up" || state === "down",
             paused: isBoolean,
             uptime: isNumberOrNull,

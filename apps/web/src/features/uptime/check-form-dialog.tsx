@@ -129,7 +129,7 @@ const WORD_MODES = [
   { value: "absent", label: "must not be in the body" },
 ];
 
-function SelectField({
+export function SelectField({
   label,
   value,
   items,

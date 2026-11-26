@@ -23,6 +23,8 @@ export const CHECK_CAUSES = [
   "word",
   "redirects",
   "address",
+  "no_ping",
+  "job_failed",
 ] as const;
 export type CheckCause = (typeof CHECK_CAUSES)[number];
 
@@ -39,17 +41,27 @@ export const DEFAULT_STATUSES = "200-399";
 export const MAX_CHECK_NAME = 100;
 export const MAX_WORD = 200;
 
+/**
+ * An HTTP check, or a heartbeat a job pings (heartbeat-api.ts). The
+ * request's fields are null for a heartbeat; graceSeconds and expectedAt
+ * are null for an HTTP check.
+ */
 export interface Check {
   id: string;
+  kind: "http" | "heartbeat";
   name: string;
-  url: string;
-  method: "GET" | "HEAD";
+  url: string | null;
+  method: "GET" | "HEAD" | null;
+  /** How often an HTTP check runs, or a heartbeat's period. */
   intervalSeconds: number;
-  timeoutSeconds: number;
-  expectedStatuses: string;
+  timeoutSeconds: number | null;
+  expectedStatuses: string | null;
   word: string | null;
   wordMode: "present" | "absent";
-  failuresBeforeDown: number;
+  failuresBeforeDown: number | null;
+  graceSeconds: number | null;
+  /** When a heartbeat's next ping is expected; null while paused. */
+  expectedAt: string | null;
   paused: boolean;
   state: CheckState;
   consecutiveFailures: number;
@@ -144,15 +156,18 @@ const isState = (value: unknown): value is CheckState =>
 export const isCheck = (value: unknown): value is Check =>
   isRecord(value) &&
   isText(value.id) &&
+  (value.kind === "http" || value.kind === "heartbeat") &&
   isText(value.name) &&
-  isText(value.url) &&
-  (value.method === "GET" || value.method === "HEAD") &&
+  isTextOrNull(value.url) &&
+  (value.method === null || value.method === "GET" || value.method === "HEAD") &&
   isNumber(value.intervalSeconds) &&
-  isNumber(value.timeoutSeconds) &&
-  isText(value.expectedStatuses) &&
+  isNumberOrNull(value.timeoutSeconds) &&
+  isTextOrNull(value.expectedStatuses) &&
   isTextOrNull(value.word) &&
   (value.wordMode === "present" || value.wordMode === "absent") &&
-  isNumber(value.failuresBeforeDown) &&
+  isNumberOrNull(value.failuresBeforeDown) &&
+  isNumberOrNull(value.graceSeconds) &&
+  isTextOrNull(value.expectedAt) &&
   typeof value.paused === "boolean" &&
   isState(value.state) &&
   isNumber(value.consecutiveFailures) &&

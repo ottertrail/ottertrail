@@ -27,6 +27,7 @@ import {
 } from "../../src/lib/errors-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
+import type { Ping } from "../../src/lib/heartbeat-api.ts";
 import type { Heatmap, HeatmapPages, HeatmapSnapshots } from "../../src/lib/heatmaps-api.ts";
 import type { HostCharts, HostList } from "../../src/lib/hosts-api.ts";
 import type {
@@ -339,6 +340,10 @@ export interface FakeApi {
   checkResults: (checkId: string, query: URLSearchParams) => CheckResults | Response;
   /** Answers GET /api/projects/:id/checks/:checkId/incidents; by default, fakeIncidents. */
   incidents: (checkId: string, query: URLSearchParams) => IncidentList | Response;
+  /** A heartbeat's latest pings, by check ID; none when left out. */
+  pings: Record<string, Ping[]>;
+  /** Each heartbeat's ping URL, by check ID; POST …/ping-url replaces one. */
+  pingUrls: Record<string, string>;
   /**
    * The instance's notification channels and their deliveries: the routes
    * list, add (refusing what the API refuses for these tests), change,
@@ -3484,6 +3489,9 @@ export const json = (body: unknown, status = 200) =>
 /** Two checks: one up, one down since 09:40 in Singapore, with their uptime. */
 export function fakeChecks(): Check[] {
   const base = {
+    kind: "http" as const,
+    graceSeconds: null,
+    expectedAt: null,
     method: "GET" as const,
     timeoutSeconds: 10,
     expectedStatuses: "200-399",
@@ -3594,9 +3602,96 @@ export function fakeIncidents(_checkId: string, query: URLSearchParams): Inciden
   };
 }
 
+/**
+ * A daily heartbeat with 2 hours of grace, up: its last ping at 03:02 on 16
+ * November in Singapore, the next expected a day later.
+ */
+export function fakeHeartbeat(): Check {
+  return {
+    id: "cccccccc-cccc-4ccc-8ccc-000000000003",
+    kind: "heartbeat",
+    name: "Nightly backup",
+    url: null,
+    method: null,
+    intervalSeconds: 86_400,
+    timeoutSeconds: null,
+    expectedStatuses: null,
+    word: null,
+    wordMode: "present",
+    failuresBeforeDown: null,
+    graceSeconds: 7200,
+    expectedAt: "2026-11-16T19:02:00.000Z",
+    paused: false,
+    state: "up",
+    consecutiveFailures: 0,
+    failingSince: null,
+    failingCause: null,
+    lastCheckedAt: "2026-11-15T19:02:00.000Z",
+    lastUp: true,
+    lastStatusCode: null,
+    lastResponseMs: null,
+    lastCause: null,
+    tlsExpiresAt: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    uptime: { day: 1, week: 0.98, month: 0.995 },
+  };
+}
+
+/** The fake heartbeat's pings: two nights, the first a failure. */
+export function fakePings(): Ping[] {
+  return [
+    { at: "2026-11-15T19:02:00.000Z", failed: false },
+    { at: "2026-11-14T19:03:00.000Z", failed: true },
+  ];
+}
+
+const FAKE_PING_URL = "https://ottertrail.example.com/api/heartbeats/";
+
+/** A heartbeat added or changed as the API would. */
+function saveHeartbeat(api: FakeApi, input: Record<string, unknown>, existing?: Check): Response {
+  const name = typeof input.name === "string" ? input.name.trim() : (existing?.name ?? "");
+  if (name === "") {
+    return json({ error: "invalid_name", message: "Enter a name for the heartbeat." }, 400);
+  }
+  const now = new Date().toISOString();
+  const intervalSeconds = Number(input.intervalSeconds ?? existing?.intervalSeconds ?? 86_400);
+  const check: Check = {
+    ...fakeHeartbeat(),
+    ...existing,
+    id: existing?.id ?? crypto.randomUUID(),
+    name,
+    intervalSeconds,
+    graceSeconds: Number(input.graceSeconds ?? existing?.graceSeconds ?? 7200),
+    paused: typeof input.paused === "boolean" ? input.paused : (existing?.paused ?? false),
+    ...(existing === undefined
+      ? {
+          state: "pending",
+          lastCheckedAt: null,
+          lastUp: null,
+          expectedAt: new Date(Date.parse(now) + intervalSeconds * 1000).toISOString(),
+          createdAt: now,
+          uptime: { day: null, week: null, month: null },
+        }
+      : {}),
+    updatedAt: now,
+  };
+  if (existing === undefined) {
+    api.pingUrls[check.id] = `${FAKE_PING_URL}${"n".repeat(32)}`;
+  }
+  api.checks =
+    existing === undefined
+      ? [...api.checks, check]
+      : api.checks.map((item) => (item.id === check.id ? check : item));
+  return json({ check }, existing === undefined ? 201 : 200);
+}
+
 /** A check added or changed as the API would, refusing what it refuses for these tests. */
 function saveCheck(api: FakeApi, body: unknown, existing?: Check): Response {
   const input = fieldsOf(body);
+  if (input.kind === "heartbeat" || existing?.kind === "heartbeat") {
+    return saveHeartbeat(api, input, existing);
+  }
   const text = (key: string) => (typeof input[key] === "string" ? input[key] : undefined);
   const url = text("url") ?? existing?.url ?? "";
   if (!/^https?:\/\//.test(url)) {
@@ -4665,6 +4760,20 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (overview !== null) return overview;
   const alerts = answerAlerts(api, path, init, url.searchParams);
   if (alerts !== null) return alerts;
+  const heartbeatPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(pings|ping-url)$/.exec(path);
+  if (heartbeatPath?.[1] !== undefined) {
+    const checkId = decodeURIComponent(heartbeatPath[1]);
+    const heartbeat = api.checks.find((check) => check.id === checkId);
+    if (heartbeat?.kind !== "heartbeat") return checkNotFound();
+    if (heartbeatPath[2] === "pings") {
+      return json({ timeZone: "Asia/Singapore", pings: api.pings[checkId] ?? [] });
+    }
+    if (init?.method === "POST") {
+      const next = (api.pingUrls[checkId]?.endsWith("a".repeat(32)) ?? false) ? "b" : "a";
+      api.pingUrls[checkId] = `${FAKE_PING_URL}${next.repeat(32)}`;
+    }
+    return json({ url: api.pingUrls[checkId] ?? `${FAKE_PING_URL}${"k".repeat(32)}` });
+  }
   const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
   if (checkSubPath?.[1] !== undefined) {
     const checkId = decodeURIComponent(checkSubPath[1]);
@@ -4950,6 +5059,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     checks: fakeChecks(),
     checkResults: fakeCheckResults,
     incidents: fakeIncidents,
+    pings: {},
+    pingUrls: {},
     channels: fakeChannels(),
     alerts: fakeAlerts(),
     deleteProject: removeProject,
