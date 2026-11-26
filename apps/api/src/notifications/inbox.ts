@@ -90,6 +90,10 @@ export function inboxTitle(payload: NotificationPayload): string {
       return `Data stopped arriving: ${rule}`;
     case "data.stopped_resolved":
       return `Data arriving again: ${rule}`;
+    case "log.lines":
+      return `Log lines matched: ${rule}`;
+    case "log.lines_resolved":
+      return `Log lines normal: ${rule}`;
     case "alert.held_back": {
       const held = typeof subject.held === "number" ? subject.held : 0;
       return `${text(subject.name)} held back ${held} ${held === 1 ? "alert" : "alerts"}`;
@@ -103,7 +107,7 @@ export function inboxTitle(payload: NotificationPayload): string {
 /** The areas a project item needs by default: alerts, and the area the alert watches. */
 export function defaultAreas(type: string): Area[] {
   if (type.startsWith("error.")) return ["uptime_alerts", "errors"];
-  if (type.startsWith("route.") || type.startsWith("metric.")) {
+  if (type.startsWith("route.") || type.startsWith("metric.") || type.startsWith("log.")) {
     return ["uptime_alerts", "monitoring"];
   }
   if (type.startsWith("ai.")) return ["uptime_alerts", "ai"];

@@ -41,6 +41,8 @@ import {
   KIND_INFO,
   type LatencySettings,
   latencySettingsOf,
+  type LogLineSettings,
+  logLineSettingsStored,
   type MetricSettings,
   metricSettingsStored,
   type RuleKind,
@@ -48,6 +50,17 @@ import {
   stoppedSettingsStored,
   TELEMETRY_KINDS,
 } from "./kinds.ts";
+import {
+  isLogLines,
+  logLinesBreach,
+  logLinesLink,
+  logLinesMessage,
+  logLinesNotSeenMessage,
+  logLinesSeen,
+  logLinesSubject,
+  logLinesSubjectName,
+  readLogLines,
+} from "./log-rules.ts";
 import {
   arrivedCount,
   isStopped,
@@ -60,9 +73,9 @@ import {
 } from "./stopped-rules.ts";
 
 /**
- * Evaluate telemetry, AI, and "data stops arriving" rules once a minute using dashboard
- * calculations (telemetry/services.ts, routeWindows; telemetry/metrics.ts, metricWindow;
- * ai-rules.ts; stopped-rules.ts). Claim
+ * Evaluate telemetry, AI, "data stops arriving", and "log lines match" rules once a minute using
+ * dashboard calculations (telemetry/services.ts, routeWindows; telemetry/metrics.ts,
+ * metricWindow; ai-rules.ts; stopped-rules.ts; log-rules.ts). Claim
  * rules with FOR UPDATE SKIP LOCKED (takeDueRules) to avoid duplicate evaluation
  * (docs/uptime-alerts.md, "Alerts on telemetry"; docs/ai-usage.md).
  *
@@ -277,7 +290,13 @@ export function windowAt(at: Date, windowMinutes: number): { from: Date; to: Dat
   return { from: new Date(to.getTime() - windowMinutes * 60_000), to };
 }
 
-type Settings = LatencySettings | FailureSettings | MetricSettings | AiSettings | StoppedSettings;
+type Settings =
+  | LatencySettings
+  | FailureSettings
+  | MetricSettings
+  | AiSettings
+  | StoppedSettings
+  | LogLineSettings;
 
 function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "route_latency") return latencySettingsOf(rule.settings);
@@ -288,12 +307,13 @@ function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "events_stopped" || rule.kind === "telemetry_stopped") {
     return stoppedSettingsStored(rule.kind, rule.settings);
   }
+  if (rule.kind === "log_lines") return logLineSettingsStored(rule.settings);
   return metricSettingsStored(rule.settings);
 }
 
 type RouteSettings = LatencySettings | FailureSettings;
-/** The kinds that compare a value with a threshold: all but "data stops arriving". */
-type ValueSettings = Exclude<Settings, StoppedSettings>;
+/** The kinds that compare a value with a threshold: all but "data stops arriving" and log lines. */
+type ValueSettings = Exclude<Settings, StoppedSettings | LogLineSettings>;
 
 const isMetric = (settings: Settings): settings is MetricSettings => "metricKind" in settings;
 const isLatency = (settings: Settings): settings is LatencySettings => "thresholdMs" in settings;
@@ -390,6 +410,7 @@ async function readRoutes(
 
 function breaches(settings: Settings, value: number): boolean {
   if (isStopped(settings)) return value < settings.minCount;
+  if (isLogLines(settings)) return logLinesBreach(settings, value);
   if (isAiRule(settings)) return aiBreaches(settings, value);
   if (isMetric(settings)) {
     return settings.direction === "above" ? value > settings.value : value < settings.value;
@@ -461,6 +482,7 @@ const metricWhat = (settings: MetricSettings) =>
 
 function subjectName(settings: Settings): string {
   if (isStopped(settings)) return stoppedSubjectName(settings);
+  if (isLogLines(settings)) return logLinesSubjectName(settings);
   if (isAiRule(settings)) return aiSubjectName(settings);
   if (isMetric(settings)) return `${settings.metric} (${settings.aggregate})`;
   return settings.route === null ? settings.service : `${settings.service} ${settings.route}`;
@@ -640,13 +662,21 @@ export async function evaluateTelemetryRule(
   const settings = settingsOfRule(rule);
   const reading = isStopped(settings)
     ? await readStopped(reader, rule, settings, at)
-    : isAiRule(settings)
-      ? await readAiRule(context, reader, rule, settings, at)
-      : isMetric(settings)
-        ? await readMetric(reader, rule, settings, at)
-        : (
-            await readRoutes(reader, rule.projectId, settings.environment, [{ rule, settings }], at)
-          )[0];
+    : isLogLines(settings)
+      ? await readLogLines(reader, rule, settings, at)
+      : isAiRule(settings)
+        ? await readAiRule(context, reader, rule, settings, at)
+        : isMetric(settings)
+          ? await readMetric(reader, rule, settings, at)
+          : (
+              await readRoutes(
+                reader,
+                rule.projectId,
+                settings.environment,
+                [{ rule, settings }],
+                at,
+              )
+            )[0];
   if (reading === undefined) throw new Error("A route rule's batch read nothing");
   return judge(context, rule, settings, reading, at);
 }
@@ -680,15 +710,23 @@ async function judge(
         subject: stoppedSubject(settings, value),
         at,
       }
-    : {
-        url: telemetryLink(context, rule.projectId, settings),
-        subject: subjectOf(settings, read),
-        at,
-      };
+    : isLogLines(settings)
+      ? {
+          url: logLinesLink(context, rule.projectId, settings, reading, at),
+          subject: logLinesSubject(settings, value),
+          at,
+        }
+      : {
+          url: telemetryLink(context, rule.projectId, settings),
+          subject: subjectOf(settings, read),
+          at,
+        };
   const text = (resolved: boolean) =>
     isStopped(settings)
       ? stoppedMessage(rule.projectName, settings, value, resolved)
-      : messageOf(rule.projectName, settings, read, resolved);
+      : isLogLines(settings)
+        ? logLinesMessage(rule.projectName, settings, value, resolved)
+        : messageOf(rule.projectName, settings, read, resolved);
   if (breaches(settings, value)) {
     if (firing) {
       if (state.clear_since !== null) await setClearSince(context.db, rule.id, "", null);
@@ -707,8 +745,9 @@ async function judge(
     return { reading, outcome };
   }
   if (!firing) return { reading, outcome: "none" };
-  // Data that arrives again is back at once; a value must stay on the right side a while.
-  if (!isStopped(settings)) {
+  // Data that arrives again is back at once, and a log lines window is whole; a value must stay on
+  // the right side a while.
+  if (!isStopped(settings) && !isLogLines(settings)) {
     if (state.clear_since === null) {
       await setClearSince(context.db, rule.id, "", at);
       return { reading, outcome: "waiting" };
@@ -751,10 +790,13 @@ function stepsOf(rules: readonly TelemetryRule[]) {
   const metrics: { rule: TelemetryRule; settings: MetricSettings }[] = [];
   const ai: { rule: TelemetryRule; settings: AiSettings }[] = [];
   const stopped: { rule: TelemetryRule; settings: StoppedSettings }[] = [];
+  const logLines: { rule: TelemetryRule; settings: LogLineSettings }[] = [];
   for (const rule of rules) {
     const settings = settingsOfRule(rule);
     if (isStopped(settings)) {
       stopped.push({ rule, settings });
+    } else if (isLogLines(settings)) {
+      logLines.push({ rule, settings });
     } else if (isAiRule(settings)) {
       ai.push({ rule, settings });
     } else if (isMetric(settings)) {
@@ -765,7 +807,7 @@ function stepsOf(rules: readonly TelemetryRule[]) {
       routes.set(settings.environment, group);
     }
   }
-  return { routes: [...routes], metrics, ai, stopped };
+  return { routes: [...routes], metrics, ai, stopped, logLines };
 }
 
 /**
@@ -814,7 +856,7 @@ export async function evaluateTelemetryPass(
       }
       // Measure budget with real time even when tests fix the evaluation clock.
       const reader = readerOf(projectId, Date.now() + budgetMs);
-      const { routes, metrics, ai, stopped } = stepsOf(projectRules);
+      const { routes, metrics, ai, stopped, logLines } = stepsOf(projectRules);
       const steps = [
         ...routes.map(([environment, group]) => ({
           rules: group.map((item) => item.rule),
@@ -852,6 +894,14 @@ export async function evaluateTelemetryPass(
           run: async () => {
             const at = now();
             const reading = await readStopped(reader, rule, settings, at);
+            return [{ rule, result: await judge(context, rule, settings, reading, at) }];
+          },
+        })),
+        ...logLines.map(({ rule, settings }) => ({
+          rules: [rule],
+          run: async () => {
+            const at = now();
+            const reading = await readLogLines(reader, rule, settings, at);
             return [{ rule, result: await judge(context, rule, settings, reading, at) }];
           },
         })),
@@ -919,6 +969,10 @@ export async function notSeenWarning(
     if (isStopped(settings)) {
       const seen = await arrivedCount(reader, projectId, settings, { from, to: now }, 1);
       return seen > 0 ? null : notSeen(stoppedNotSeenMessage(settings));
+    }
+    if (isLogLines(settings)) {
+      const seen = await logLinesSeen(reader, projectId, settings, { from, to: now });
+      return seen ? null : notSeen(logLinesNotSeenMessage(settings));
     }
     if (isAiRule(settings)) {
       const seen = await aiRuleSeen(reader, projectId, settings, from, now);

@@ -7,6 +7,13 @@ import { FINGERPRINT_PATTERN } from "../errors/fingerprint.ts";
 import type { EventType } from "../notifications/events.ts";
 import type { Problem } from "../outbound/url.ts";
 import { SERVICE_PATTERN } from "../telemetry/dashboard-query.ts";
+import {
+  MAX_SEARCH_LENGTH,
+  MAX_SEARCH_WORDS,
+  searchWords,
+  SEVERITIES,
+  type Severity,
+} from "../telemetry/logs.ts";
 import { METRIC_KINDS, type MetricKind } from "../telemetry/metrics.ts";
 import { MAX_KEY_CHARS, MAX_NAME_BYTES } from "../telemetry/normalize.ts";
 
@@ -28,6 +35,7 @@ export const RULE_KINDS = [
   "ai_latency",
   "events_stopped",
   "telemetry_stopped",
+  "log_lines",
 ] as const;
 
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -119,6 +127,12 @@ export const KIND_INFO: Record<
     fires: "data.stopped",
     resolves: "data.stopped_resolved",
   },
+  log_lines: {
+    label: "Log lines match",
+    source: "telemetry",
+    fires: "log.lines",
+    resolves: "log.lines_resolved",
+  },
 };
 
 /** The kinds the worker evaluates from spans and metrics (alerts/telemetry-rules.ts). */
@@ -186,6 +200,14 @@ export const DEFAULT_MIN_COUNT = 1;
 export const MAX_MIN_COUNT = 1_000_000;
 /** The longest event name collection takes (collection/routes.ts, EVENT_NAME_SCHEMA). */
 export const MAX_EVENT_NAME = 200;
+
+/** A log lines rule's window is the metric rule's, 5 to 60 minutes; 5 by default. */
+export const DEFAULT_LOG_WINDOW = 5;
+/** Fires above this many matching lines in the window; 0 is "any matching line". */
+export const DEFAULT_MAX_COUNT = 0;
+/** The severity a log lines rule counts from by default; null is any, as on the Logs page. */
+export const DEFAULT_LOG_SEVERITY: Severity = "error";
+const LOG_SEVERITIES = Object.keys(SEVERITIES).filter((key): key is Severity => key in SEVERITIES);
 
 /** Each kind's settings, as stored and answered. null: all (checks, environments, groups). */
 export interface CheckDownSettings {
@@ -283,6 +305,23 @@ export interface StoppedSettings {
   minCount: number;
 }
 
+/**
+ * A "log lines match" rule: the Logs page's filters (environment, service, minimum severity,
+ * words), counted by arrival over a window.
+ */
+export interface LogLineSettings {
+  environment: string;
+  /** One service's lines, or all (null). */
+  service: string | null;
+  /** The lowest severity counted; null: any, lines without one included. */
+  severity: Severity | null;
+  /** Words each line's body holds, matched as on the Logs page; null: any body. */
+  search: string | null;
+  windowMinutes: number;
+  /** Fires when more matching lines than this arrived in the window. */
+  maxCount: number;
+}
+
 export type RuleSettings =
   | CheckDownSettings
   | CertificateSettings
@@ -295,7 +334,8 @@ export type RuleSettings =
   | AiCostSettings
   | AiFailureSettings
   | AiLatencySettings
-  | StoppedSettings;
+  | StoppedSettings
+  | LogLineSettings;
 
 /** What the API takes as settings: every kind's fields, each optional. */
 export interface SettingsInput {
@@ -327,6 +367,9 @@ export interface SettingsInput {
   source?: string | undefined;
   eventName?: string | null | undefined;
   minCount?: number | undefined;
+  severity?: string | null | undefined;
+  search?: string | null | undefined;
+  maxCount?: number | undefined;
 }
 
 /** The fields Fastify's schema takes in `settings`, for every kind; settingsOf checks each kind's. */
@@ -367,6 +410,9 @@ export const SETTINGS_SCHEMA = {
     source: { type: "string", enum: [...DATA_SOURCES] },
     eventName: { ...EVENT_NAME_SCHEMA, type: ["string", "null"] },
     minCount: { type: "integer", minimum: 1, maximum: MAX_MIN_COUNT },
+    severity: { type: ["string", "null"], enum: [...LOG_SEVERITIES, null] },
+    search: { type: ["string", "null"], maxLength: MAX_SEARCH_LENGTH },
+    maxCount: { type: "integer", minimum: 0, maximum: MAX_MIN_COUNT },
   },
 } as const;
 
@@ -404,6 +450,7 @@ export function settingsOf(
   if (kind === "events_stopped" || kind === "telemetry_stopped") {
     return stoppedSettingsOf(kind, pick);
   }
+  if (kind === "log_lines") return logLineSettingsOf(pick);
   const windowMinutes = windowOf(pick("windowMinutes"));
   if (typeof windowMinutes !== "number") return windowMinutes;
   if (kind === "route_latency" || kind === "route_failures") {
@@ -430,8 +477,8 @@ export function settingsOf(
 type Picker = <K extends keyof SettingsInput>(key: K) => SettingsInput[K];
 
 /** A window from what was sent, 10 minutes by default; or the problem. */
-function windowOf(sent: number | undefined): number | Problem {
-  const windowMinutes = sent ?? DEFAULT_WINDOW_MINUTES;
+function windowOf(sent: number | undefined, fallback = DEFAULT_WINDOW_MINUTES): number | Problem {
+  const windowMinutes = sent ?? fallback;
   if (
     !Number.isInteger(windowMinutes) ||
     windowMinutes < MIN_WINDOW_MINUTES ||
@@ -650,6 +697,43 @@ function stoppedSettingsOf(
   return { ...settings, metric, host };
 }
 
+function logLineSettingsOf(pick: Picker): LogLineSettings | Problem {
+  const windowMinutes = windowOf(pick("windowMinutes"), DEFAULT_LOG_WINDOW);
+  if (typeof windowMinutes !== "number") return windowMinutes;
+  const sent = pick("severity");
+  const severity =
+    sent === undefined
+      ? DEFAULT_LOG_SEVERITY
+      : (LOG_SEVERITIES.find((item) => item === sent) ?? null);
+  if (sent !== undefined && sent !== null && severity === null) {
+    return { error: "invalid_severity", message: "Choose a severity the Logs page offers." };
+  }
+  // Text without words matches every line on the Logs page, so it is stored as none.
+  const search = optionalText(pick("search")?.trim());
+  const words = searchWords(search ?? "");
+  if (words.length > MAX_SEARCH_WORDS) {
+    return {
+      error: "invalid_search",
+      message: `Enter at most ${MAX_SEARCH_WORDS} words, as on the Logs page.`,
+    };
+  }
+  const maxCount = pick("maxCount") ?? DEFAULT_MAX_COUNT;
+  if (!Number.isInteger(maxCount) || maxCount < 0 || maxCount > MAX_MIN_COUNT) {
+    return {
+      error: "invalid_max_count",
+      message: `The number of lines is a whole number from 0 to ${MAX_MIN_COUNT.toLocaleString("en")}.`,
+    };
+  }
+  return {
+    environment: telemetryEnvironmentOf(pick("environment")),
+    service: optionalText(pick("service")),
+    severity,
+    search: words.length === 0 ? null : search,
+    windowMinutes,
+    maxCount,
+  };
+}
+
 /** An AI rule's environment, feature, and model; or the problem. */
 function aiScopeOf(pick: Picker): AiScope | Problem {
   // "" is the calls that name no feature, as the AI page's feature= is; null is all.
@@ -789,7 +873,20 @@ export function storedSettings(kind: RuleKind, value: unknown): RuleSettings {
   if (kind === "events_stopped" || kind === "telemetry_stopped") {
     return stoppedSettingsStored(kind, value);
   }
+  if (kind === "log_lines") return logLineSettingsStored(value);
   return spikeSettingsOf(value);
+}
+
+export function logLineSettingsStored(value: unknown): LogLineSettings {
+  const stored = storedRecord(value);
+  return {
+    environment: textOrNull(stored.environment) ?? DEFAULT_ENVIRONMENT,
+    service: textOrNull(stored.service),
+    severity: LOG_SEVERITIES.find((item) => item === stored.severity) ?? null,
+    search: textOrNull(stored.search),
+    windowMinutes: numberOr(stored.windowMinutes, DEFAULT_LOG_WINDOW),
+    maxCount: numberOr(stored.maxCount, DEFAULT_MAX_COUNT),
+  };
 }
 
 export function stoppedSettingsStored(

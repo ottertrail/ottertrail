@@ -124,8 +124,12 @@ function summaryOf(row: SummaryRow): LogSummary {
   };
 }
 
-/** Shared filters for search, chart, and live view. The live view supplies its own time window. */
-function filterConditions(
+/**
+ * Shared filters for search, chart, live view, and log lines alert rules (alerts/log-rules.ts), so
+ * a rule counts the lines the page shows. The live view and the rules supply their own time
+ * window after the project condition.
+ */
+export function filterConditions(
   params: QueryParams,
   scope: { projectId: string; environment: string; from?: Date; to?: Date },
   filters: Omit<LogFilters, "before">,

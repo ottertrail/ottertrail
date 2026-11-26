@@ -29,6 +29,8 @@ import {
   SPAN_ID_PATTERN,
   type TelemetryRange,
   telemetryRange,
+  TIME_WINDOW_PROPERTIES,
+  type TimeWindowQuery,
   TRACE_ID_PATTERN,
 } from "./dashboard-query.ts";
 import {
@@ -160,15 +162,18 @@ const MAX_UINT64 = 18_446_744_073_709_551_615n;
 
 const RANGE_QUERY = { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES };
 
-type LogsQuery = RangeQuery & {
-  service?: string;
-  severity?: Severity;
-  search?: string;
-  traceId?: string;
-  before?: string;
-};
+type LogsQuery = RangeQuery &
+  TimeWindowQuery & {
+    service?: string;
+    severity?: Severity;
+    search?: string;
+    traceId?: string;
+    before?: string;
+  };
 
-type LiveQuery = Omit<LogsQuery, "before" | "period" | "from" | "to"> & { after?: string };
+type LiveQuery = Omit<LogsQuery, "before" | "period" | "from" | "to" | "start" | "end"> & {
+  after?: string;
+};
 
 const LOG_FILTER_PROPERTIES = {
   service: { type: "string", pattern: SERVICE_PATTERN },
@@ -237,8 +242,10 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
   const keptDays = (request: { projectAccess: ProjectAccess | null }) =>
     effectiveTelemetryRetentionDays(accessOf(request).telemetryRetentionDays, maxRetentionDays);
 
-  const rangeOf = (request: { query: RangeQuery; projectAccess: ProjectAccess | null }) =>
-    telemetryRange(db, request.query, accessOf(request), now(), keptDays(request));
+  const rangeOf = (request: {
+    query: RangeQuery & TimeWindowQuery;
+    projectAccess: ProjectAccess | null;
+  }) => telemetryRange(db, request.query, accessOf(request), now(), keptDays(request));
 
   const BAD_CURSOR = { error: "invalid_cursor", message: "before is out of range." };
 
@@ -434,6 +441,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
           additionalProperties: false,
           properties: {
             ...RANGE_PROPERTIES,
+            ...TIME_WINDOW_PROPERTIES,
             ...LOG_FILTER_PROPERTIES,
             before: { type: "string", pattern: CURSOR_PATTERN },
           },
@@ -468,7 +476,7 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
         querystring: {
           type: "object",
           additionalProperties: false,
-          properties: { ...RANGE_PROPERTIES, ...LOG_FILTER_PROPERTIES },
+          properties: { ...RANGE_PROPERTIES, ...TIME_WINDOW_PROPERTIES, ...LOG_FILTER_PROPERTIES },
         },
       },
     },

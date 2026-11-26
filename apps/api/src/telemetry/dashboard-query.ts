@@ -22,17 +22,88 @@ export interface TelemetryRange {
   /** Clipped to the oldest retained time. */
   from: Date;
   to: Date;
+  /** A time window inside the days (`start` and `end`), as an alert's link opens the Logs page. */
+  narrowed?: boolean;
 }
 
-/** Clips requested days to `retentionDays` before `now`, using the instance timezone. */
+/** A time window the Logs page may open on: `start` and `end`, instants in UTC. */
+export interface TimeWindowQuery {
+  start?: string;
+  end?: string;
+}
+
+/** An ISO 8601 instant in UTC, as `Date.toISOString` writes it, the milliseconds optional. */
+export const INSTANT_PATTERN =
+  "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,3})?Z$";
+
+/** The longest time window: a day, well past an alert rule's longest window. */
+export const MAX_TIME_WINDOW_MS = 86_400_000;
+
+export const TIME_WINDOW_PROPERTIES = {
+  start: { type: "string", pattern: INSTANT_PATTERN },
+  end: { type: "string", pattern: INSTANT_PATTERN },
+} as const;
+
+const windowProblem = (message: string) => ({ problem: { error: "invalid_range", message } });
+
+/** A time window from `start` and `end`, both or neither; or the problem. */
+function timeWindowOf(
+  query: RangeQuery & TimeWindowQuery,
+): { start: Date; end: Date } | { problem: { error: string; message: string } } | null {
+  if (query.start === undefined && query.end === undefined) return null;
+  if (query.start === undefined || query.end === undefined) {
+    return windowProblem("Send both start and end.");
+  }
+  if (query.period !== undefined || query.from !== undefined || query.to !== undefined) {
+    return windowProblem("Send either start and end, or days, not both.");
+  }
+  const start = new Date(query.start);
+  const end = new Date(query.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return windowProblem("start and end must be real times.");
+  }
+  if (end <= start || end.getTime() - start.getTime() > MAX_TIME_WINDOW_MS) {
+    return windowProblem("end must be after start, and at most a day after it.");
+  }
+  return { start, end };
+}
+
+/**
+ * Clips requested days to `retentionDays` before `now`, using the instance timezone. A time
+ * window (`start` and `end`) takes the days it falls on and narrows them to itself.
+ */
 export async function telemetryRange(
   db: Kysely<Database>,
-  query: RangeQuery,
+  query: RangeQuery & TimeWindowQuery,
   access: { projectId: string; timeZone: string },
   now: Date,
   retentionDays: number,
 ): Promise<{ range: TelemetryRange } | { problem: { error: string; message: string } }> {
   const { projectId, timeZone } = access;
+  const window = timeWindowOf(query);
+  if (window !== null) {
+    if ("problem" in window) return window;
+    const dayOf = dayIn(timeZone);
+    const firstDay = dayOf(window.start);
+    // `end` is excluded: a window ending at midnight stays on the day before.
+    const lastDay = dayOf(new Date(window.end.getTime() - 1));
+    const days = await localDays(db, firstDay, lastDay, timeZone);
+    const kept = new Date(now.getTime() - retentionDays * 86_400_000);
+    const start = window.start < kept ? kept : window.start;
+    return {
+      range: {
+        projectId,
+        environment: environmentOf(query.environment),
+        timeZone,
+        firstDay,
+        lastDay,
+        dayStart: days.from,
+        from: start > window.end ? window.end : start,
+        to: window.end,
+        narrowed: true,
+      },
+    };
+  }
   const days = requestDays(query, dayIn(timeZone)(now));
   if ("problem" in days) return days;
   const { from, to } = await localDays(db, days.from, days.to, timeZone);
@@ -295,7 +366,7 @@ export interface ListChartBuckets {
  * them.
  */
 export function listChartBuckets(
-  range: Pick<TelemetryRange, "from" | "to" | "timeZone" | "firstDay" | "lastDay">,
+  range: Pick<TelemetryRange, "from" | "to" | "timeZone" | "firstDay" | "lastDay" | "narrowed">,
   now: Date,
 ): ListChartBuckets {
   const fromMs = range.from.getTime();
@@ -305,7 +376,11 @@ export function listChartBuckets(
     range.firstDay === range.lastDay
       ? wallClock(endMs, range.timeZone)
       : { day: addDays(range.lastDay, 1), minutes: 0 };
-  const spanMs = asUtc(end.day, end.minutes) - asUtc(range.firstDay, 0);
+  // A time window's step fits the window itself, not the days it falls on.
+  const spanMs =
+    range.narrowed === true
+      ? endMs - fromMs
+      : asUtc(end.day, end.minutes) - asUtc(range.firstDay, 0);
   const step =
     LIST_CHART_STEPS.find(
       (seconds) => Math.ceil(spanMs / (seconds * 1000)) <= LIST_CHART_BUCKETS,

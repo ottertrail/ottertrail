@@ -25,7 +25,7 @@ import type { StoppedSettings } from "./kinds.ts";
 /** Telemetry that arrives later than this after its own time is not counted. */
 export const TELEMETRY_LATE_MS = 3_600_000;
 /** How far ahead of the server's clock OTLP takes a record's time (telemetry/normalize.ts). */
-const TELEMETRY_AHEAD_MS = 3_600_000;
+export const TELEMETRY_AHEAD_MS = 3_600_000;
 
 export const isStopped = (settings: object): settings is StoppedSettings => "minCount" in settings;
 

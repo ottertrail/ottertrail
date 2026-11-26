@@ -28,6 +28,8 @@ export const EVENT_TYPES = [
   "ai.latency_resolved",
   "data.stopped",
   "data.stopped_resolved",
+  "log.lines",
+  "log.lines_resolved",
   "alert.held_back",
   "storage.low",
   "storage.recovered",
