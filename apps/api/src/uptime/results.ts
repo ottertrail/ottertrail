@@ -7,7 +7,7 @@ import {
   queryRows,
   type Reader,
 } from "../clickhouse/query.ts";
-import type { CheckCause } from "../db/schema.ts";
+import type { RequestCause } from "../db/schema.ts";
 import { DASHBOARD_SETTINGS } from "../telemetry/dashboard-query.ts";
 import type { Buckets } from "../telemetry/metrics.ts";
 import type { CheckOutcome } from "./request.ts";
@@ -111,7 +111,7 @@ export interface Failure {
   at: Date;
   statusCode: number | null;
   responseMs: number;
-  cause: CheckCause;
+  cause: RequestCause;
   detail: string;
 }
 
@@ -129,7 +129,7 @@ export async function latestFailures(
     timestamp: string;
     status_code: number;
     response_ms: number;
-    cause: CheckCause;
+    cause: RequestCause;
     detail: string;
   }>(
     reader,

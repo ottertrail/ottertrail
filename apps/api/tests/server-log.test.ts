@@ -200,6 +200,8 @@ describe("masking", () => {
       "/api/auth/reset-password/AbCdEf123?callbackURL=/x",
       "/api/auth/reset-password/…?callbackURL=/x",
     ],
+    // A heartbeat's ping URL holds its token.
+    ["/api/heartbeats/AbCdEf_-0123456789abcdef01234567/fail", "/api/heartbeats/…/fail"],
     [
       "/api/auth/verify-email?token=eyJhbGci&callbackURL=/",
       "/api/auth/verify-email?token=…&callbackURL=/",

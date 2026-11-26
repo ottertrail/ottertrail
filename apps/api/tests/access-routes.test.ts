@@ -50,6 +50,12 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/heatmap-overlay/session",
   "OPTIONS /api/heatmap-overlay/:projectId/heatmap",
   "OPTIONS /api/heatmap-overlay/:projectId/snapshot",
+  // A heartbeat's ping: its token is the capability, and reaches its own
+  // check only. Limited per client address and per heartbeat (docs/access.md).
+  "GET /api/heartbeats/:token",
+  "POST /api/heartbeats/:token",
+  "GET /api/heartbeats/:token/fail",
+  "POST /api/heartbeats/:token/fail",
 ]);
 
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
@@ -219,6 +225,9 @@ const EXPECTED: Record<string, string> = {
   "DELETE /api/projects/:id/checks/:checkId": "uptime_alerts:manage",
   "GET /api/projects/:id/checks/:checkId/results": "uptime_alerts:view",
   "GET /api/projects/:id/checks/:checkId/incidents": "uptime_alerts:view",
+  "GET /api/projects/:id/checks/:checkId/pings": "uptime_alerts:view",
+  "GET /api/projects/:id/checks/:checkId/ping-url": "uptime_alerts:manage",
+  "POST /api/projects/:id/checks/:checkId/ping-url": "uptime_alerts:manage",
   "GET /api/projects/:id/alert-rules": "uptime_alerts:view",
   "POST /api/projects/:id/alert-rules": "uptime_alerts:manage",
   "GET /api/projects/:id/alert-rules/:ruleId": "uptime_alerts:view",

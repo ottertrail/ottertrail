@@ -86,6 +86,7 @@ export async function evaluateCheckDown(
       "p.id as project_id",
       "p.name as project_name",
       "c.id as check_id",
+      "c.kind",
       "c.name",
       "c.url",
       "c.state",
@@ -108,7 +109,12 @@ export async function evaluateCheckDown(
   const rows = await query.orderBy("r.id").orderBy("c.id").execute();
   const counts = counted();
   for (const row of rows) {
+    // A heartbeat has no URL; its ping URL is a secret and never goes in a message.
     const subject = { type: "check", id: row.check_id, name: row.name, url: row.url };
+    const named =
+      row.kind === "heartbeat"
+        ? `the heartbeat "${row.name}"`
+        : `the check "${row.name}" (${row.url ?? ""})`;
     const url = checkLink(context, row.project_id, row.check_id);
     const outcome =
       row.state === "down"
@@ -118,7 +124,7 @@ export async function evaluateCheckDown(
             subjectKey: row.check_id,
             subjectName: row.name,
             type: "check.down",
-            message: `${row.project_name}: the check "${row.name}" (${row.url}) is down.${row.failing_detail === null || row.failing_detail === "" ? "" : ` ${row.failing_detail}`}`,
+            message: `${row.project_name}: ${named} is down.${row.failing_detail === null || row.failing_detail === "" ? "" : ` ${row.failing_detail}`}`,
             url,
             subject,
             at,
@@ -131,8 +137,10 @@ export async function evaluateCheckDown(
             type: "check.up",
             message:
               row.state === "up"
-                ? `${row.project_name}: the check "${row.name}" (${row.url}) is up again${row.incident_started === null ? "" : `, after ${minutesText((row.incident_ended ?? at).getTime() - row.incident_started.getTime())} down`}.`
-                : `${row.project_name}: the check "${row.name}" (${row.url}) is no longer down: it was paused, or its URL changed.`,
+                ? `${row.project_name}: ${named} is up again${row.incident_started === null ? "" : `, after ${minutesText((row.incident_ended ?? at).getTime() - row.incident_started.getTime())} down`}.`
+                : row.kind === "heartbeat"
+                  ? `${row.project_name}: ${named} is no longer down: it was paused.`
+                  : `${row.project_name}: ${named} is no longer down: it was paused, or its URL changed.`,
             url,
             subject,
             at,
@@ -181,7 +189,9 @@ export async function evaluateCertificates(
       "s.key",
     ])
     .where("r.enabled", "=", true)
-    .where("r.kind", "=", "certificate_expiring");
+    .where("r.kind", "=", "certificate_expiring")
+    // Only an HTTP check has a certificate.
+    .where("c.kind", "=", "http");
   if (scope.projectId !== undefined) query = query.where("r.project_id", "=", scope.projectId);
   if (scope.checkId !== undefined) query = query.where("c.id", "=", scope.checkId);
   const rows = await query.orderBy("r.id").orderBy("c.id").execute();
@@ -191,7 +201,7 @@ export async function evaluateCertificates(
     const expires = row.paused ? null : row.tls_expires_at;
     const expiring = expires !== null && expires.getTime() - at.getTime() <= days * DAY_MS;
     const firing = row.firing === true;
-    const host = URL.parse(row.url)?.hostname ?? row.url;
+    const host = URL.parse(row.url ?? "")?.hostname ?? row.url;
     const url = checkLink(context, row.project_id, row.check_id);
     const subject = {
       type: "certificate",

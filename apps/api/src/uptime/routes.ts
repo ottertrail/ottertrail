@@ -40,6 +40,18 @@ import {
   uptimes,
   valuesOfCheck,
 } from "./checks.ts";
+import {
+  createHeartbeat,
+  HEARTBEAT_GRACES,
+  type HeartbeatInput,
+  heartbeatValuesOf,
+  HEARTBEAT_PERIODS,
+  pingTokenOf,
+  recentPings,
+  replacePingToken,
+  updateHeartbeat,
+  valuesOfHeartbeat,
+} from "./heartbeats.ts";
 import { latestFailures, RESULT_RETENTION_DAYS, responseChart } from "./results.ts";
 import { MAX_STATUS_PARTS } from "./statuses.ts";
 
@@ -67,7 +79,9 @@ const CHECK_FIELDS = {
   name: { type: "string", maxLength: MAX_NAME * 2 },
   url: { type: "string", maxLength: MAX_URL * 2 },
   method: { type: "string", enum: ["GET", "HEAD"] },
-  intervalSeconds: { type: "integer", enum: [...INTERVALS] },
+  // An HTTP check's or a heartbeat's; checkValuesOf and heartbeatValuesOf check which.
+  intervalSeconds: { type: "integer", enum: [...new Set([...INTERVALS, ...HEARTBEAT_PERIODS])] },
+  graceSeconds: { type: "integer", enum: [...HEARTBEAT_GRACES] },
   timeoutSeconds: { type: "integer", minimum: 1, maximum: MAX_TIMEOUT },
   expectedStatuses: { type: "string", maxLength: MAX_STATUS_PARTS * 10 },
   // null, as JSON sends "no word", arrives as "": Fastify coerces it to a string.
@@ -103,6 +117,37 @@ const NO_CHECK: Problem = {
   message: "The project has no check with this ID.",
 };
 
+const NO_HEARTBEAT: Problem = {
+  error: "check_not_found",
+  message: "The project has no heartbeat with this ID.",
+};
+
+type Fields = CheckInput & HeartbeatInput;
+
+const HTTP_ONLY = [
+  "url",
+  "method",
+  "timeoutSeconds",
+  "expectedStatuses",
+  "word",
+  "wordMode",
+  "failuresBeforeDown",
+] as const;
+
+/** A field of the other kind refuses the request, so nothing sent is silently dropped. */
+function wrongFields(kind: "http" | "heartbeat", body: Fields): Problem | null {
+  if (kind === "heartbeat" && HTTP_ONLY.some((field) => body[field] !== undefined)) {
+    return {
+      error: "invalid_field",
+      message: "A heartbeat has no URL, method, timeout, status codes, word, or failures.",
+    };
+  }
+  if (kind === "http" && body.graceSeconds !== undefined) {
+    return { error: "invalid_field", message: "Only a heartbeat has a grace time." };
+  }
+  return null;
+}
+
 /**
  * Uptime routes (docs/uptime-alerts.md). requireProjectAccess scopes every route; changes
  * require the dashboard's origin. Read response times and failures from ClickHouse with
@@ -113,6 +158,8 @@ export const uptimeRoutes: FastifyPluginCallback<{
   clickhouse: ClickHouseClient;
   auth: Auth;
   trustedOrigins: readonly string[];
+  /** The instance's address, which heartbeats' ping URLs start with. */
+  publicUrl: string;
   /** UPTIME_ALLOW_PRIVATE_ADDRESSES, checked when a check is saved, as the worker checks it. */
   policy: AddressPolicy;
   /** Resolves a check's host when it is saved; tests pass a fake. */
@@ -127,6 +174,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
     clickhouse,
     auth,
     trustedOrigins,
+    publicUrl,
     policy,
     lookup = systemLookup,
     now = () => new Date(),
@@ -196,7 +244,7 @@ export const uptimeRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.post<{ Params: { id: string }; Body: CheckInput }>(
+  app.post<{ Params: { id: string }; Body: Fields & { kind?: "http" | "heartbeat" } }>(
     "/projects/:id/checks",
     {
       preHandler: [fromDashboard, signedIn, canManage],
@@ -204,19 +252,28 @@ export const uptimeRoutes: FastifyPluginCallback<{
         params: PARAMS,
         body: {
           type: "object",
-          required: ["url"],
           additionalProperties: false,
-          properties: CHECK_FIELDS,
+          properties: { ...CHECK_FIELDS, kind: { type: "string", enum: ["http", "heartbeat"] } },
         },
       },
     },
     async (request, reply) => {
       const { projectId } = accessOf(request);
-      const values = checkValuesOf(request.body);
-      if ("error" in values) return reply.code(400).send(values);
-      const refused = await addressProblem(values.url, request.log);
-      if (refused !== null) return reply.code(400).send(refused);
-      const created = await createCheck(db, projectId, values, now());
+      const { kind = "http", ...body } = request.body;
+      const wrong = wrongFields(kind, body);
+      if (wrong !== null) return reply.code(400).send(wrong);
+      let created: Awaited<ReturnType<typeof createCheck>>;
+      if (kind === "heartbeat") {
+        const values = heartbeatValuesOf(body);
+        if ("error" in values) return reply.code(400).send(values);
+        created = await createHeartbeat(db, projectId, values, now());
+      } else {
+        const values = checkValuesOf(body);
+        if ("error" in values) return reply.code(400).send(values);
+        const refused = await addressProblem(values.url, request.log);
+        if (refused !== null) return reply.code(400).send(refused);
+        created = await createCheck(db, projectId, values, now());
+      }
       if ("refused" in created) {
         return reply.code(409).send({
           error: "too_many_checks",
@@ -240,7 +297,47 @@ export const uptimeRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.patch<{ Params: { id: string; checkId: string }; Body: CheckInput & { paused?: boolean } }>(
+  /** A heartbeat's latest pings: when, and whether each reported a failure. */
+  app.get<{ Params: { id: string; checkId: string } }>(
+    "/projects/:id/checks/:checkId/pings",
+    { preHandler: [signedIn, canView], schema: { params: CHECK_PARAMS } },
+    async (request, reply) => {
+      const { projectId, timeZone } = accessOf(request);
+      const check = await findCheck(db, projectId, request.params.checkId);
+      if (check?.kind !== "heartbeat") return reply.code(404).send(NO_HEARTBEAT);
+      return { timeZone, pings: await recentPings(db, projectId, check.id) };
+    },
+  );
+
+  /** The ping URL holds the heartbeat's token: only those who manage checks see it. */
+  const pingUrlOf = (token: string) => new URL(`/api/heartbeats/${token}`, publicUrl).href;
+
+  app.get<{ Params: { id: string; checkId: string } }>(
+    "/projects/:id/checks/:checkId/ping-url",
+    { preHandler: [signedIn, canManage], schema: { params: CHECK_PARAMS } },
+    async (request, reply) => {
+      const token = await pingTokenOf(db, accessOf(request).projectId, request.params.checkId);
+      if (token === null) return reply.code(404).send(NO_HEARTBEAT);
+      return reply.header("cache-control", "no-store").send({ url: pingUrlOf(token) });
+    },
+  );
+
+  app.post<{ Params: { id: string; checkId: string } }>(
+    "/projects/:id/checks/:checkId/ping-url",
+    { preHandler: [fromDashboard, signedIn, canManage], schema: { params: CHECK_PARAMS } },
+    async (request, reply) => {
+      const token = await replacePingToken(
+        db,
+        accessOf(request).projectId,
+        request.params.checkId,
+        now(),
+      );
+      if (token === null) return reply.code(404).send(NO_HEARTBEAT);
+      return reply.header("cache-control", "no-store").send({ url: pingUrlOf(token) });
+    },
+  );
+
+  app.patch<{ Params: { id: string; checkId: string }; Body: Fields & { paused?: boolean } }>(
     "/projects/:id/checks/:checkId",
     {
       preHandler: [fromDashboard, signedIn, canManage],
@@ -259,13 +356,22 @@ export const uptimeRoutes: FastifyPluginCallback<{
       const current = await findCheck(db, projectId, request.params.checkId);
       if (current === null) return reply.code(404).send(NO_CHECK);
       const { paused, ...input } = request.body;
-      const values = checkValuesOf(input, valuesOfCheck(current));
-      if ("error" in values) return reply.code(400).send(values);
-      if (values.url !== current.url) {
-        const refused = await addressProblem(values.url, request.log);
-        if (refused !== null) return reply.code(400).send(refused);
+      const wrong = wrongFields(current.kind, input);
+      if (wrong !== null) return reply.code(400).send(wrong);
+      let updated: Check | null;
+      if (current.kind === "heartbeat") {
+        const values = heartbeatValuesOf(input, valuesOfHeartbeat(current));
+        if ("error" in values) return reply.code(400).send(values);
+        updated = await updateHeartbeat(db, projectId, current.id, values, paused, now());
+      } else {
+        const values = checkValuesOf(input, valuesOfCheck(current));
+        if ("error" in values) return reply.code(400).send(values);
+        if (values.url !== current.url) {
+          const refused = await addressProblem(values.url, request.log);
+          if (refused !== null) return reply.code(400).send(refused);
+        }
+        updated = await updateCheck(db, projectId, current.id, values, paused, now());
       }
-      const updated = await updateCheck(db, projectId, current.id, values, paused, now());
       if (updated === null) return reply.code(404).send(NO_CHECK);
       const [check] = await withUptime(projectId, [updated]);
       return { check };

@@ -12,6 +12,7 @@ import { aiCallListRoutes } from "./ai/call-routes.ts";
 import { type AiCallIngestOptions, aiCallIngestRoutes } from "./ai/ingest-routes.ts";
 import { aiModelRoutes } from "./ai/model-routes.ts";
 import { aiRoutes } from "./ai/routes.ts";
+import { evaluateCheckDown } from "./alerts/check-rules.ts";
 import { alertRoutes } from "./alerts/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { passwordTryLimiter } from "./auth/password-tries.ts";
@@ -69,6 +70,7 @@ import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { SecretKeyLookups } from "./telemetry/key-lookups.ts";
 import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telemetry/routes.ts";
 import { trackerScriptRoutes } from "./tracker-script/routes.ts";
+import { heartbeatRoutes } from "./uptime/heartbeat-routes.ts";
 import { uptimeRoutes } from "./uptime/routes.ts";
 import { validationMessage } from "./validation-message.ts";
 
@@ -194,6 +196,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * resolver that checks a URL's host when a check is saved (tests fake it).
    */
   uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
+  /** Heartbeat pings' limits per client address and per heartbeat (uptime/heartbeat-routes.ts), which tests lower. */
+  heartbeats?: { ipLimit?: RateLimit; checkLimit?: RateLimit };
   /**
    * Email (docs/uptime-alerts.md, "Where alerts go"; docs/access.md,
    * "Account email"): whether SMTP_URL is set, which the dashboard shows
@@ -304,6 +308,7 @@ export function buildApp({
   telemetry = {},
   aiCalls = {},
   uptime = {},
+  heartbeats = {},
   notifications = {},
   storage = {},
   backups = {},
@@ -654,10 +659,31 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
       policy,
       limiter,
       ...(uptime.lookup === undefined ? {} : { lookup: uptime.lookup }),
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    // Public: a heartbeat's token is its capability (docs/access.md).
+    const alertContext = {
+      db,
+      publicUrl: dashboard.publicUrl,
+      log: (level: "info" | "error", msg: string, fields?: Record<string, unknown>) =>
+        app.log[level](fields ?? {}, msg),
+    };
+    app.register(heartbeatRoutes, {
+      prefix: "/api",
+      db,
+      ...heartbeats,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+      onStateChange: async (change) => {
+        await evaluateCheckDown(
+          alertContext,
+          { projectId: change.projectId, checkId: change.checkId },
+          change.at,
+        );
+      },
     });
     app.register(alertRoutes, {
       prefix: "/api",

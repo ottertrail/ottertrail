@@ -111,7 +111,7 @@ export interface UserDeletionsTable {
 }
 
 /** Why a check's request failed (uptime/request.ts). */
-export type CheckCause =
+export type RequestCause =
   | "timeout"
   | "refused"
   | "connection"
@@ -122,21 +122,39 @@ export type CheckCause =
   | "redirects"
   | "address";
 
-/** A project's HTTP(S) uptime check, and its state (docs/uptime-alerts.md). */
+/**
+ * Why a check failed: a request's cause, or a heartbeat's (uptime/heartbeats.ts):
+ * no ping in time, or the job reported a failure.
+ */
+export type CheckCause = RequestCause | "no_ping" | "job_failed";
+
+/**
+ * A project's uptime check, and its state (docs/uptime-alerts.md): an
+ * HTTP(S) request the worker makes, or a heartbeat a job pings. The
+ * request's columns are null for a heartbeat; the grace and the token are
+ * null for an HTTP check (migration 0032).
+ */
 export interface UptimeChecksTable {
   id: ColumnType<string, string | undefined, never>;
   project_id: ColumnType<string, string, never>;
+  kind: ColumnType<"http" | "heartbeat", "http" | "heartbeat" | undefined, never>;
   name: string;
-  url: string;
-  method: "GET" | "HEAD";
+  url: Nullable<string>;
+  method: Nullable<"GET" | "HEAD">;
+  /** How often an HTTP check runs, or a heartbeat's period. */
   interval_seconds: number;
-  timeout_seconds: number;
+  timeout_seconds: Nullable<number>;
   /** Status codes that count as up, such as "200-399" or "200,204,300-302" (uptime/checks.ts). */
-  expected_statuses: string;
+  expected_statuses: Nullable<string>;
   /** A word the body must hold (word_mode present) or must not (absent); null for none. */
   word: Nullable<string>;
-  word_mode: "present" | "absent";
-  failures_before_down: number;
+  word_mode: ColumnType<"present" | "absent", "present" | "absent" | undefined>;
+  failures_before_down: Nullable<number>;
+  /** A heartbeat's time allowed after its period. */
+  grace_seconds: Nullable<number>;
+  /** A heartbeat's ping URL secret, and its SHA-256, which pings look it up by. */
+  ping_token: Nullable<string>;
+  ping_token_hash: Nullable<Buffer>;
   paused: ColumnType<boolean, boolean | undefined, boolean>;
   state: ColumnType<"pending" | "up" | "down", "pending" | "up" | "down" | undefined>;
   consecutive_failures: ColumnType<number, number | undefined, number>;
@@ -155,6 +173,15 @@ export interface UptimeChecksTable {
   url_changed_at: Nullable<Date>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** A heartbeat's ping: when, and whether it reported a failure. Never its body. */
+export interface HeartbeatPingsTable {
+  id: ColumnType<string, never, never>;
+  check_id: ColumnType<string, string, never>;
+  project_id: ColumnType<string, string, never>;
+  at: Date;
+  failed: boolean;
 }
 
 /** One time a check was down: open (ended_at null) while it still is. */
@@ -807,6 +834,7 @@ export interface Database {
   saved_funnels: SavedFunnelsTable;
   uptime_checks: UptimeChecksTable;
   uptime_incidents: UptimeIncidentsTable;
+  heartbeat_pings: HeartbeatPingsTable;
   notification_channels: NotificationChannelsTable;
   notification_deliveries: NotificationDeliveriesTable;
   alert_rules: AlertRulesTable;

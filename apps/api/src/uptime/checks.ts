@@ -1,4 +1,4 @@
-import { type Kysely, type Selectable, sql, type Transaction } from "kysely";
+import { type Insertable, type Kysely, type Selectable, sql, type Transaction } from "kysely";
 
 import { forgetCheck } from "../alerts/rules.ts";
 import type { CheckCause, Database, UptimeChecksTable } from "../db/schema.ts";
@@ -29,23 +29,40 @@ export const MAX_FIRST_RUN_DELAY_SECONDS = 300;
 
 export type CheckState = "pending" | "up" | "down";
 
+/** An HTTP(S) request the worker makes, or a heartbeat a job pings (heartbeats.ts). */
+export type CheckKind = "http" | "heartbeat";
+
+/**
+ * A check as the API answers it. The request's fields are null for a
+ * heartbeat, and graceSeconds and expectedAt for an HTTP check. A
+ * heartbeat's ping URL is never here: it has its own route.
+ */
 export interface Check {
   id: string;
+  kind: CheckKind;
   name: string;
-  url: string;
-  method: "GET" | "HEAD";
+  url: string | null;
+  method: "GET" | "HEAD" | null;
+  /** How often an HTTP check runs, or a heartbeat's period. */
   intervalSeconds: number;
-  timeoutSeconds: number;
-  expectedStatuses: string;
+  timeoutSeconds: number | null;
+  expectedStatuses: string | null;
   word: string | null;
   wordMode: "present" | "absent";
-  failuresBeforeDown: number;
+  failuresBeforeDown: number | null;
+  graceSeconds: number | null;
+  /**
+   * When a heartbeat's next ping is expected: down when none came by this
+   * time plus the grace. null for an HTTP check, and while paused.
+   */
+  expectedAt: Date | null;
   paused: boolean;
   state: CheckState;
   consecutiveFailures: number;
   /** Since when the current run of failures has lasted, and its first cause. */
   failingSince: Date | null;
   failingCause: CheckCause | null;
+  /** An HTTP check's latest run, or a heartbeat's latest ping. */
   lastCheckedAt: Date | null;
   lastUp: boolean | null;
   lastStatusCode: number | null;
@@ -61,6 +78,7 @@ export type CheckRow = Selectable<UptimeChecksTable>;
 export function checkOf(row: CheckRow): Check {
   return {
     id: row.id,
+    kind: row.kind,
     name: row.name,
     url: row.url,
     method: row.method,
@@ -70,6 +88,11 @@ export function checkOf(row: CheckRow): Check {
     word: row.word,
     wordMode: row.word_mode,
     failuresBeforeDown: row.failures_before_down,
+    graceSeconds: row.grace_seconds,
+    expectedAt:
+      row.kind === "heartbeat" && !row.paused && row.grace_seconds !== null
+        ? new Date(row.next_due_at.getTime() - row.grace_seconds * 1000)
+        : null,
     paused: row.paused,
     state: row.state,
     consecutiveFailures: row.consecutive_failures,
@@ -197,16 +220,17 @@ export function checkValuesOf(input: CheckInput, base?: CheckValues): CheckValue
   };
 }
 
+/** An HTTP check's values, as a change starts from. */
 const valuesOfCheck = (check: Check): CheckValues => ({
   name: check.name,
-  url: check.url,
-  method: check.method,
+  url: check.url ?? "",
+  method: check.method ?? "GET",
   intervalSeconds: check.intervalSeconds,
-  timeoutSeconds: check.timeoutSeconds,
-  expectedStatuses: check.expectedStatuses,
+  timeoutSeconds: check.timeoutSeconds ?? DEFAULT_TIMEOUT,
+  expectedStatuses: check.expectedStatuses ?? DEFAULT_STATUSES,
   word: check.word,
   wordMode: check.wordMode,
-  failuresBeforeDown: check.failuresBeforeDown,
+  failuresBeforeDown: check.failuresBeforeDown ?? DEFAULT_FAILURES_BEFORE_DOWN,
 });
 
 export { valuesOfCheck };
@@ -255,12 +279,26 @@ export async function findCheck(
   return row === undefined ? null : checkOf(row);
 }
 
-/** Adds a check, due at a random moment soon; or refuses when the project has MAX_CHECKS. */
+/** Adds an HTTP check, due at a random moment soon; or refuses when the project has MAX_CHECKS. */
 export async function createCheck(
   db: Kysely<Database>,
   projectId: string,
   values: CheckValues,
   now: Date,
+): Promise<{ check: Check } | { refused: "too_many" }> {
+  return addCheck(db, projectId, {
+    ...columnsOf(values),
+    next_due_at: firstRunAt(now, values.intervalSeconds),
+    created_at: now,
+    updated_at: now,
+  });
+}
+
+/** Adds a check of either kind, or refuses when the project has MAX_CHECKS. */
+export async function addCheck(
+  db: Kysely<Database>,
+  projectId: string,
+  columns: Omit<Insertable<UptimeChecksTable>, "project_id">,
 ): Promise<{ check: Check } | { refused: "too_many" }> {
   return db.transaction().execute(async (trx) => {
     // Serialize additions per project so concurrent saves cannot exceed the check cap.
@@ -278,20 +316,14 @@ export async function createCheck(
     if (Number(count) >= MAX_CHECKS) return { refused: "too_many" as const };
     const row = await trx
       .insertInto("uptime_checks")
-      .values({
-        project_id: projectId,
-        ...columnsOf(values),
-        next_due_at: firstRunAt(now, values.intervalSeconds),
-        created_at: now,
-        updated_at: now,
-      })
+      .values({ project_id: projectId, ...columns })
       .returningAll()
       .executeTakeFirstOrThrow();
     return { check: checkOf(row) };
   });
 }
 
-async function closeIncident(trx: Transaction<Database>, checkId: string, at: Date) {
+export async function closeIncident(trx: Transaction<Database>, checkId: string, at: Date) {
   return trx
     .updateTable("uptime_incidents")
     .set({ ended_at: at })
@@ -302,7 +334,7 @@ async function closeIncident(trx: Transaction<Database>, checkId: string, at: Da
 }
 
 /**
- * Pausing or changing URL silently ends incidents and resets state to pending. A URL change
+ * Changes an HTTP check. Pausing or changing URL silently ends incidents and resets state to pending. A URL change
  * also clears its certificate and invalidates old in-flight results (recordOutcome). Resuming
  * or changing interval schedules a jittered run.
  */
@@ -320,6 +352,7 @@ export async function updateCheck(
       .selectAll()
       .where("project_id", "=", projectId)
       .where("id", "=", checkId)
+      .where("kind", "=", "http")
       .forUpdate()
       .executeTakeFirst();
     if (row === undefined) return null;
@@ -375,20 +408,15 @@ export async function deleteCheck(
   });
 }
 
+/** An HTTP check taken to run: its request's columns are never null. */
 export type DueCheck = Pick<
   CheckRow,
-  | "id"
-  | "project_id"
-  | "url"
-  | "method"
-  | "interval_seconds"
-  | "timeout_seconds"
-  | "expected_statuses"
-  | "word"
-  | "word_mode"
-  | "next_due_at"
-  | "tls_expires_at"
+  "id" | "project_id" | "interval_seconds" | "word" | "word_mode" | "next_due_at" | "tls_expires_at"
 > & {
+  url: string;
+  method: "GET" | "HEAD";
+  timeout_seconds: number;
+  expected_statuses: string;
   /** When it was due, before it was moved on. */
   due_at: Date;
   /** When it was taken, by PostgreSQL's clock. */
@@ -422,13 +450,13 @@ export async function takeDueChecks(
   await sql`
     update uptime_checks
     set next_due_at = ${at} + make_interval(secs => interval_seconds)
-    where next_due_at > ${at} + make_interval(secs => interval_seconds)
+    where kind = 'http' and next_due_at > ${at} + make_interval(secs => interval_seconds)
   `.execute(db);
   const busy = [...running].filter(([, count]) => count > 0);
   const { rows } = await sql<DueCheck>`
     with candidates as (
       select id, project_id, next_due_at from uptime_checks
-      where not paused and next_due_at <= ${at}
+      where not paused and kind = 'http' and next_due_at <= ${at}
       order by next_due_at
       limit ${DUE_CANDIDATES}
       for update skip locked
@@ -496,7 +524,7 @@ export async function recordOutcome(
       .where("id", "=", checkId)
       .forUpdate()
       .executeTakeFirst();
-    if (row === undefined || row.paused) return null;
+    if (row === undefined || row.paused || row.kind !== "http") return null;
     // A run that started before the latest recorded one, or before the URL
     // changed, is out of date: two overlapping runs never record out of order.
     if (
@@ -543,7 +571,9 @@ export async function recordOutcome(
     const since = row.failing_since ?? at;
     const cause = row.failing_cause ?? outcome.cause ?? "connection";
     const detail = row.failing_detail ?? outcome.detail;
-    const goesDown = failures >= row.failures_before_down && row.state !== "down";
+    const goesDown =
+      failures >= (row.failures_before_down ?? DEFAULT_FAILURES_BEFORE_DOWN) &&
+      row.state !== "down";
     await trx
       .updateTable("uptime_checks")
       .set({

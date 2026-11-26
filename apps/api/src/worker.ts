@@ -40,7 +40,7 @@ import { probeOpenAdminApi } from "./storage/garage-admin.ts";
 import { s3ObjectStore } from "./storage/object-store.ts";
 import { storageSourcesOf } from "./storage/usage.ts";
 import { STORAGE_CHECK_INTERVAL_MS, StorageWarningJob } from "./storage/warning-job.ts";
-import { CHECK_TICK_MS, CheckScheduler } from "./uptime/scheduler.ts";
+import { CHECK_TICK_MS, CheckScheduler, HEARTBEAT_TICK_MS } from "./uptime/scheduler.ts";
 import { OTTERTRAIL_VERSION } from "./version.ts";
 
 /** Expired events can wait this long for retention and disk cleanup. */
@@ -236,6 +236,22 @@ const stopChecks = every(CHECK_TICK_MS, async () => {
   } catch (error) {
     if (!checksFailing) log("error", "taking due uptime checks failed", { err: String(error) });
     checksFailing = true;
+  }
+});
+
+/** Log an outage once until recovery. */
+let heartbeatsFailing = false;
+
+const stopHeartbeats = every(HEARTBEAT_TICK_MS, async () => {
+  try {
+    await checks.watchHeartbeats();
+    if (heartbeatsFailing) log("info", "looking for overdue heartbeats works again");
+    heartbeatsFailing = false;
+  } catch (error) {
+    if (!heartbeatsFailing) {
+      log("error", "looking for overdue heartbeats failed", { err: String(error) });
+    }
+    heartbeatsFailing = true;
   }
 });
 
@@ -455,6 +471,7 @@ async function shutdown(signal: NodeJS.Signals) {
     stopReplays(),
     stopLinking(),
     stopChecks(),
+    stopHeartbeats(),
     stopAlerts(),
     stopTelemetryAlerts(),
     stopDeliveries(),

@@ -4,7 +4,7 @@ import https from "node:https";
 import type { LookupFunction } from "node:net";
 import { TLSSocket } from "node:tls";
 
-import type { CheckCause } from "../db/schema.ts";
+import type { RequestCause } from "../db/schema.ts";
 import { AddressNotAllowedError, NoAddressError, type ResolvedAddress } from "./addresses.ts";
 
 /**
@@ -13,7 +13,7 @@ import { AddressNotAllowedError, NoAddressError, type ResolvedAddress } from "./
  * (addresses.ts).
  */
 
-export type FailureCause = Exclude<CheckCause, "status" | "word" | "redirects">;
+export type FailureCause = Exclude<RequestCause, "status" | "word" | "redirects">;
 
 const DNS_CODES = new Set([
   "ENOTFOUND",

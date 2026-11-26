@@ -39,6 +39,7 @@ export async function signedInDashboard({
   replayPlayerPath,
   telemetry,
   uptime,
+  heartbeats,
   notifications,
   locationData,
   storage,
@@ -70,6 +71,8 @@ export async function signedInDashboard({
   telemetry?: AppOptions["telemetry"];
   /** Uptime checks' address rules and resolver (tests/uptime.test.ts). */
   uptime?: AppOptions["uptime"];
+  /** Heartbeat pings' limits (tests/heartbeats.test.ts). */
+  heartbeats?: AppOptions["heartbeats"];
   /** Whether email is set up, for notification channels (tests/channels.test.ts). */
   notifications?: AppOptions["notifications"];
   /** The location data the API has loaded, for the Settings page (tests/location-data.test.ts). */
@@ -140,6 +143,7 @@ export async function signedInDashboard({
     ...(replayPlayerPath === undefined ? {} : { replayPlayerPath }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
+    ...(heartbeats === undefined ? {} : { heartbeats }),
     notifications: { linkSecret: TEST_AUTH_SECRET, ...notifications },
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),

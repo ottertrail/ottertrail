@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import type { IncomingMessage } from "node:http";
 import { performance } from "node:perf_hooks";
 
-import type { CheckCause } from "../db/schema.ts";
+import type { RequestCause } from "../db/schema.ts";
 import {
   type AddressPolicy,
   AddressNotAllowedError,
@@ -45,7 +45,7 @@ export interface CheckOutcome {
   statusCode: number | null;
   /** From the start to the last answer's headers, redirects included; to the failure when none came. */
   responseMs: number;
-  cause: CheckCause | null;
+  cause: RequestCause | null;
   detail: string;
   /** When the certificate of the first HTTPS answer expires; null without one. */
   tlsExpiresAt: Date | null;
@@ -64,9 +64,9 @@ export interface RequestOptions {
 }
 
 class CheckFailure extends Error {
-  readonly cause: CheckCause;
+  readonly cause: RequestCause;
   readonly statusCode: number | null;
-  constructor(cause: CheckCause, message: string, statusCode: number | null = null) {
+  constructor(cause: RequestCause, message: string, statusCode: number | null = null) {
     super(message);
     this.cause = cause;
     this.statusCode = statusCode;
@@ -77,7 +77,7 @@ class TimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-export function classify(error: unknown): { cause: CheckCause; detail: string } {
+export function classify(error: unknown): { cause: RequestCause; detail: string } {
   if (error instanceof CheckFailure) return { cause: error.cause, detail: error.message };
   return classifyRequestError(error);
 }

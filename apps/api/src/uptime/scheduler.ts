@@ -4,6 +4,7 @@ import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import type { Database } from "../db/schema.ts";
 import type { AddressPolicy, Lookup } from "../outbound/addresses.ts";
 import { type DueCheck, recordOutcome, type StateChange, takeDueChecks } from "./checks.ts";
+import { markOverdue } from "./heartbeats.ts";
 import { type CheckOutcome, type RequestOptions, runRequest } from "./request.ts";
 import { storeResult } from "./results.ts";
 import { parseStatuses } from "./statuses.ts";
@@ -17,6 +18,9 @@ export const MAX_RUNNING = 20;
 export const MAX_RUNNING_PER_PROJECT = 10;
 
 export const CHECK_TICK_MS = 2000;
+
+/** How often the worker looks for heartbeats whose ping is overdue. */
+export const HEARTBEAT_TICK_MS = 15_000;
 
 /** A check taken this long after it was due is late: the worker logs that it is behind. */
 export const LATE_MS = 30_000;
@@ -112,6 +116,26 @@ export class CheckScheduler {
       this.#running.add(run);
     }
     return due.length;
+  }
+
+  /**
+   * Marks the heartbeats whose ping is overdue down (heartbeats.ts,
+   * markOverdue) and hands each change to the alert rules. Returns how many.
+   */
+  async watchHeartbeats(): Promise<number> {
+    const { db, takeAt } = this.#options;
+    const changes = await markOverdue(db, takeAt?.());
+    for (const change of changes) {
+      try {
+        await this.#options.onStateChange?.(change);
+      } catch (error) {
+        this.#options.log?.("error", "a heartbeat's alert rules failed", {
+          check: change.checkId,
+          err: String(error),
+        });
+      }
+    }
+    return changes.length;
   }
 
   async drain(): Promise<void> {
