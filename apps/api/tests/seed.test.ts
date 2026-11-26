@@ -255,7 +255,17 @@ describe("every page has something to show", () => {
     const at = bucketOf(chart);
     expect(chart.failed[at]).toBeGreaterThan(3 * Math.max(1, median(chart.failed)));
     const p95: number[] = chart.p95Us.filter((value: number | null) => value !== null);
-    expect(chart.p95Us[at]).toBeGreaterThan(1.5 * median(p95));
+    // Failed once on CI (26 November 2026) and not since, nor locally: say which bucket it read.
+    const around = {
+      step: chart.stepSeconds,
+      bucket: chart.bucketStarts[at],
+      p95Us: [chart.p95Us[at - 1], chart.p95Us[at], chart.p95Us[at + 1]],
+      traces: [chart.traces[at - 1], chart.traces[at], chart.traces[at + 1]],
+      medianP95Us: median(p95),
+    };
+    expect({ ...around, slower: (chart.p95Us[at] ?? 0) > 1.5 * median(p95) }).toMatchObject({
+      slower: true,
+    });
   });
 
   test("metrics, services, databases, and hosts", async () => {

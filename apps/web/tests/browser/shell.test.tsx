@@ -217,7 +217,10 @@ describe("at 390 wide", () => {
     expect(button.right).toBeLessThanOrEqual(heading.left);
     expect(button.top).toBeLessThan(heading.bottom);
     expect(button.bottom).toBeGreaterThan(heading.top);
-    const action = box(page.getByRole("button", { name: "New project" }).element());
+    // The page's action arrives after the header: wait for it before measuring.
+    const newProject = page.getByRole("button", { name: "New project" });
+    await expect.element(newProject).toBeVisible();
+    const action = box(newProject.element());
     expect(action.left).toBeGreaterThan(heading.right);
     expect(action.right).toBeLessThanOrEqual(390);
   });
