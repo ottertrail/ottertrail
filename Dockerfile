@@ -45,7 +45,7 @@ RUN apt-get update \
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/web/dist ./dashboard
 # Include every script built by packages/tracker/vite.config.ts (deploy-files.test.ts).
-COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js /src/packages/tracker/dist/o.js /src/packages/tracker/dist/s.js ./tracker/
+COPY --from=build /src/packages/tracker/dist/tracker.js /src/packages/tracker/dist/v.js /src/packages/tracker/dist/r.js /src/packages/tracker/dist/h.js /src/packages/tracker/dist/n.js /src/packages/tracker/dist/o.js /src/packages/tracker/dist/s.js ./tracker/
 COPY --from=build /src/packages/replay-player/dist/player.js /src/packages/replay-player/dist/THIRD_PARTY_LICENSES.txt ./replay-player/
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 # The worker updates location data in this mounted volume.

@@ -17,7 +17,7 @@ Features ship in stages ([docs/roadmap.md](docs/roadmap.md)).
 - A team of an owner, admins, and members with access per area and project. People join by invitation; there is no open sign-up.
 - Erasure requests: delete everything stored about one signed-in user, from the dashboard or from your server.
 
-The browser tracker is about 5 KB gzipped and stores nothing on the visitor's device.
+The browser tracker is about 5.6 KB gzipped and stores nothing on the visitor's device.
 
 ## Run it on your server
 

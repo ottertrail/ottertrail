@@ -21,6 +21,8 @@ const scripts = {
   r: { entry: "src/replay.ts", banner: RRWEB_BANNER },
   // Heatmap capture, loaded by the tracker with data-heatmaps="on".
   h: { entry: "src/heatmaps.ts" },
+  // Request tracing, loaded by the tracker with data-traces="on".
+  n: { entry: "src/requests.ts" },
   // The heatmap overlay, loaded by the tracker on a page opened from the dashboard.
   o: { entry: "src/overlay.ts" },
   // A saved heatmap view, loaded by o.js when the owner presses "Save this view".

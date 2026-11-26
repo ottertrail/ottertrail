@@ -3,12 +3,11 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   MAX_REQUESTS,
   newTraceparent,
-  pageLoadTrace,
-  parseTraceparent,
   type RequestTracingOptions,
   tracedOrigins,
   traceRequests,
-} from "../src/traces.ts";
+} from "../src/request-tracing.ts";
+import { pageLoadTrace, parseTraceparent } from "../src/traces.ts";
 
 const TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
 const SPAN = "00f067aa0ba902b7";

@@ -15,6 +15,9 @@ export const REPLAY_SCRIPT_URL_PATH = "/r.js";
 /** Loaded on demand (packages/tracker/src/heatmaps.ts; docs/web-analytics.md, "Heatmaps"). */
 export const HEATMAP_SCRIPT_URL_PATH = "/h.js";
 
+/** Loaded with data-traces="on" (packages/tracker/src/requests.ts; docs/web-analytics.md, "Traces"). */
+export const TRACES_SCRIPT_URL_PATH = "/n.js";
+
 /**
  * Loaded for overlay links (packages/tracker/src/overlay.ts; docs/web-analytics.md, "The overlay
  * on your site").
@@ -105,6 +108,9 @@ export const trackerScriptRoutes: FastifyPluginCallback<{ scriptPath: string }> 
   );
   app.get(HEATMAP_SCRIPT_URL_PATH, (request, reply) =>
     sendScript(request, reply, join(dirname(scriptPath), "h.js")),
+  );
+  app.get(TRACES_SCRIPT_URL_PATH, (request, reply) =>
+    sendScript(request, reply, join(dirname(scriptPath), "n.js")),
   );
   app.get(OVERLAY_SCRIPT_URL_PATH, (request, reply) =>
     sendScript(request, reply, join(dirname(scriptPath), "o.js")),

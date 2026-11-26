@@ -25,6 +25,7 @@ const PUBLIC_ROUTES = new Set([
   "GET /v.js",
   "GET /r.js",
   "GET /h.js",
+  "GET /n.js",
   "GET /o.js",
   "GET /s.js",
   "GET /replay-player.js",

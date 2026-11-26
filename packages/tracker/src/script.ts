@@ -31,8 +31,8 @@ import { cleanSignature, cleanUserId } from "./sanitize.ts";
 import {
   pageLoadTrace,
   type TracedRequest,
-  tracedOrigins,
-  traceRequests,
+  type TracesConfig,
+  TRACES_PROPERTY,
   type TraceRef,
 } from "./traces.ts";
 import { createTracker, type Page, type SignedUser } from "./tracker.ts";
@@ -383,7 +383,9 @@ const REAL = Symbol.for("ottertrail.tracker");
     };
 
     // Traces (traces.ts), only with data-traces="on": they change the
-    // site's own requests, and its servers must send Server-Timing.
+    // site's own requests, and its servers must send Server-Timing. The
+    // page load's trace is read here, for the first pageview; request
+    // tracing is n.js (requests.ts), which errors read once it runs.
     const tracesOn = script?.dataset.traces === "on";
     let loadTrace =
       tracesOn && typeof performance === "object" ? pageLoadTrace(performance) : undefined;
@@ -394,26 +396,20 @@ const REAL = Symbol.for("ottertrail.tracker");
       warnOnce("data-traces-sample must be from 0 to 1. All pageviews are sampled.");
     }
     let recentRequests: (() => TracedRequest[]) | undefined;
-    if (tracesOn) {
-      const { origins, invalid } = tracedOrigins(
-        new URL(location.href).origin,
-        script?.dataset.tracesOrigins,
+    if (tracesOn && !beside) {
+      warnOnce(
+        "Request tracing is off because the script tag has integrity. Remove integrity to enable it.",
       );
-      if (invalid) {
-        warnOnce(
-          "data-traces-origins takes origins such as https://api.example.com. Other entries are ignored.",
-        );
-      }
-      const own = new URL("/api/", host).href;
-      recentRequests = traceRequests({
-        target: window,
-        base: () => location.href,
-        origins,
+    } else if (tracesOn) {
+      const config: TracesConfig = {
+        origins: script?.dataset.tracesOrigins,
+        skip: new URL("/api/", host).href,
         sampled: () => requestsTraced,
-        skip: (url) => url.href.startsWith(own),
-        random: (size) => crypto.getRandomValues(new Uint8Array(size)),
-        now: () => performance.now(),
-      });
+        register: (recent) => {
+          recentRequests = recent;
+        },
+      };
+      whenSending(() => load("n.js", TRACES_PROPERTY, config));
     }
 
     // An error belongs to the page and user of that moment, as a custom event does.

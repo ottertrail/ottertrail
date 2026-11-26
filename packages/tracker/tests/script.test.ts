@@ -4,6 +4,8 @@ import { ENGAGEMENT, MAX_ENGAGED_MS } from "../src/engagement.ts";
 import { HEATMAP_PROPERTY, type HeatmapCapture, type HeatmapConfig } from "../src/heatmap-names.ts";
 import { type OverlayConfig, type OverlayHandoff, OVERLAY_PROPERTY } from "../src/overlay-names.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "../src/replay-names.ts";
+import { startRequestTracing } from "../src/request-tracing.ts";
+import { TRACES_PROPERTY, type TracesConfig } from "../src/traces.ts";
 import type { QueuedEvent } from "../src/tracker.ts";
 import { RECORD_PROPERTY } from "../src/vital-names.ts";
 import { STAND_IN } from "./stand-in.ts";
@@ -681,7 +683,7 @@ describe("errors", () => {
 
 /** The function v.js calls, from the script the tracker added. */
 const recorder = (page: ReturnType<typeof fakePage>) => {
-  const script = page.added.find((element) => element.tagName === "script");
+  const script = page.added.find((element) => String(element.src).endsWith("/v.js"));
   return script?.[RECORD_PROPERTY] as (name: string, value: number) => void;
 };
 
@@ -1858,12 +1860,21 @@ describe("traces", () => {
     Object.assign(page.window, { fetch: pageFetch });
     const fetch = (url: string) =>
       (page.window as unknown as { fetch: typeof pageFetch }).fetch(url);
-    return { page, requests, fetch };
+    /** n.js, as the tracker added it, runs. */
+    const startChunk = () => {
+      const chunk = page.added.find((element) => String(element.src).endsWith("/n.js"));
+      expect(chunk).toMatchObject({ src: "https://ottertrail.example.com/n.js", async: true });
+      startRequestTracing(chunk?.[TRACES_PROPERTY] as TracesConfig, page.window, crypto, () =>
+        Date.now(),
+      );
+    };
+    return { page, requests, fetch, startChunk };
   }
 
-  test("are off by default: no trace is read and requests are left alone", async () => {
+  test("are off by default: no trace is read, n.js is not loaded, and requests are left alone", async () => {
     const { page, requests, fetch } = tracedPage({});
     await runScript();
+    expect(page.added.some((element) => String(element.src).endsWith("/n.js"))).toBe(false);
     await fetch("/api/cart");
     expect(requests[0]?.traceparent).toBeNull();
     uncaught(page, failure("boom"));
@@ -1874,8 +1885,9 @@ describe("traces", () => {
   });
 
   test("the page load's pageview, errors, and Web Vitals carry its trace; later pages do not", async () => {
-    const { page, fetch, requests } = tracedPage({ traces: "on" });
+    const { page, fetch, requests, startChunk } = tracedPage({ traces: "on" });
     await runScript();
+    startChunk();
     recorder(page)("LCP", 1200);
     await fetch("/api/cart?coupon=SECRET");
     await vi.advanceTimersByTimeAsync(0);
@@ -1905,8 +1917,9 @@ describe("traces", () => {
   });
 
   test("a sample of 0 sends no header but keeps the page load's trace", async () => {
-    const { page, fetch, requests } = tracedPage({ traces: "on", tracesSample: "0" });
+    const { page, fetch, requests, startChunk } = tracedPage({ traces: "on", tracesSample: "0" });
     await runScript();
+    startChunk();
     await fetch("/api/a");
     expect(requests[0]?.traceparent).toBeNull();
     page.hide();
@@ -1914,10 +1927,36 @@ describe("traces", () => {
     expect(page.events[0]).toMatchObject({ name: "pageview", traceId: TRACE });
   });
 
+  test("an error before n.js runs carries the trace but no requests", async () => {
+    const { page } = tracedPage({ traces: "on" });
+    await runScript();
+    uncaught(page, failure("early"));
+    const [error] = await errorsSent(page);
+    expect(error).toMatchObject({ traceId: TRACE, spanId: SPAN });
+    expect(error?.error).not.toHaveProperty("requests");
+  });
+
+  test("with integrity, n.js is not loaded, and the page load's trace still goes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { page } = tracedPage({ traces: "on" });
+    Object.assign(page.document.currentScript, {
+      hasAttribute: (name: string) => name === "integrity",
+    });
+    await runScript();
+    expect(page.added).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "Ottertrail: Request tracing is off because the script tag has integrity. Remove integrity to enable it.",
+    );
+    page.hide();
+    await page.settle();
+    expect(page.events[0]).toMatchObject({ name: "pageview", traceId: TRACE });
+  });
+
   test("an invalid sample warns and samples every pageview", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { fetch, requests } = tracedPage({ traces: "on", tracesSample: "" });
+    const { fetch, requests, startChunk } = tracedPage({ traces: "on", tracesSample: "" });
     await runScript();
+    startChunk();
     await fetch("/api/a");
     expect(requests[0]?.traceparent).not.toBeNull();
     expect(warn).toHaveBeenCalledWith(
@@ -1927,11 +1966,12 @@ describe("traces", () => {
 
   test("only listed origins besides the page's own get the header, never Ottertrail", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { fetch, requests } = tracedPage({
+    const { fetch, requests, startChunk } = tracedPage({
       traces: "on",
       tracesOrigins: "https://api.example.com api.example.com",
     });
     await runScript();
+    startChunk();
     await fetch("https://api.example.com/v1/me");
     await fetch("https://cdn.example.net/x.json");
     await fetch("https://ottertrail.example.com/api/events");

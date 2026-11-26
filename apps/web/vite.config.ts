@@ -18,7 +18,7 @@ const INITIAL_JS_BUDGET = { raw: 780, gzip: 256 };
 
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 
-const API_PATHS = ["/api", "/t.js", "/v.js", "/r.js", "/h.js", "/replay-player.js"];
+const API_PATHS = ["/api", "/t.js", "/v.js", "/r.js", "/h.js", "/n.js", "/replay-player.js"];
 
 /**
  * Fetch fakes miss iframe requests, such as the replay player.
