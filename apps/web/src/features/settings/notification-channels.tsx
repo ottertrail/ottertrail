@@ -81,6 +81,8 @@ const EVENT_TEXT: Record<string, string> = {
   "ai.failures_resolved": "AI failures over",
   "ai.latency": "AI latency",
   "ai.latency_resolved": "AI latency over",
+  "data.stopped": "Data stopped arriving",
+  "data.stopped_resolved": "Data arriving again",
   "alert.held_back": "Alerts held back",
   "storage.low": "Storage low",
   "storage.recovered": "Storage recovered",

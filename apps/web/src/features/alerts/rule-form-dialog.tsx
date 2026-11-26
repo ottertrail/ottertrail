@@ -34,7 +34,7 @@ import { useAccess } from "@/lib/access";
 import { aiReportQuery } from "@/lib/ai-api";
 import {
   type ChannelName,
-  kindArea,
+  kindAreas,
   type Aggregate,
   AGGREGATES,
   createRule,
@@ -71,11 +71,21 @@ import {
   type SaveWarning,
   TELEMETRY_KINDS,
   updateRule,
+  type DataSource,
+  DATA_SOURCES,
+  DEFAULT_MIN_COUNT,
+  DEFAULT_STOPPED_WINDOW,
+  isStoppedKind,
+  kindOfSource,
+  MAX_EVENT_NAME,
+  MAX_MIN_COUNT,
+  STOPPED_WINDOWS,
 } from "@/lib/alerts-api";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { hostsQuery } from "@/lib/hosts-api";
 import { metricChartQuery, type MetricKind, METRIC_KINDS, metricsQuery } from "@/lib/metrics-api";
+import { productEventsQuery } from "@/lib/product-api";
 import { recentRoutesQuery } from "@/lib/services-api";
 import type { Check } from "@/lib/uptime-api";
 
@@ -128,6 +138,11 @@ interface Draft {
   model: string;
   feature: string;
   minCalls: string;
+  /** "Data stops arriving": its source picks the kind (kindOfSource). */
+  source: DataSource;
+  /** "" for all events. */
+  eventName: string;
+  minCount: string;
   channelIds: string[];
 }
 
@@ -151,10 +166,13 @@ type TextFieldName =
   | "thresholdUsd"
   | "model"
   | "feature"
-  | "minCalls";
+  | "minCalls"
+  | "eventName"
+  | "minCount";
 
 type FieldName =
   | TextFieldName
+  | "source"
   | "channels"
   | "checkId"
   | "metricKind"
@@ -186,14 +204,18 @@ function draftOf(
 ): Draft {
   const settings: RuleSettings = rule?.settings ?? {};
   const metricKind = settings.metricKind ?? prefill.metricKind ?? "";
+  const kind = rule?.kind ?? prefill.add ?? "check_down";
   return {
-    kind: rule?.kind ?? prefill.add ?? "check_down",
+    kind,
     name: rule?.name ?? "",
     checkId: settings.checkId ?? prefill.check ?? ALL_CHECKS,
     days: String(settings.days ?? DEFAULT_CERTIFICATE_DAYS),
     environment: settings.environment ?? prefill.env ?? "",
     fingerprint: settings.fingerprint ?? prefill.fingerprint ?? "",
-    windowMinutes: String(settings.windowMinutes ?? DEFAULT_WINDOW_MINUTES),
+    windowMinutes: String(
+      settings.windowMinutes ??
+        (isStoppedKind(kind) ? DEFAULT_STOPPED_WINDOW : DEFAULT_WINDOW_MINUTES),
+    ),
     threshold: String(settings.threshold ?? DEFAULT_THRESHOLD),
     service: settings.service ?? prefill.service ?? "",
     route: settings.route ?? prefill.route ?? "",
@@ -214,6 +236,9 @@ function draftOf(
     model: settings.model ?? prefill.model ?? "",
     feature: settings.feature ?? prefill.feature ?? "",
     minCalls: String(settings.minCalls ?? DEFAULT_MIN_CALLS),
+    source: settings.source ?? (kind === "telemetry_stopped" ? "traces" : "events"),
+    eventName: settings.eventName ?? "",
+    minCount: String(settings.minCount ?? DEFAULT_MIN_COUNT),
     // Drop deleted channels. Default new rules to the sole channel, if present.
     channelIds:
       rule?.channelIds.filter((id) => channels.some((channel) => channel.id === id)) ??
@@ -254,7 +279,10 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
       problems.threshold = `Enter a whole number of errors from 1 to ${MAX_THRESHOLD.toLocaleString("en")}.`;
     }
   }
-  if (draft.kind === "error_spike" || (isTelemetry(draft.kind) && draft.kind !== "ai_cost")) {
+  if (
+    draft.kind === "error_spike" ||
+    (isTelemetry(draft.kind) && draft.kind !== "ai_cost" && !isStoppedKind(draft.kind))
+  ) {
     const most = isRoute(draft.kind) ? MAX_ROUTE_WINDOW_MINUTES : MAX_WINDOW_MINUTES;
     if (!wholeIn(draft.windowMinutes, MIN_WINDOW_MINUTES, most)) {
       problems.windowMinutes = `Enter a whole number of minutes from ${MIN_WINDOW_MINUTES} to ${most}.`;
@@ -308,6 +336,34 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
       problems.feature = `A feature has at most ${MAX_AI_FILTER_CHARS} characters.`;
     }
   }
+  if (isStoppedKind(draft.kind)) {
+    if (!wholeIn(draft.minCount, 1, MAX_MIN_COUNT)) {
+      problems.minCount = `Enter a whole number of records from 1 to ${MAX_MIN_COUNT.toLocaleString("en")}.`;
+    }
+    const eventName = draft.eventName.trim();
+    if (
+      draft.source === "events" &&
+      eventName !== "" &&
+      (eventName.length > MAX_EVENT_NAME || !SERVICE.test(eventName))
+    ) {
+      problems.eventName = `An event name has at most ${MAX_EVENT_NAME} characters, and no control characters.`;
+    }
+    const service = draft.service.trim();
+    if ((draft.source === "traces" || draft.source === "logs") && service !== "") {
+      if (!SERVICE.test(service)) {
+        problems.service = "Enter the service name from its records (service.name).";
+      }
+    }
+    if (draft.source === "metrics") {
+      const metric = draft.metric.trim();
+      if (metric === "" || metric.length > MAX_METRIC_NAME) {
+        problems.metric = "Choose or enter the metric's name.";
+      }
+      if (draft.host.trim().length > MAX_FILTER_CHARS) {
+        problems.host = `A host's name has at most ${chars} characters.`;
+      }
+    }
+  }
   if (draft.kind === "metric_threshold") {
     const metric = draft.metric.trim();
     if (metric === "" || metric.length > MAX_METRIC_NAME) {
@@ -345,7 +401,10 @@ function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
     return "threshold";
   }
   if (code === "invalid_window" && kind === "ai_cost") return "costWindow";
+  if (code === "invalid_attribute" && isStoppedKind(kind)) return "host";
   const fields: Record<string, FieldName> = {
+    invalid_source: "source",
+    invalid_min_count: "minCount",
     invalid_name: "name",
     invalid_days: "days",
     invalid_window: "windowMinutes",
@@ -444,6 +503,20 @@ function settingsOf(draft: Draft): RuleSettings {
         thresholdMs: Number(draft.thresholdMs),
         minCalls: Number(draft.minCalls),
       };
+    case "events_stopped":
+    case "telemetry_stopped": {
+      const common = {
+        source: draft.source,
+        environment,
+        windowMinutes: Number(draft.windowMinutes),
+        minCount: Number(draft.minCount),
+      };
+      if (draft.source === "events") return { ...common, eventName: optional(draft.eventName) };
+      if (draft.source === "metrics") {
+        return { ...common, metric: draft.metric.trim(), host: optional(draft.host) };
+      }
+      return { ...common, service: optional(draft.service) };
+    }
     default:
       return {};
   }
@@ -455,6 +528,9 @@ const fieldsOf = (draft: Draft): RuleFields => ({
   settings: settingsOf(draft),
   channelIds: draft.channelIds,
 });
+
+const STOPPED_HELP =
+  "Notifies when fewer records than the minimum arrive in the window, then again when enough arrive. Choose a window that the quietest hours fill.";
 
 const KIND_HELP: Record<RuleKind, string> = {
   check_down: "Notifies when a check goes down and when it recovers.",
@@ -474,6 +550,8 @@ const KIND_HELP: Record<RuleKind, string> = {
     "Notifies above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
   ai_latency:
     "Notifies when the 95th percentile duration of AI calls is above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
+  events_stopped: STOPPED_HELP,
+  telemetry_stopped: STOPPED_HELP,
 };
 
 const COST_WINDOW_ITEMS: { value: CostWindow; label: string }[] = [
@@ -552,28 +630,70 @@ function SelectField({
   );
 }
 
-const KIND_ITEMS = RULE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
+/** The form's one item for both "data stops arriving" kinds; the source picks the kind. */
+const STOPPED_ITEM = "data_stopped";
+
+const KIND_ITEMS: { value: string; label: string; kinds: readonly RuleKind[] }[] = [
+  ...RULE_KINDS.filter((kind) => !isStoppedKind(kind)).map((kind) => ({
+    value: kind,
+    label: KIND_LABEL[kind],
+    kinds: [kind],
+  })),
+  {
+    value: STOPPED_ITEM,
+    label: KIND_LABEL.events_stopped,
+    kinds: ["events_stopped", "telemetry_stopped"],
+  },
+];
+
+const SOURCE_LABEL: Record<DataSource, string> = {
+  events: "Events",
+  traces: "Traces",
+  logs: "Logs",
+  metrics: "Metrics",
+};
+
+const windowLabel = (minutes: number) => {
+  const hours = minutes / 60;
+  if (Number.isInteger(hours)) return hours === 1 ? "1 hour" : `${hours} hours`;
+  return `${minutes} minutes`;
+};
+
+const STOPPED_WINDOW_ITEMS = STOPPED_WINDOWS.map((minutes) => ({
+  value: String(minutes),
+  label: windowLabel(minutes),
+}));
 
 const pickerEnvironment = (draft: Draft) => {
   const typed = draft.environment.trim().toLowerCase();
   return ENVIRONMENT.test(typed) ? typed : DEFAULT_ENVIRONMENT;
 };
 
-/** Fetch suggestions only for the selected rule kind: up to 200 services from the last day, and metrics and hosts from the last 7 days. */
-function useSuggestions(projectId: string, draft: Draft) {
+/**
+ * Fetch suggestions only for the selected rule kind: up to 200 services from the last day, and
+ * metrics, hosts, and product events from the last 7 days.
+ */
+function useSuggestions(projectId: string, draft: Draft, canReadEvents: boolean) {
   const environment = pickerEnvironment(draft);
+  const stopped = isStoppedKind(draft.kind);
   const recent = useQuery({
     ...recentRoutesQuery(projectId, environment),
-    enabled: isRoute(draft.kind),
+    enabled:
+      isRoute(draft.kind) || (stopped && (draft.source === "traces" || draft.source === "logs")),
   });
   const metricRule = draft.kind === "metric_threshold";
+  const metricNames = metricRule || (stopped && draft.source === "metrics");
   const metrics = useQuery({
     ...metricsQuery(projectId, PICKER_RANGE, environment),
-    enabled: metricRule,
+    enabled: metricNames,
   });
   const hosts = useQuery({
     ...hostsQuery(projectId, PICKER_RANGE, environment),
-    enabled: metricRule,
+    enabled: metricNames,
+  });
+  const events = useQuery({
+    ...productEventsQuery(projectId, PICKER_RANGE, environment),
+    enabled: stopped && draft.source === "events" && canReadEvents,
   });
   const metricName = draft.metric.trim();
   const known = (metrics.data?.metrics ?? []).some(
@@ -620,6 +740,8 @@ function useSuggestions(projectId: string, draft: Draft) {
     aiModels: ai.data?.filterOptions.models ?? [],
     // Rules cannot target calls with no feature.
     aiFeatures: (ai.data?.filterOptions.features ?? []).filter((feature) => feature !== ""),
+    // Pageviews are not product events, but every site sends them.
+    eventNames: ["pageview", ...(events.data?.events ?? []).map((event) => event.name)],
   };
 }
 
@@ -643,7 +765,13 @@ function RuleForm({
   const [draft, setDraft] = React.useState(() => draftOf(rule, prefill, channels));
   const [checked, setChecked] = React.useState(false);
   const formId = React.useId();
-  const suggestions = useSuggestions(projectId, draft);
+  const { can, canUse } = useAccess();
+  // Only offer rule kinds and sources the API permits for this user.
+  const mayAdd = (kind: RuleKind) => {
+    const areas = kindAreas(kind);
+    return areas.length === 0 || areas.some((area) => canUse(area));
+  };
+  const suggestions = useSuggestions(projectId, draft, canUse("product_analytics"));
   const save = useMutation({
     mutationFn: () =>
       rule === undefined
@@ -725,13 +853,29 @@ function RuleForm({
       : []),
   ];
   const channelsError = errorOf("channels");
-  const { can, canUse } = useAccess();
   const canAddChannels = can("channels");
-  // Only offer rule kinds the API permits for this user.
-  const kindItems = KIND_ITEMS.filter((item) => {
-    const area = kindArea(item.value);
-    return area === null || canUse(area);
-  });
+  const kindItems = KIND_ITEMS.filter((item) => item.kinds.some(mayAdd));
+  const sourceItems = DATA_SOURCES.filter((source) => mayAdd(kindOfSource(source))).map(
+    (source) => ({ value: source, label: SOURCE_LABEL[source] }),
+  );
+  const setSource = (source: DataSource) => change({ source, kind: kindOfSource(source) });
+  const setKind = (value: string) => {
+    if (value === STOPPED_ITEM) {
+      const source = sourceItems.some((item) => item.value === draft.source)
+        ? draft.source
+        : sourceItems[0]?.value;
+      if (source === undefined || isStoppedKind(draft.kind)) return;
+      change({
+        source,
+        kind: kindOfSource(source),
+        windowMinutes: String(DEFAULT_STOPPED_WINDOW),
+      });
+      return;
+    }
+    const found = RULE_KINDS.find((item) => item === value);
+    if (found !== undefined) change({ kind: found });
+  };
+  const stopped = isStoppedKind(draft.kind);
   const metricKinds = suggestions.metrics.filter((metric) => metric.name === draft.metric.trim());
   const aggregates: readonly Aggregate[] =
     draft.metricKind === "" ? [] : AGGREGATES[draft.metricKind];
@@ -768,14 +912,62 @@ function RuleForm({
       </DialogHeader>
       <SelectField
         label="When"
-        value={draft.kind}
+        value={stopped ? STOPPED_ITEM : draft.kind}
         items={kindItems}
-        onChange={(kind) => {
-          const found = RULE_KINDS.find((item) => item === kind);
-          if (found !== undefined) change({ kind: found });
-        }}
+        onChange={setKind}
         description={KIND_HELP[draft.kind]}
       />
+      {stopped && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Data"
+              value={draft.source}
+              items={sourceItems}
+              onChange={(next) => {
+                const found = DATA_SOURCES.find((source) => source === next);
+                if (found !== undefined) setSource(found);
+              }}
+              error={errorOf("source")}
+            />
+            {environmentField}
+          </div>
+          {draft.source === "events" &&
+            textField("eventName", "Event name (optional)", {
+              placeholder: "All events",
+              options: suggestions.eventNames,
+            })}
+          {(draft.source === "traces" || draft.source === "logs") &&
+            textField("service", "Service (optional)", {
+              placeholder: "All services",
+              options: suggestions.services,
+            })}
+          {draft.source === "metrics" && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {textField("metric", "Metric", {
+                options: [...new Set(suggestions.metrics.map((metric) => metric.name))],
+              })}
+              {textField("host", "Host (optional)", {
+                placeholder: "All hosts",
+                options: suggestions.hosts,
+              })}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            {textField("minCount", "Fewer than (records)", {
+              numeric: "numeric",
+              description: "1 notifies when nothing arrives.",
+            })}
+            <SelectField
+              label="In the last"
+              value={draft.windowMinutes}
+              items={STOPPED_WINDOW_ITEMS}
+              onChange={(windowMinutes) => change({ windowMinutes })}
+              error={errorOf("windowMinutes")}
+            />
+          </div>
+        </>
+      )}
       {(draft.kind === "check_down" || draft.kind === "certificate_expiring") && (
         <SelectField
           label="Check"

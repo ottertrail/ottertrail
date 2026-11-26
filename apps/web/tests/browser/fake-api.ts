@@ -5253,7 +5253,12 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
   switch (id) {
     case "attention": {
       const errorKinds = ["error_new", "error_regressed", "error_spike"];
-      const telemetryKinds = ["route_latency", "route_failures", "metric_threshold"];
+      const telemetryKinds = [
+        "route_latency",
+        "route_failures",
+        "metric_threshold",
+        "telemetry_stopped",
+      ];
       const aiKinds = ["ai_cost", "ai_failures", "ai_latency"];
       return {
         ...header,
@@ -5262,7 +5267,10 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
             (alert) =>
               (!errorKinds.includes(alert.kind) || canSee(api, "errors")) &&
               (!telemetryKinds.includes(alert.kind) || canSee(api, "monitoring")) &&
-              (!aiKinds.includes(alert.kind) || canSee(api, "ai")),
+              (!aiKinds.includes(alert.kind) || canSee(api, "ai")) &&
+              (alert.kind !== "events_stopped" ||
+                canSee(api, "web_analytics") ||
+                canSee(api, "product_analytics")),
           )
           .map(({ ruleId, ruleName, kind, subjectName, since, message }) => ({
             ruleId,

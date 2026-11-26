@@ -27,6 +27,29 @@ function aiScopeText(settings: Rule["settings"]): string {
   return `${model === null ? "" : ` of the model ${model}`}${feature === null ? "" : ` in the feature ${feature}`}`;
 }
 
+/** A "data stops arriving" window: "30 minutes", "1 hour", "24 hours". */
+const windowText = (count: number) => {
+  const hours = count / 60;
+  if (!Number.isInteger(hours)) return minutes(count);
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+};
+
+/** What a "data stops arriving" rule counts: "events named signup", "spans of the service api". */
+function stoppedWhat(settings: Rule["settings"]): string {
+  const service = settings.service ?? null;
+  const source = settings.source ?? "events";
+  if (source === "events") {
+    const name = settings.eventName ?? null;
+    return name === null ? "events" : `events named ${name}`;
+  }
+  if (source === "traces") return service === null ? "spans" : `spans of the service ${service}`;
+  if (source === "logs") {
+    return service === null ? "log records" : `log records of the service ${service}`;
+  }
+  const host = settings.host ?? null;
+  return `points of the metric ${settings.metric ?? ""}${host === null ? "" : ` on the host ${host}`}`;
+}
+
 const usd = (value: number) =>
   value.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 6 });
 
@@ -78,6 +101,14 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
   if (rule.kind === "ai_latency") {
     const fewest = `at least ${(settings.minCalls ?? 20).toLocaleString("en")} calls`;
     return `The 95th percentile duration of AI calls${aiScopeText(settings)} is above ${number(settings.thresholdMs ?? 0)} ms over ${window}, with ${fewest}, in ${environment}`;
+  }
+  if (rule.kind === "events_stopped" || rule.kind === "telemetry_stopped") {
+    const minCount = settings.minCount ?? 1;
+    const over = windowText(settings.windowMinutes ?? 60);
+    const what = stoppedWhat(settings);
+    return minCount === 1
+      ? `No ${what} arrive in ${over}, in ${environment}`
+      : `Fewer than ${minCount.toLocaleString("en")} ${what} arrive in ${over}, in ${environment}`;
   }
   if (rule.kind === "metric_threshold") {
     const filters = [

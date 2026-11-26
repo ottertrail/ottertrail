@@ -1,5 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
+import type { Area } from "./access";
 import { apiRequest, expectShape } from "./api";
 import { isMetricKind, type MetricKind } from "./metrics-api";
 import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
@@ -19,6 +20,8 @@ export const RULE_KINDS = [
   "ai_cost",
   "ai_failures",
   "ai_latency",
+  "events_stopped",
+  "telemetry_stopped",
 ] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
@@ -37,6 +40,8 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   ai_cost: "AI cost",
   ai_failures: "AI failures",
   ai_latency: "AI latency",
+  events_stopped: "Data stops arriving",
+  telemetry_stopped: "Data stops arriving",
 };
 
 export const TELEMETRY_KINDS: readonly RuleKind[] = [
@@ -46,6 +51,8 @@ export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "ai_cost",
   "ai_failures",
   "ai_latency",
+  "events_stopped",
+  "telemetry_stopped",
 ];
 
 /** The kinds that watch AI calls (docs/ai-usage.md, "Alerts"). */
@@ -53,16 +60,36 @@ export const isAiKind = (kind: RuleKind) =>
   kind === "ai_cost" || kind === "ai_failures" || kind === "ai_latency";
 
 /**
- * The area a kind watches, besides uptime and alerts (docs/access.md): a
- * user sees and adds such rules only with it. Check rules need none.
+ * "Data stops arriving": one kind in the form, two in the API, since events and telemetry
+ * need different areas.
  */
-export function kindArea(kind: RuleKind): "errors" | "monitoring" | "ai" | null {
+export const isStoppedKind = (kind: RuleKind) =>
+  kind === "events_stopped" || kind === "telemetry_stopped";
+
+/**
+ * The areas a kind watches, besides uptime and alerts (docs/access.md): a user sees and adds
+ * such rules only with one of them. Check rules need none (empty).
+ */
+export function kindAreas(kind: RuleKind): readonly Area[] {
   if (kind === "error_new" || kind === "error_regressed" || kind === "error_spike") {
-    return "errors";
+    return ["errors"];
   }
-  if (isAiKind(kind)) return "ai";
-  return TELEMETRY_KINDS.includes(kind) ? "monitoring" : null;
+  if (isAiKind(kind)) return ["ai"];
+  if (kind === "events_stopped") return ["web_analytics", "product_analytics"];
+  return TELEMETRY_KINDS.includes(kind) ? ["monitoring"] : [];
 }
+
+/** What a "data stops arriving" rule counts. */
+export const DATA_SOURCES = ["events", "traces", "logs", "metrics"] as const;
+export type DataSource = (typeof DATA_SOURCES)[number];
+export const kindOfSource = (source: DataSource): RuleKind =>
+  source === "events" ? "events_stopped" : "telemetry_stopped";
+/** Its windows, in minutes: 5 minutes to 24 hours. */
+export const STOPPED_WINDOWS = [5, 10, 15, 30, 60, 120, 240, 360, 720, 1440] as const;
+export const DEFAULT_STOPPED_WINDOW = 60;
+export const DEFAULT_MIN_COUNT = 1;
+export const MAX_MIN_COUNT = 1_000_000;
+export const MAX_EVENT_NAME = 200;
 
 export const MAX_RULE_NAME = 100;
 export const DEFAULT_CERTIFICATE_DAYS = 14;
@@ -114,14 +141,14 @@ export interface RuleSettings {
   fingerprint?: string | null;
   windowMinutes?: number;
   threshold?: number;
-  /** Route rules: the service, and its route or all (null). */
-  service?: string;
+  /** Route rules: the service, and its route or all (null). Traces and logs: the service or all. */
+  service?: string | null;
   route?: string | null;
   minRequests?: number;
   percentile?: Percentile;
   thresholdMs?: number;
   thresholdPercent?: number;
-  metric?: string;
+  metric?: string | null;
   metricKind?: MetricKind;
   aggregate?: Aggregate;
   direction?: Direction;
@@ -135,6 +162,10 @@ export interface RuleSettings {
   feature?: string | null;
   model?: string | null;
   minCalls?: number;
+  /** "Data stops arriving": the source, an event name (null: all), and the fewest records. */
+  source?: DataSource;
+  eventName?: string | null;
+  minCount?: number;
 }
 
 export interface Rule {
@@ -206,7 +237,6 @@ export interface RuleFields {
 const isNullableText = (value: unknown) => value === undefined || isTextOrNull(value);
 const isOptionalNumber = (value: unknown) => value === undefined || isNumber(value);
 
-const isOptionalText = (value: unknown) => value === undefined || isText(value);
 const isOptionalOf =
   (values: readonly string[]) =>
   (value: unknown): boolean =>
@@ -221,13 +251,13 @@ const isSettings = (value: unknown): value is RuleSettings =>
   isNullableText(value.fingerprint) &&
   isOptionalNumber(value.windowMinutes) &&
   isOptionalNumber(value.threshold) &&
-  isOptionalText(value.service) &&
+  isNullableText(value.service) &&
   isNullableText(value.route) &&
   isOptionalNumber(value.minRequests) &&
   isOptionalOf(PERCENTILES)(value.percentile) &&
   isOptionalNumber(value.thresholdMs) &&
   isOptionalNumber(value.thresholdPercent) &&
-  isOptionalText(value.metric) &&
+  isNullableText(value.metric) &&
   (value.metricKind === undefined || isMetricKind(value.metricKind)) &&
   isOptionalOf(ALL_AGGREGATES)(value.aggregate) &&
   isOptionalOf(DIRECTIONS)(value.direction) &&
@@ -239,7 +269,10 @@ const isSettings = (value: unknown): value is RuleSettings =>
   isOptionalNumber(value.thresholdUsd) &&
   isNullableText(value.feature) &&
   isNullableText(value.model) &&
-  isOptionalNumber(value.minCalls);
+  isOptionalNumber(value.minCalls) &&
+  isOptionalOf(DATA_SOURCES)(value.source) &&
+  isNullableText(value.eventName) &&
+  isOptionalNumber(value.minCount);
 
 export const isRule = (value: unknown): value is Rule =>
   isRecord(value) &&

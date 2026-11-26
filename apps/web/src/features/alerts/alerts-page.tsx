@@ -54,7 +54,7 @@ import { useAccess } from "@/lib/access";
 import {
   alertChannelsQuery,
   type ChannelName,
-  kindArea,
+  kindAreas,
   type Rule,
   type RuleList,
   rulesQuery,
@@ -278,12 +278,12 @@ export function AlertsPage({ projectId, prefill }: { projectId: string; prefill:
   const full = data !== undefined && data.rules.length >= data.maxRules;
   const ready = data !== undefined && channels.data !== undefined;
   // Open a prefilled form only for a rule kind the user may add.
-  const prefillArea = prefill.add === undefined ? null : kindArea(prefill.add);
+  const prefillAreas = prefill.add === undefined ? [] : kindAreas(prefill.add);
   const open =
     adding ||
     (prefill.add !== undefined &&
       canManage &&
-      (prefillArea === null || canUse(prefillArea)) &&
+      (prefillAreas.length === 0 || prefillAreas.some((area) => canUse(area))) &&
       ready &&
       !noChannels &&
       !full);
