@@ -118,6 +118,12 @@ import { STORAGE } from "./storage-fixtures.ts";
  */
 export interface FakeApi {
   signedIn: boolean;
+  /**
+   * Paths that answer 401 as if the session ended, while every other request
+   * still answers: a test of one page's reaction to a refusal is then not
+   * signed out by another request that happens to run at the same moment.
+   */
+  refusedPaths: readonly string[];
   /** How GET /api/health answers: 200 "ok" by default, or this status (503: the API is down). */
   healthStatus: number;
   /**
@@ -4476,7 +4482,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   // As the API: everything else needs a session (sign-in and setup are above or public).
   const links = answerLinks(api, url, init);
   if (links !== null) return links;
-  if (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") {
+  if (
+    (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") ||
+    api.refusedPaths.includes(path)
+  ) {
     return json({ error: "unauthorized", message: "Sign in to continue." }, 401);
   }
   const notifications = answerNotifications(api.notifications, url, init);
@@ -5039,6 +5048,7 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
+    refusedPaths: [],
     healthStatus: 200,
     signInRefusal: null,
     sessionRefusal: null,

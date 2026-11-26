@@ -449,8 +449,11 @@ describe("refused and bounded", () => {
     source.ready();
     await expect.element(connection()).toMatchTextContent(/^Live$/);
 
-    // The API restarted and the session is gone: the stream's retry would get 401.
-    api.signedIn = false;
+    // The API restarted and the session is gone: the stream's access check
+    // (GET /api/settings) gets 401. Only it is refused: a background request
+    // at the same moment, such as the bell's unread count, which refetches on
+    // every window focus, would otherwise sign the test out (seen on CI).
+    api.refusedPaths = ["/api/settings"];
     source.fail();
     await expect
       .element(connection())
