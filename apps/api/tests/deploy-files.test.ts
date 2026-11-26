@@ -285,6 +285,17 @@ describe("the release's files", () => {
       expect(readFileSync(join(deploy, "..", file), "utf8").length).toBeGreaterThan(0);
     }
   });
+
+  test("are built only after CI passed on the tagged commit", () => {
+    const workflow = readFileSync(
+      join(import.meta.dirname, "../../../.github/workflows/release.yml"),
+      "utf8",
+    );
+    expect(workflow).toMatch(/\n {2}ci:\n/);
+    expect(workflow).toContain("actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main");
+    expect(workflow).toMatch(/\n {2}image:\n {4}needs: ci\n/);
+    expect(workflow).toMatch(/\n {2}release:\n {4}needs: image\n/);
+  });
 });
 
 /** A service's block in a compose file: from its name to the next blank line. */

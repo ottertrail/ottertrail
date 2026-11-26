@@ -372,12 +372,15 @@ Every install serves one customer, whether self-hosted or hosted: each hosted cu
 
 ```sh
 vp run version 0.2.0
+vp run ready
 git commit -am "chore(release): 0.2.0"
+git push origin main
+# Wait until CI passes on this commit, then:
 git tag v0.2.0
-git push origin main v0.2.0
+git push origin v0.2.0
 ```
 
-It refuses a version that is not [semantic](https://semver.org) (`x.y.z`, without a `v`). Run `vp run ready` before tagging. For the tag, the workflow first checks that all three hold the tag's version (`node scripts/version.ts --check`), then builds and pushes the image. Once the image is pushed, it creates the GitHub Release "Ottertrail 0.2.0" with `compose.yaml`, `example.env`, `backup.sh`, and `restore.sh`, and notes written from the commits since the previous tag (`scripts/release-notes.ts`): breaking changes (a `!` or a `BREAKING CHANGE:` footer) first, then features, fixes, and the rest, then how to install or update. `node scripts/release-notes.ts 0.2.0 HEAD` shows them before tagging. A version with a hyphen, such as `0.2.0-rc.1`, becomes a pre-release, and its notes count from the tag before it; a final release's notes count from the previous final release, so they include what its release candidates listed. Build metadata (`1.0.0+b1`) is refused: a Docker tag cannot hold a `+`.
+It refuses a version that is not [semantic](https://semver.org) (`x.y.z`, without a `v`). Push the release commit alone first, and tag it only once CI has passed on it: CI on the commit before is not enough. The release workflow enforces this. Its first job (`ci`) asks GitHub for the CI runs of the tagged commit on `main`. It goes on when one passed, waits up to 40 minutes while one is still running, and otherwise stops before anything is built or published: a tag on a commit whose CI failed, or on a commit that never ran CI on `main`, publishes nothing. Decided on 26 November 2026, after 0.10.0 was published while CI was still running on its commit, which then failed. A manual run of the workflow is held to the same check. Then the workflow checks that all three files hold the tag's version (`node scripts/version.ts --check`), and builds and pushes the image. Once the image is pushed, it creates the GitHub Release "Ottertrail 0.2.0" with `compose.yaml`, `example.env`, `backup.sh`, and `restore.sh`, and notes written from the commits since the previous tag (`scripts/release-notes.ts`): breaking changes (a `!` or a `BREAKING CHANGE:` footer) first, then features, fixes, and the rest, then how to install or update. `node scripts/release-notes.ts 0.2.0 HEAD` shows them before tagging. A version with a hyphen, such as `0.2.0-rc.1`, becomes a pre-release, and its notes count from the tag before it; a final release's notes count from the previous final release, so they include what its release candidates listed. Build metadata (`1.0.0+b1`) is refused: a Docker tag cannot hold a `+`.
 
 A version's image is pushed once and never replaced: servers pull it by its version. When the workflow finds the image already in the registry, as when it runs again after the release step failed, it says so in its log and skips the build and the push; the release step then runs again, and replaces the files and notes of the release if it exists. To change a released image, release a new version. The workflow can also be run by hand from the Actions tab, which pushes an image tagged with the commit only, and releases nothing.
 

@@ -1,6 +1,7 @@
-# Version tags publish immutable amd64 and arm64 images and release files.
-# Reruns reuse an existing image and retry the release job. Manual runs publish
-# only a commit-tagged image. See docs/deployment.md, "Releasing".
+# Version tags publish immutable amd64 and arm64 images and release files, once
+# CI has passed on the tagged commit on main. Reruns reuse an existing image and
+# retry the release job. Manual runs publish only a commit-tagged image. See
+# docs/deployment.md, "Releasing".
 name: Release
 
 on:
@@ -16,7 +17,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Publish only a commit that CI passed on main. A run still going is waited
+  # for; a failed run, or none, stops the release before anything is built.
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+    steps:
+      - name: Check that CI passed on this commit on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          runs="repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&event=push"
+          for _ in $(seq 1 80); do
+            passed="$(gh api "$runs" --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            going="$(gh api "$runs" --jq '[.workflow_runs[] | select(.status != "completed")] | length')"
+            if [ "$passed" -gt 0 ]; then
+              echo "CI passed on $SHA."
+              exit 0
+            fi
+            if [ "$going" -eq 0 ]; then
+              echo "CI has not passed on $SHA on main. Push main, wait for CI to pass, then push the tag." >&2
+              exit 1
+            fi
+            echo "CI is still running on $SHA. Waiting."
+            sleep 30
+          done
+          echo "CI did not finish on $SHA within 40 minutes." >&2
+          exit 1
+
   image:
+    needs: ci
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
