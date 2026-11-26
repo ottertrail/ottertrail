@@ -22,7 +22,7 @@ export default defineConfig({
     },
     platform: "node",
     // Tells a built API from one run from source (src/version.ts).
-    define: { __OTTERTRAIL_BUNDLE__: "true" },
+    define: { OTTERTRAIL_BUNDLED: "true" },
     // Bundling avoids installing about 180 MB of better-auth optional peers.
     deps: { alwaysBundle: [/./], onlyBundle: false },
     plugins: [

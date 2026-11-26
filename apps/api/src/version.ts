@@ -4,8 +4,8 @@ import packageJson from "../package.json" with { type: "json" };
 export const OTTERTRAIL_VERSION: string = packageJson.version;
 
 // `vp pack` (vite.config.ts) defines this as true; run from source, it stays undefined.
-declare const __OTTERTRAIL_BUNDLE__: boolean | undefined;
-const BUNDLED = typeof __OTTERTRAIL_BUNDLE__ !== "undefined" && __OTTERTRAIL_BUNDLE__;
+declare const OTTERTRAIL_BUNDLED: boolean | undefined;
+const BUNDLED = typeof OTTERTRAIL_BUNDLED !== "undefined" && OTTERTRAIL_BUNDLED;
 
 const RELEASE = /^\d+\.\d+\.\d+$/;
 
