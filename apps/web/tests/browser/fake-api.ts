@@ -3544,7 +3544,8 @@ export function fakeChecks(): Check[] {
 }
 
 /** 24 hourly buckets of 16 November in Singapore; nothing answered in the 4th. */
-export function fakeCheckResults(_checkId: string, query: URLSearchParams): CheckResults {
+export function fakeCheckResults(checkId: string, query: URLSearchParams): CheckResults {
+  if (checkId === fakeHeartbeat().id) return fakeHeartbeatResults(query);
   return {
     timeZone: "Asia/Singapore",
     firstDay: query.get("from") ?? "2026-11-16",
@@ -3577,7 +3578,8 @@ export function fakeCheckResults(_checkId: string, query: URLSearchParams): Chec
 }
 
 /** One incident still open, one that lasted 25 minutes. */
-export function fakeIncidents(_checkId: string, query: URLSearchParams): IncidentList {
+export function fakeIncidents(checkId: string, query: URLSearchParams): IncidentList {
+  if (checkId === fakeHeartbeat().id) return fakeHeartbeatIncidents(query);
   return {
     timeZone: "Asia/Singapore",
     firstDay: query.get("from") ?? "2026-11-16",
@@ -3634,19 +3636,80 @@ export function fakeHeartbeat(): Check {
     tlsExpiresAt: null,
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
-    uptime: { day: 1, week: 0.98, month: 0.995 },
+    uptime: { day: 1, week: 1, month: HEARTBEAT_MONTH },
   };
 }
 
-/** The fake heartbeat's pings: two nights, the first a failure. */
+/**
+ * The fake heartbeat's one incident in 30 days: the night of 30 October (in
+ * Singapore) brought no ping, so it was down from 05:02 that day, its last
+ * ping's day and grace, to the next ping at 03:02 on 31 October: 22 hours.
+ */
+const HEARTBEAT_MISSED = {
+  startedAt: "2026-10-29T21:02:00.000Z",
+  endedAt: "2026-10-30T19:02:00.000Z",
+};
+/** 22 hours down in 30 days. */
+const HEARTBEAT_MONTH = 1 - 22 / (30 * 24);
+
+/** Whether the period asked for reaches back to the missed night. */
+const reachesMissedNight = (query: URLSearchParams) =>
+  query.get("period") === "30d" ||
+  query.get("period") === "90d" ||
+  (query.get("from") ?? "9999") <= "2026-10-30";
+
+/** The heartbeat's uptime from its incident, and no runs, as the API answers a heartbeat. */
+function fakeHeartbeatResults(query: URLSearchParams): CheckResults {
+  return {
+    timeZone: "Asia/Singapore",
+    firstDay: query.get("from") ?? "2026-11-10",
+    lastDay: query.get("to") ?? "2026-11-16",
+    retentionDays: 90,
+    uptime: reachesMissedNight(query) ? HEARTBEAT_MONTH : 1,
+    start: "2026-11-09T16:00:00.000Z",
+    stepSeconds: 86_400,
+    buckets: 7,
+    responseMs: Array.from({ length: 7 }, () => null),
+    runs: 0,
+    failures: 0,
+    latestFailures: [],
+  };
+}
+
+function fakeHeartbeatIncidents(query: URLSearchParams): IncidentList {
+  return {
+    timeZone: "Asia/Singapore",
+    firstDay: query.get("from") ?? "2026-11-10",
+    lastDay: query.get("to") ?? "2026-11-16",
+    truncated: false,
+    incidents: reachesMissedNight(query)
+      ? [
+          {
+            id: "dddddddd-dddd-4ddd-8ddd-000000000003",
+            ...HEARTBEAT_MISSED,
+            cause: "no_ping",
+            detail: "No ping for 1 day and 2 hours.",
+          },
+        ]
+      : [],
+  };
+}
+
+/** The fake heartbeat's pings: the last five nights, each a success. */
 export function fakePings(): Ping[] {
-  return [
-    { at: "2026-11-15T19:02:00.000Z", failed: false },
-    { at: "2026-11-14T19:03:00.000Z", failed: true },
-  ];
+  return ["15", "14", "13", "12", "11"].map((day) => ({
+    at: `2026-11-${day}T19:02:00.000Z`,
+    failed: false,
+  }));
 }
 
 const FAKE_PING_URL = "https://ottertrail.example.com/api/heartbeats/";
+/** Fixed tokens of the real length and alphabet: 32 base64url characters. */
+export const FAKE_PING_TOKENS = {
+  shown: "q7Hc2xVZ0pLf-3mRk9TbWy_4nGs8eJdA",
+  replaced: "X4rM_9vKp2LsQe7hN0yWz-3cBtJ8aFgD",
+  added: "Vb5Tq1Ke-8WzRm3xYh0Lc_6pAs9GdNj2",
+};
 
 /** A heartbeat added or changed as the API would. */
 function saveHeartbeat(api: FakeApi, input: Record<string, unknown>, existing?: Check): Response {
@@ -3677,7 +3740,7 @@ function saveHeartbeat(api: FakeApi, input: Record<string, unknown>, existing?: 
     updatedAt: now,
   };
   if (existing === undefined) {
-    api.pingUrls[check.id] = `${FAKE_PING_URL}${"n".repeat(32)}`;
+    api.pingUrls[check.id] = `${FAKE_PING_URL}${FAKE_PING_TOKENS.added}`;
   }
   api.checks =
     existing === undefined
@@ -4769,10 +4832,9 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
       return json({ timeZone: "Asia/Singapore", pings: api.pings[checkId] ?? [] });
     }
     if (init?.method === "POST") {
-      const next = (api.pingUrls[checkId]?.endsWith("a".repeat(32)) ?? false) ? "b" : "a";
-      api.pingUrls[checkId] = `${FAKE_PING_URL}${next.repeat(32)}`;
+      api.pingUrls[checkId] = `${FAKE_PING_URL}${FAKE_PING_TOKENS.replaced}`;
     }
-    return json({ url: api.pingUrls[checkId] ?? `${FAKE_PING_URL}${"k".repeat(32)}` });
+    return json({ url: api.pingUrls[checkId] ?? `${FAKE_PING_URL}${FAKE_PING_TOKENS.shown}` });
   }
   const checkSubPath = /^\/api\/projects\/[^/]+\/checks\/([^/]+)\/(results|incidents)$/.exec(path);
   if (checkSubPath?.[1] !== undefined) {

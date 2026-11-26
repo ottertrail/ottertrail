@@ -3,6 +3,7 @@ import { page } from "vite-plus/test/browser/context";
 
 import {
   fakeChecks,
+  FAKE_PING_TOKENS,
   fakeHeartbeat,
   fakePings,
   installFakeApi,
@@ -15,7 +16,7 @@ const UPTIME = `/projects/${PROJECT.id}/uptime`;
 const CHECKS_PATH = `/api/projects/${PROJECT.id}/checks`;
 const HEARTBEAT = fakeHeartbeat();
 const HEARTBEAT_PAGE = `${UPTIME}/${HEARTBEAT.id}`;
-const PING_URL = `https://ottertrail.example.com/api/heartbeats/${"k".repeat(32)}`;
+const PING_URL = `https://ottertrail.example.com/api/heartbeats/${FAKE_PING_TOKENS.shown}`;
 
 const rowsOf = (caption: string) => {
   const table = [...document.querySelectorAll("table")].find(
@@ -91,8 +92,9 @@ describe("heartbeats on the Uptime page", () => {
     expect(rowsOf("Uptime of each check")).toContainEqual([
       "Nightly backup",
       "100%",
-      "98.00%",
-      "99.50%",
+      // One night in 30 days without a ping: 22 hours down.
+      "100%",
+      "96.94%",
       "Ping",
       "16 Nov 2026, 03:02",
     ]);
@@ -122,10 +124,15 @@ describe("heartbeats on the Uptime page", () => {
     expect(writeText).toHaveBeenCalledWith(PING_URL);
 
     await expect.element(page.getByRole("table", { name: /Latest pings/ })).toBeVisible();
-    expect(rowsOf("Latest pings, newest first")).toEqual([
-      ["16 Nov 2026, 03:02", "Success"],
-      ["15 Nov 2026, 03:03", "Failure"],
-    ]);
+    expect(rowsOf("Latest pings, newest first")).toEqual(
+      ["16", "15", "14", "13", "12"].map((day) => [`${day} Nov 2026, 03:02`, "Success"]),
+    );
+    // The period's uptime and the last 7 days agree: the missed night is older.
+    await expect
+      .poll(() =>
+        [...document.querySelectorAll("dl dd")].slice(0, 4).map((item) => item.textContent),
+      )
+      .toEqual(["100%", "100%", "100%", "96.94%"]);
     // A heartbeat has no response time or failed runs.
     await expect.element(page.getByText("Response time")).not.toBeInTheDocument();
     await expect.element(page.getByText("Latest failures")).not.toBeInTheDocument();
@@ -145,7 +152,7 @@ describe("heartbeats on the Uptime page", () => {
 
     await expect.element(confirm).not.toBeInTheDocument();
     expect(api.requests.slice(before)).toContain(`${CHECKS_PATH}/${HEARTBEAT.id}/ping-url`);
-    const next = `https://ottertrail.example.com/api/heartbeats/${"a".repeat(32)}`;
+    const next = `https://ottertrail.example.com/api/heartbeats/${FAKE_PING_TOKENS.replaced}`;
     await expect.element(page.getByText(next, { exact: true })).toBeVisible();
     await expect.element(page.getByText(PING_URL, { exact: true })).not.toBeInTheDocument();
   });
