@@ -23,9 +23,10 @@ import {
   MAX_RULES,
   RULE_KINDS,
   isRuleKind,
+  KIND_INFO,
   type RuleKind,
   SETTINGS_SCHEMA,
-  sourceAreaOf,
+  sourceAreasOf,
 } from "./kinds.ts";
 import {
   createRule,
@@ -99,16 +100,14 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
   return request.projectAccess;
 }
 
-/** Require uptime and alerts plus view access to the kind's area (docs/access.md). */
+/** Require uptime and alerts plus view access to one of the kind's areas (docs/access.md). */
 function canSeeKind(user: UserAccess, kind: RuleKind): boolean {
-  const area = sourceAreaOf(kind);
-  return area === null || canUse(user, area, "view");
+  const areas = sourceAreasOf(kind);
+  return areas.length === 0 || areas.some((area) => canUse(user, area, "view"));
 }
 
-function canSeeTelemetry(user: UserAccess, kind: RuleKind): boolean {
-  const area = sourceAreaOf(kind);
-  return (area === "monitoring" || area === "ai") && canUse(user, area, "view");
-}
+const canSeeTelemetry = (user: UserAccess, kind: RuleKind) =>
+  KIND_INFO[kind].source === "telemetry" && canSeeKind(user, kind);
 
 const mayUseKind = (user: UserAccess, kind: string | undefined) =>
   isRuleKind(kind) && canSeeKind(user, kind);

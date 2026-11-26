@@ -44,12 +44,25 @@ import {
   type MetricSettings,
   metricSettingsStored,
   type RuleKind,
+  type StoppedSettings,
+  stoppedSettingsStored,
   TELEMETRY_KINDS,
 } from "./kinds.ts";
+import {
+  arrivedCount,
+  isStopped,
+  readStopped,
+  stoppedLink,
+  stoppedMessage,
+  stoppedNotSeenMessage,
+  stoppedSubject,
+  stoppedSubjectName,
+} from "./stopped-rules.ts";
 
 /**
- * Evaluate telemetry and AI rules once a minute using dashboard calculations
- * (telemetry/services.ts, routeWindows; telemetry/metrics.ts, metricWindow; ai-rules.ts). Claim
+ * Evaluate telemetry, AI, and "data stops arriving" rules once a minute using dashboard
+ * calculations (telemetry/services.ts, routeWindows; telemetry/metrics.ts, metricWindow;
+ * ai-rules.ts; stopped-rules.ts). Claim
  * rules with FOR UPDATE SKIP LOCKED (takeDueRules) to avoid duplicate evaluation
  * (docs/uptime-alerts.md, "Alerts on telemetry"; docs/ai-usage.md).
  *
@@ -82,6 +95,8 @@ export interface TelemetryRule {
   settings: unknown;
   /** Its last change: an alert goes ahead only while the rule is still the one read. */
   updatedAt: Date;
+  /** Since it was added, turned on, or changed to watch something else (rules.ts). */
+  activeSince: Date;
 }
 
 /** The enabled telemetry rules, of every project or one, by project, then age (tests read them). */
@@ -99,6 +114,7 @@ export async function telemetryRules(
       "r.kind",
       "r.settings",
       "r.updated_at",
+      "r.active_since",
     ])
     .where("r.enabled", "=", true)
     .where("r.kind", "in", TELEMETRY_KINDS);
@@ -118,6 +134,7 @@ export async function telemetryRules(
             kind: row.kind,
             settings: row.settings,
             updatedAt: row.updated_at,
+            activeSince: row.active_since,
           },
         ]
       : [],
@@ -143,6 +160,7 @@ export async function takeDueRules(
     settings: unknown;
     updated_at: Date;
     created_at: Date;
+    active_since: Date;
   }>`
     with due as (
       select id from alert_rules
@@ -162,7 +180,7 @@ export async function takeDueRules(
     from due, projects as p
     where r.id = due.id and p.id = r.project_id
     returning r.id, r.project_id, p.name as project_name, r.kind, r.settings, r.updated_at,
-      r.created_at
+      r.created_at, r.active_since
   `.execute(db);
   return rows
     .toSorted(
@@ -181,6 +199,7 @@ export async function takeDueRules(
               kind: row.kind,
               settings: row.settings,
               updatedAt: row.updated_at,
+              activeSince: row.active_since,
             },
           ]
         : [],
@@ -258,7 +277,7 @@ export function windowAt(at: Date, windowMinutes: number): { from: Date; to: Dat
   return { from: new Date(to.getTime() - windowMinutes * 60_000), to };
 }
 
-type Settings = LatencySettings | FailureSettings | MetricSettings | AiSettings;
+type Settings = LatencySettings | FailureSettings | MetricSettings | AiSettings | StoppedSettings;
 
 function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "route_latency") return latencySettingsOf(rule.settings);
@@ -266,12 +285,17 @@ function settingsOfRule(rule: TelemetryRule): Settings {
   if (rule.kind === "ai_cost") return aiCostSettingsStored(rule.settings);
   if (rule.kind === "ai_failures") return aiFailureSettingsStored(rule.settings);
   if (rule.kind === "ai_latency") return aiLatencySettingsStored(rule.settings);
+  if (rule.kind === "events_stopped" || rule.kind === "telemetry_stopped") {
+    return stoppedSettingsStored(rule.kind, rule.settings);
+  }
   return metricSettingsStored(rule.settings);
 }
 
 type RouteSettings = LatencySettings | FailureSettings;
+/** The kinds that compare a value with a threshold: all but "data stops arriving". */
+type ValueSettings = Exclude<Settings, StoppedSettings>;
 
-const isMetric = (settings: Settings): settings is MetricSettings => "metric" in settings;
+const isMetric = (settings: Settings): settings is MetricSettings => "metricKind" in settings;
 const isLatency = (settings: Settings): settings is LatencySettings => "thresholdMs" in settings;
 
 async function readAiRule(
@@ -365,6 +389,7 @@ async function readRoutes(
 }
 
 function breaches(settings: Settings, value: number): boolean {
+  if (isStopped(settings)) return value < settings.minCount;
   if (isAiRule(settings)) return aiBreaches(settings, value);
   if (isMetric(settings)) {
     return settings.direction === "above" ? value > settings.value : value < settings.value;
@@ -435,6 +460,7 @@ const metricWhat = (settings: MetricSettings) =>
   `${AGGREGATE_TEXT[settings.aggregate]} of ${settings.metric}${filtersText(settings)}`;
 
 function subjectName(settings: Settings): string {
+  if (isStopped(settings)) return stoppedSubjectName(settings);
   if (isAiRule(settings)) return aiSubjectName(settings);
   if (isMetric(settings)) return `${settings.metric} (${settings.aggregate})`;
   return settings.route === null ? settings.service : `${settings.service} ${settings.route}`;
@@ -447,7 +473,7 @@ function subjectName(settings: Settings): string {
 export function telemetryLink(
   context: AlertContext,
   projectId: string,
-  settings: Settings,
+  settings: ValueSettings,
 ): string {
   if (isAiRule(settings)) return aiLink(context, projectId, settings);
   const first = (candidates: (() => string)[]): string => {
@@ -490,7 +516,7 @@ export function telemetryLink(
 
 const rounded = (value: number) => Number(value.toFixed(3));
 
-function subjectOf(settings: Settings, reading: Reading & { value: number }): Subject {
+function subjectOf(settings: ValueSettings, reading: Reading & { value: number }): Subject {
   if (isAiRule(settings)) {
     return aiSubject(settings, {
       ...reading,
@@ -543,7 +569,7 @@ function subjectOf(settings: Settings, reading: Reading & { value: number }): Su
 
 function messageOf(
   project: string,
-  settings: Settings,
+  settings: ValueSettings,
   reading: Reading & { value: number },
   resolved: boolean,
 ): string {
@@ -612,13 +638,15 @@ export async function evaluateTelemetryRule(
   at: Date,
 ): Promise<RuleResult> {
   const settings = settingsOfRule(rule);
-  const reading = isAiRule(settings)
-    ? await readAiRule(context, reader, rule, settings, at)
-    : isMetric(settings)
-      ? await readMetric(reader, rule, settings, at)
-      : (
-          await readRoutes(reader, rule.projectId, settings.environment, [{ rule, settings }], at)
-        )[0];
+  const reading = isStopped(settings)
+    ? await readStopped(reader, rule, settings, at)
+    : isAiRule(settings)
+      ? await readAiRule(context, reader, rule, settings, at)
+      : isMetric(settings)
+        ? await readMetric(reader, rule, settings, at)
+        : (
+            await readRoutes(reader, rule.projectId, settings.environment, [{ rule, settings }], at)
+          )[0];
   if (reading === undefined) throw new Error("A route rule's batch read nothing");
   return judge(context, rule, settings, reading, at);
 }
@@ -646,11 +674,21 @@ async function judge(
     return { reading, outcome: "none" };
   }
   const read = { ...reading, value };
-  const message = {
-    url: telemetryLink(context, rule.projectId, settings),
-    subject: subjectOf(settings, read),
-    at,
-  };
+  const message = isStopped(settings)
+    ? {
+        url: stoppedLink(context, rule.projectId, rule.id),
+        subject: stoppedSubject(settings, value),
+        at,
+      }
+    : {
+        url: telemetryLink(context, rule.projectId, settings),
+        subject: subjectOf(settings, read),
+        at,
+      };
+  const text = (resolved: boolean) =>
+    isStopped(settings)
+      ? stoppedMessage(rule.projectName, settings, value, resolved)
+      : messageOf(rule.projectName, settings, read, resolved);
   if (breaches(settings, value)) {
     if (firing) {
       if (state.clear_since !== null) await setClearSince(context.db, rule.id, "", null);
@@ -661,7 +699,7 @@ async function judge(
       subjectKey: "",
       subjectName: subjectName(settings),
       type: KIND_INFO[rule.kind].fires,
-      message: messageOf(rule.projectName, settings, read, false),
+      message: text(false),
       rule: { kind: rule.kind, settings: rule.settings },
       still: unchanged(rule),
       ...message,
@@ -669,13 +707,16 @@ async function judge(
     return { reading, outcome };
   }
   if (!firing) return { reading, outcome: "none" };
-  if (state.clear_since === null) {
-    await setClearSince(context.db, rule.id, "", at);
-    return { reading, outcome: "waiting" };
-  }
-  const clearMinutes = isAiRule(settings) ? aiClearMinutes(settings) : settings.windowMinutes;
-  if (at.getTime() - state.clear_since.getTime() < clearMinutes * 60_000) {
-    return { reading, outcome: "waiting" };
+  // Data that arrives again is back at once; a value must stay on the right side a while.
+  if (!isStopped(settings)) {
+    if (state.clear_since === null) {
+      await setClearSince(context.db, rule.id, "", at);
+      return { reading, outcome: "waiting" };
+    }
+    const clearMinutes = isAiRule(settings) ? aiClearMinutes(settings) : settings.windowMinutes;
+    if (at.getTime() - state.clear_since.getTime() < clearMinutes * 60_000) {
+      return { reading, outcome: "waiting" };
+    }
   }
   const resolves = KIND_INFO[rule.kind].resolves;
   if (resolves === null) return { reading, outcome: "none" };
@@ -683,7 +724,7 @@ async function judge(
     ruleId: rule.id,
     subjectKey: "",
     type: resolves,
-    message: messageOf(rule.projectName, settings, read, true),
+    message: text(true),
     rule: { kind: rule.kind, settings: rule.settings },
     still: unchanged(rule),
     ...message,
@@ -709,9 +750,12 @@ function stepsOf(rules: readonly TelemetryRule[]) {
   const routes = new Map<string, { rule: TelemetryRule; settings: RouteSettings }[]>();
   const metrics: { rule: TelemetryRule; settings: MetricSettings }[] = [];
   const ai: { rule: TelemetryRule; settings: AiSettings }[] = [];
+  const stopped: { rule: TelemetryRule; settings: StoppedSettings }[] = [];
   for (const rule of rules) {
     const settings = settingsOfRule(rule);
-    if (isAiRule(settings)) {
+    if (isStopped(settings)) {
+      stopped.push({ rule, settings });
+    } else if (isAiRule(settings)) {
       ai.push({ rule, settings });
     } else if (isMetric(settings)) {
       metrics.push({ rule, settings });
@@ -721,7 +765,7 @@ function stepsOf(rules: readonly TelemetryRule[]) {
       routes.set(settings.environment, group);
     }
   }
-  return { routes: [...routes], metrics, ai };
+  return { routes: [...routes], metrics, ai, stopped };
 }
 
 /**
@@ -770,7 +814,7 @@ export async function evaluateTelemetryPass(
       }
       // Measure budget with real time even when tests fix the evaluation clock.
       const reader = readerOf(projectId, Date.now() + budgetMs);
-      const { routes, metrics, ai } = stepsOf(projectRules);
+      const { routes, metrics, ai, stopped } = stepsOf(projectRules);
       const steps = [
         ...routes.map(([environment, group]) => ({
           rules: group.map((item) => item.rule),
@@ -800,6 +844,14 @@ export async function evaluateTelemetryPass(
           run: async () => {
             const at = now();
             const reading = await readAiRule(context, reader, rule, settings, at);
+            return [{ rule, result: await judge(context, rule, settings, reading, at) }];
+          },
+        })),
+        ...stopped.map(({ rule, settings }) => ({
+          rules: [rule],
+          run: async () => {
+            const at = now();
+            const reading = await readStopped(reader, rule, settings, at);
             return [{ rule, result: await judge(context, rule, settings, reading, at) }];
           },
         })),
@@ -858,11 +910,16 @@ export async function notSeenWarning(
     kind,
     settings: stored,
     updatedAt: now,
+    activeSince: now,
   });
   const from = new Date(now.getTime() - SEEN_MS);
   const scope = { projectId, environment: settings.environment };
   const where = `in ${settings.environment} in the last 24 hours`;
   try {
+    if (isStopped(settings)) {
+      const seen = await arrivedCount(reader, projectId, settings, { from, to: now }, 1);
+      return seen > 0 ? null : notSeen(stoppedNotSeenMessage(settings));
+    }
     if (isAiRule(settings)) {
       const seen = await aiRuleSeen(reader, projectId, settings, from, now);
       return seen ? null : notSeen(aiNotSeenMessage(settings));

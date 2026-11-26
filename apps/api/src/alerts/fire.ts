@@ -3,7 +3,7 @@ import { type Kysely, sql, type Transaction } from "kysely";
 import type { Database } from "../db/schema.ts";
 import { notifyIn } from "../notifications/deliveries.ts";
 import { type EventType, MAX_MESSAGE, type Subject } from "../notifications/events.ts";
-import { isRuleKind, sourceAreaOf } from "./kinds.ts";
+import { isRuleKind, sourceAreasOf } from "./kinds.ts";
 
 /**
  * Write state, history, and notification in one transaction under the rule lock to prevent
@@ -96,12 +96,15 @@ const stillWatching = (rule: LockedRule, read: RuleRead) =>
   // Both read from one jsonb value, whose keys come out in one order.
   JSON.stringify(rule.settings) === JSON.stringify(read.settings);
 
-/** Who sees a rule's alerts in the inbox: alerts, and the area its kind watches (docs/access.md). */
+/**
+ * Who sees a rule's alerts in the inbox: alerts, and one of the areas its kind watches
+ * (docs/access.md).
+ */
 function inboxAreas(rule: LockedRule) {
-  const source = isRuleKind(rule.kind) ? sourceAreaOf(rule.kind) : null;
-  return {
-    areas: source === null ? ["uptime_alerts" as const] : ["uptime_alerts" as const, source],
-  };
+  const sources = isRuleKind(rule.kind) ? sourceAreasOf(rule.kind) : [];
+  return sources.length > 1
+    ? { areas: ["uptime_alerts" as const], anyAreas: sources }
+    : { areas: ["uptime_alerts" as const, ...sources] };
 }
 
 interface Message {

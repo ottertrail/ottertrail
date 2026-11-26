@@ -86,6 +86,10 @@ export function inboxTitle(payload: NotificationPayload): string {
       return `Slow AI calls: ${rule}`;
     case "ai.latency_resolved":
       return `AI latency normal: ${rule}`;
+    case "data.stopped":
+      return `Data stopped arriving: ${rule}`;
+    case "data.stopped_resolved":
+      return `Data arriving again: ${rule}`;
     case "alert.held_back": {
       const held = typeof subject.held === "number" ? subject.held : 0;
       return `${text(subject.name)} held back ${held} ${held === 1 ? "alert" : "alerts"}`;
@@ -111,6 +115,8 @@ export interface InboxOptions {
   title?: string | undefined;
   /** The areas a reader needs at view; defaultAreas's when left out. */
   areas?: readonly Area[] | undefined;
+  /** Besides `areas`, a reader needs one of these at view; none when left out or empty. */
+  anyAreas?: readonly Area[] | undefined;
   /**
    * Default to projects permission for instance items (Storage). Use settings for owner-only
    * items (Backups).
@@ -144,6 +150,7 @@ export async function recordFromPayload(
       project_id: payload.project?.id ?? null,
       permission: payload.project === null ? (options.permission ?? "projects") : null,
       areas: payload.project === null ? [] : [...(options.areas ?? defaultAreas(payload.type))],
+      any_areas: payload.project === null ? [] : [...(options.anyAreas ?? [])],
       title: titleText(options.title ?? inboxTitle(payload)),
       link: linkPath(payload.url),
       source_id: payload.id,
@@ -195,6 +202,7 @@ function visibleTo(reach: Reach, now: Date): Expression<SqlBool> {
     and (n.permission is null or n.permission = any(${permissions}::text[]))
     and (n.project_id is null or ${projects}::uuid[] is null or n.project_id = any(${projects}::uuid[]))
     and n.areas <@ ${areas}::text[]
+    and (cardinality(n.any_areas) = 0 or n.any_areas && ${areas}::text[])
     and n.created_at >= (select u.created_at from dashboard_users u where u.id = ${reach.userId})
     and n.created_at > ${now}::timestamptz - make_interval(days => ${INBOX_RETENTION_DAYS})
   )`;

@@ -602,7 +602,7 @@ describe("the rule routes", () => {
     ).toBe("FST_ERR_VALIDATION");
     expect(
       await refused({ kind: "ai_failures", settings: { thresholdPercent: 5, windowMinutes: 61 } }),
-    ).toBe("FST_ERR_VALIDATION");
+    ).toBe("invalid_window");
     expect(await refused({ kind: "ai_latency", settings: {} })).toBe("invalid_threshold");
     expect(await refused({ kind: "ai_latency", settings: { thresholdMs: 3_600_001 } })).toBe(
       "FST_ERR_VALIDATION",

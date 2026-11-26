@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer";
 
+import type { Area } from "../access/areas.ts";
 import { DEFAULT_ENVIRONMENT, ENVIRONMENT_PATTERN } from "../collection/environment.ts";
+import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import { FINGERPRINT_PATTERN } from "../errors/fingerprint.ts";
 import type { EventType } from "../notifications/events.ts";
 import type { Problem } from "../outbound/url.ts";
@@ -24,6 +26,8 @@ export const RULE_KINDS = [
   "ai_cost",
   "ai_failures",
   "ai_latency",
+  "events_stopped",
+  "telemetry_stopped",
 ] as const;
 
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -102,6 +106,19 @@ export const KIND_INFO: Record<
     fires: "ai.latency",
     resolves: "ai.latency_resolved",
   },
+  // Two kinds, one name: events and telemetry need different areas (sourceAreasOf).
+  events_stopped: {
+    label: "Data stops arriving",
+    source: "telemetry",
+    fires: "data.stopped",
+    resolves: "data.stopped_resolved",
+  },
+  telemetry_stopped: {
+    label: "Data stops arriving",
+    source: "telemetry",
+    fires: "data.stopped",
+    resolves: "data.stopped_resolved",
+  },
 };
 
 /** The kinds the worker evaluates from spans and metrics (alerts/telemetry-rules.ts). */
@@ -155,6 +172,20 @@ export const MAX_MIN_CALLS = 1_000_000;
 export const COST_CLEAR_MINUTES = 60;
 /** The longest model or feature an AI rule names: what ai_calls holds (ai/calls.ts). */
 export const MAX_AI_FILTER_CHARS = 100;
+
+/** What a "data stops arriving" rule counts: events for events_stopped, the rest for telemetry_stopped. */
+export const DATA_SOURCES = ["events", "traces", "logs", "metrics"] as const;
+export type DataSource = (typeof DATA_SOURCES)[number];
+export const TELEMETRY_SOURCES = ["traces", "logs", "metrics"] as const;
+/** The windows a "data stops arriving" rule offers, in minutes: 5 minutes to 24 hours. */
+export const STOPPED_WINDOWS = [5, 10, 15, 30, 60, 120, 240, 360, 720, 1440] as const;
+export const DEFAULT_STOPPED_WINDOW = 60;
+export const MAX_STOPPED_WINDOW = 1440;
+/** Fires below this many records in the window; 1 is "nothing arrived". */
+export const DEFAULT_MIN_COUNT = 1;
+export const MAX_MIN_COUNT = 1_000_000;
+/** The longest event name collection takes (collection/routes.ts, EVENT_NAME_SCHEMA). */
+export const MAX_EVENT_NAME = 200;
 
 /** Each kind's settings, as stored and answered. null: all (checks, environments, groups). */
 export interface CheckDownSettings {
@@ -235,6 +266,23 @@ export interface AiLatencySettings extends AiScope {
   minCalls: number;
 }
 
+/**
+ * A "data stops arriving" rule: one source in one environment, optionally narrowed to an event
+ * name, a service (traces, logs), or a metric (required) and its host. Other sources' fields
+ * are null.
+ */
+export interface StoppedSettings {
+  source: DataSource;
+  environment: string;
+  eventName: string | null;
+  service: string | null;
+  metric: string | null;
+  host: string | null;
+  windowMinutes: number;
+  /** Fires when fewer records than this arrived in the window. */
+  minCount: number;
+}
+
 export type RuleSettings =
   | CheckDownSettings
   | CertificateSettings
@@ -246,7 +294,8 @@ export type RuleSettings =
   | MetricSettings
   | AiCostSettings
   | AiFailureSettings
-  | AiLatencySettings;
+  | AiLatencySettings
+  | StoppedSettings;
 
 /** What the API takes as settings: every kind's fields, each optional. */
 export interface SettingsInput {
@@ -256,13 +305,13 @@ export interface SettingsInput {
   fingerprint?: string | null | undefined;
   windowMinutes?: number | undefined;
   threshold?: number | undefined;
-  service?: string | undefined;
+  service?: string | null | undefined;
   route?: string | null | undefined;
   minRequests?: number | undefined;
   percentile?: string | undefined;
   thresholdMs?: number | undefined;
   thresholdPercent?: number | undefined;
-  metric?: string | undefined;
+  metric?: string | null | undefined;
   metricKind?: string | undefined;
   aggregate?: string | undefined;
   direction?: string | undefined;
@@ -275,6 +324,9 @@ export interface SettingsInput {
   feature?: string | null | undefined;
   model?: string | null | undefined;
   minCalls?: number | undefined;
+  source?: string | undefined;
+  eventName?: string | null | undefined;
+  minCount?: number | undefined;
 }
 
 /** The fields Fastify's schema takes in `settings`, for every kind; settingsOf checks each kind's. */
@@ -289,9 +341,10 @@ export const SETTINGS_SCHEMA = {
     days: { type: "integer", minimum: 1, maximum: MAX_CERTIFICATE_DAYS },
     environment: { type: ["string", "null"], pattern: ENVIRONMENT_PATTERN },
     fingerprint: { type: ["string", "null"], pattern: FINGERPRINT_PATTERN },
-    windowMinutes: { type: "integer", minimum: MIN_WINDOW_MINUTES, maximum: MAX_WINDOW_MINUTES },
+    // Up to a day for "data stops arriving"; settingsOf narrows it for the other kinds.
+    windowMinutes: { type: "integer", minimum: MIN_WINDOW_MINUTES, maximum: MAX_STOPPED_WINDOW },
     threshold: { type: "integer", minimum: 1, maximum: MAX_THRESHOLD },
-    service: { type: "string", pattern: SERVICE_PATTERN },
+    service: { type: ["string", "null"], pattern: SERVICE_PATTERN },
     // A route is an attribute's value or a span's name, as stored: at most 4 KB.
     route: { type: ["string", "null"], minLength: 1, maxLength: MAX_FILTER_CHARS },
     minRequests: { type: "integer", minimum: 1, maximum: MAX_MIN_REQUESTS },
@@ -311,6 +364,9 @@ export const SETTINGS_SCHEMA = {
     feature: { type: ["string", "null"], maxLength: MAX_AI_FILTER_CHARS },
     model: { type: ["string", "null"], maxLength: MAX_AI_FILTER_CHARS },
     minCalls: { type: "integer", minimum: 1, maximum: MAX_MIN_CALLS },
+    source: { type: "string", enum: [...DATA_SOURCES] },
+    eventName: { ...EVENT_NAME_SCHEMA, type: ["string", "null"] },
+    minCount: { type: "integer", minimum: 1, maximum: MAX_MIN_COUNT },
   },
 } as const;
 
@@ -345,6 +401,9 @@ export function settingsOf(
   if (kind === "error_new") return { environment: environmentOf(pick("environment")) };
   if (kind === "error_regressed") return {};
   if (kind === "ai_cost") return aiCostSettingsOf(pick);
+  if (kind === "events_stopped" || kind === "telemetry_stopped") {
+    return stoppedSettingsOf(kind, pick);
+  }
   const windowMinutes = windowOf(pick("windowMinutes"));
   if (typeof windowMinutes !== "number") return windowMinutes;
   if (kind === "route_latency" || kind === "route_failures") {
@@ -402,7 +461,7 @@ function routeSettingsOf(
   windowMinutes: number,
 ): LatencySettings | FailureSettings | Problem {
   const service = pick("service");
-  if (service === undefined || service === "") {
+  if (service === undefined || service === null || service === "") {
     return {
       error: "invalid_service",
       message: "Choose the service whose requests the rule monitors.",
@@ -471,7 +530,7 @@ function routeSettingsOf(
 
 function metricSettingsOf(pick: Picker, windowMinutes: number): MetricSettings | Problem {
   const metric = pick("metric");
-  if (metric === undefined || metric === "" || !fits(metric, MAX_NAME_BYTES)) {
+  if (metric === undefined || metric === null || metric === "" || !fits(metric, MAX_NAME_BYTES)) {
     return {
       error: "invalid_metric",
       message: `Choose the metric the rule monitors. A name contains at most ${MAX_NAME_BYTES} bytes.`,
@@ -528,6 +587,67 @@ function metricSettingsOf(pick: Picker, windowMinutes: number): MetricSettings |
     attributeKey,
     attributeValue,
   };
+}
+
+const sourcesOf = (kind: "events_stopped" | "telemetry_stopped"): readonly DataSource[] =>
+  kind === "events_stopped" ? ["events"] : TELEMETRY_SOURCES;
+
+function stoppedSettingsOf(
+  kind: "events_stopped" | "telemetry_stopped",
+  pick: Picker,
+): StoppedSettings | Problem {
+  const offered = sourcesOf(kind);
+  const source = offered.find((item) => item === (pick("source") ?? offered[0]));
+  if (source === undefined) {
+    return {
+      error: "invalid_source",
+      message:
+        kind === "events_stopped"
+          ? "An events rule counts events."
+          : "Choose traces, logs, or metrics.",
+    };
+  }
+  const windowMinutes = pick("windowMinutes") ?? DEFAULT_STOPPED_WINDOW;
+  if (!STOPPED_WINDOWS.some((item) => item === windowMinutes)) {
+    return {
+      error: "invalid_window",
+      message: `Choose a window of ${STOPPED_WINDOWS.join(", ")} minutes.`,
+    };
+  }
+  const minCount = pick("minCount") ?? DEFAULT_MIN_COUNT;
+  if (!Number.isInteger(minCount) || minCount < 1 || minCount > MAX_MIN_COUNT) {
+    return {
+      error: "invalid_min_count",
+      message: `The fewest records is a whole number from 1 to ${MAX_MIN_COUNT.toLocaleString("en")}.`,
+    };
+  }
+  const settings: StoppedSettings = {
+    source,
+    environment: telemetryEnvironmentOf(pick("environment")),
+    eventName: null,
+    service: null,
+    metric: null,
+    host: null,
+    windowMinutes,
+    minCount,
+  };
+  if (source === "events") return { ...settings, eventName: optionalText(pick("eventName")) };
+  if (source !== "metrics") return { ...settings, service: optionalText(pick("service")) };
+  const metric = pick("metric");
+  if (metric === undefined || metric === null || metric === "" || !fits(metric, MAX_NAME_BYTES)) {
+    return {
+      error: "invalid_metric",
+      message: `Choose the metric the rule monitors. A name contains at most ${MAX_NAME_BYTES} bytes.`,
+    };
+  }
+  const host = optionalText(pick("host"));
+  if (host !== null && host.length > MAX_FILTER_CHARS) {
+    return {
+      error: "invalid_attribute",
+      message: `A host's name has at most ${MAX_FILTER_CHARS.toLocaleString("en")} characters.`,
+    };
+  }
+  return { ...settings, metric, host };
 }
 
 /** An AI rule's environment, feature, and model; or the problem. */
@@ -666,7 +786,28 @@ export function storedSettings(kind: RuleKind, value: unknown): RuleSettings {
   if (kind === "ai_cost") return aiCostSettingsStored(value);
   if (kind === "ai_failures") return aiFailureSettingsStored(value);
   if (kind === "ai_latency") return aiLatencySettingsStored(value);
+  if (kind === "events_stopped" || kind === "telemetry_stopped") {
+    return stoppedSettingsStored(kind, value);
+  }
   return spikeSettingsOf(value);
+}
+
+export function stoppedSettingsStored(
+  kind: "events_stopped" | "telemetry_stopped",
+  value: unknown,
+): StoppedSettings {
+  const stored = storedRecord(value);
+  const offered = sourcesOf(kind);
+  return {
+    source: offered.find((item) => item === stored.source) ?? offered[0] ?? "events",
+    environment: textOrNull(stored.environment) ?? DEFAULT_ENVIRONMENT,
+    eventName: textOrNull(stored.eventName),
+    service: textOrNull(stored.service),
+    metric: textOrNull(stored.metric),
+    host: textOrNull(stored.host),
+    windowMinutes: numberOr(stored.windowMinutes, DEFAULT_STOPPED_WINDOW),
+    minCount: numberOr(stored.minCount, DEFAULT_MIN_COUNT),
+  };
 }
 
 const aiScopeStored = (stored: Record<string, unknown>): AiScope => ({
@@ -752,11 +893,13 @@ export function checkIdOf(settings: RuleSettings): string | null {
 export const AI_KINDS: readonly RuleKind[] = ["ai_cost", "ai_failures", "ai_latency"];
 
 /**
- * Require view access to the subject's area as well as uptime and alerts (docs/access.md).
- * Check rules need no additional area.
+ * The areas a kind watches: besides uptime and alerts, a reader needs view access to one of them
+ * (docs/access.md). Check rules need none (empty).
  */
-export function sourceAreaOf(kind: RuleKind): "errors" | "monitoring" | "ai" | null {
-  if (AI_KINDS.includes(kind)) return "ai";
+export function sourceAreasOf(kind: RuleKind): readonly Area[] {
+  if (AI_KINDS.includes(kind)) return ["ai"];
+  // Events are web and product analytics' data: either area shows them.
+  if (kind === "events_stopped") return ["web_analytics", "product_analytics"];
   const { source } = KIND_INFO[kind];
-  return source === "errors" ? "errors" : source === "telemetry" ? "monitoring" : null;
+  return source === "errors" ? ["errors"] : source === "telemetry" ? ["monitoring"] : [];
 }

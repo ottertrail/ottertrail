@@ -766,6 +766,8 @@ export interface NotificationsTable {
   permission: ColumnType<InboxPermission | null, InboxPermission | null | undefined, never>;
   /** The areas of the project a reader needs, each at view. */
   areas: ColumnType<string[], string[] | undefined, never>;
+  /** Besides `areas`, a reader needs one of these at view; empty: none. */
+  any_areas: ColumnType<string[], string[] | undefined, never>;
   /** A personal item's one reader; null for everyone the rest allows. */
   user_id: ColumnType<string | null, string | null | undefined, never>;
   title: ColumnType<string, string, never>;

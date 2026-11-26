@@ -30,6 +30,7 @@ import * as projectLocationSource from "./0027_project_location_source.ts";
 import * as projectTelemetryRetention from "./0028_project_telemetry_retention.ts";
 import * as userDeletions from "./0029_user_deletions.ts";
 import * as stepMatching from "./0030_step_matching.ts";
+import * as notificationAnyAreas from "./0031_notification_any_areas.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -69,4 +70,5 @@ export const migrations: Record<string, Migration> = {
   "0028_project_telemetry_retention": projectTelemetryRetention,
   "0029_user_deletions": userDeletions,
   "0030_step_matching": stepMatching,
+  "0031_notification_any_areas": notificationAnyAreas,
 };

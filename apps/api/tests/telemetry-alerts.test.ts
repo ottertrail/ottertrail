@@ -1119,7 +1119,7 @@ describe("the rule routes", () => {
         kind: "route_failures",
         settings: { service: "checkout", thresholdPercent: 5, windowMinutes: 90 },
       }),
-    ).toBe("FST_ERR_VALIDATION");
+    ).toBe("invalid_window");
     expect(
       await refused({
         kind: "metric_threshold",
