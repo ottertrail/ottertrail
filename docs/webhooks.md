@@ -89,6 +89,8 @@ The body, version 1:
 | `ai.latency_resolved`       | It stays at or below it for the same window                                                   |
 | `data.stopped`              | Fewer records of one source than the rule's minimum arrived in its window                     |
 | `data.stopped_resolved`     | At least the minimum arrived in the window again                                              |
+| `log.lines`                 | More log lines that match the rule's filter than its number arrived in its window             |
+| `log.lines_resolved`        | A window holds no more than the number again                                                  |
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
 | `storage.low`               | A storage warning starts, or becomes critical                                                 |
 | `storage.recovered`         | A storage warning ends                                                                        |
@@ -384,6 +386,10 @@ The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`,
 #### `data.stopped` and `data.stopped_resolved`
 
 The subject has `type` `data_stopped`, `source` (`events`, `traces`, `logs`, or `metrics`), `environment`, `eventName`, `service`, `metric`, and `host` (null when the rule does not narrow to one, or its source has no such field), `windowMinutes`, `minCount` (the fewest records), and `count`: the records that arrived in the window, counted up to `minCount`. The message reads `No events from Main site in production in the last 30 minutes.`, or, below a minimum above 1, `Only 2 events named waitlist_signup from Main site in production in the last 1 hour, fewer than the rule's 3.` The link is the rule on the Alerts page. `data.stopped_resolved` has the same subject, and a message such as `Spans of the service api arrive again from Main site in production.` Records count by when they arrived ([uptime and alerts](uptime-alerts.md#data-stops-arriving-as-built)).
+
+#### `log.lines` and `log.lines_resolved`
+
+The subject has `type` `log_lines`, `environment`, `service` (null for all), `severity` (the lowest counted: `trace`, `debug`, `info`, `warn`, `error`, or `fatal`; null for any), `search` (the words each line holds; null for none), `windowMinutes`, `maxCount` (the rule's number), and `count`: the matching lines that arrived in the window, counted up to `maxCount` + 1, so on `log.lines` it is at least that many. The message reads `Main site: at least 1 log line of Error or above from server in production in the last 5 minutes.`, or, with a number above 0, `Main site: more than 2 log lines of Error or above from server with the words "timeout" in production in the last 10 minutes.` `log.lines_resolved` has the same subject, and a message such as `Main site: no log lines of Error or above from server in production in the last 5 minutes.` Neither holds a line's text. The link opens the Logs page on the rule's filters and the window. Lines count by when they arrived ([uptime and alerts](uptime-alerts.md#log-lines-match-as-built)).
 
 #### `alert.held_back`
 

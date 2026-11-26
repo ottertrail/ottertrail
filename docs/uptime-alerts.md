@@ -47,7 +47,7 @@ Added on 18 November 2026: the numbers a team watches on its servers, not only w
 
 - **Below too:** a value under a threshold can be what matters: response times that drop suddenly (an empty page answers fast), a queue that stops moving, requests that stop coming.
 - **Evaluation:** by the worker every minute, from the same data and computations as the Services and Metrics pages, over windows of 5 to 60 minutes; each rule's query is bounded like the dashboard's, and the worker evaluates a few at a time, so rules cannot crowd out ingestion or the dashboard.
-- **Not yet:** alerts on matching log lines.
+- **Log lines:** a rule on matching log lines has its own section [below](#alerts-on-matching-log-lines).
 
 ### Alerts on data that stops arriving
 
@@ -62,16 +62,32 @@ Added on 26 November 2026: if a site's tracker breaks, or a server stops sending
 - **By arrival:** records count by when they arrived, not when they happened, so late or backfilled data does not hide a stop.
 - **A new rule** judges only once it is a whole window old (since it was added, turned on, or changed), so its source has had a full window to send.
 - **Quiet hours:** a small site may have no visitors for hours at night. There are no schedules: pick a window that the site's quietest hours fill.
-- **Not in scope:** schedules or quiet hours, alerts on matching log lines, and heartbeat checks that a cron job reports to.
+- **Not in scope:** schedules or quiet hours, and heartbeat checks that a cron job reports to.
 
 How it is built is [below](#data-stops-arriving-as-built).
+
+### Alerts on matching log lines
+
+Added on 26 November 2026: many apps write their errors as log lines and record no exception, so the error rules miss them.
+
+| Rule            | Fires when                                                                                        | Resolves when                         |
+| --------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Log lines match | More than N log lines that match the rule's filter arrived in the last window (N is 0 by default) | A whole window holds N or fewer lines |
+
+- **The filter** is the Logs page's: one environment, optionally one service, a minimum severity (Error and above by default, or any severity, which also takes lines without one), and optionally up to 8 words, each of which the line's body must hold, in any case, whole or as part of a longer word. A rule and the page match the same lines.
+- **Windows:** 5 to 60 minutes, 5 by default.
+- **By arrival:** lines count by when they arrived, not when they happened, so a line sent late counts once, in the window it arrived in, and is never missed.
+- **The message** names the project, the filter, the window, and how many lines: "Main site: at least 1 log line of Error or above from server in production in the last 5 minutes." It never holds a line's text, which can hold personal data, since alerts go out by email and webhook. Its link opens the Logs page on the same filters and time window.
+- **Not in scope:** regular expressions, filters on attributes, the line's text in the message, metrics made from logs, and anomaly detection.
+
+How it is built is [below](#log-lines-match-as-built).
 
 ## Where alerts go
 
 Channels belong to the instance (its settings), so every project can use them; each rule picks one or more.
 
 - **Email:** a list of addresses. Sent through the SMTP server the instance is set up with (`SMTP_URL`, `EMAIL_FROM`); without one, the dashboard says email is not set up on this instance. Plain, short messages: what happened, when, and a link to the check or error in the dashboard. Ottertrail sends no other email from alerts.
-- **Webhook:** a JSON `POST` to a URL, for a team's own scripts or another service. Each request carries the time and a signature, an HMAC-SHA256 of the time and body with the channel's secret, so the receiver can check it came from Ottertrail and is not a replay. The body names the event (`check.down`, `check.up`, `certificate.expiring`, `error.new`, `error.regressed`, `error.spike`, `error.spike_resolved`, and for telemetry `route.latency`, `route.failures`, `metric.threshold`, `data.stopped` and their `_resolved` forms), the project, what it is about, and the dashboard link. The format is documented and versioned.
+- **Webhook:** a JSON `POST` to a URL, for a team's own scripts or another service. Each request carries the time and a signature, an HMAC-SHA256 of the time and body with the channel's secret, so the receiver can check it came from Ottertrail and is not a replay. The body names the event (`check.down`, `check.up`, `certificate.expiring`, `error.new`, `error.regressed`, `error.spike`, `error.spike_resolved`, and for telemetry `route.latency`, `route.failures`, `metric.threshold`, `data.stopped`, `log.lines` and their `_resolved` forms), the project, what it is about, and the dashboard link. The format is documented and versioned.
 - **Delivery:** every notification is recorded in PostgreSQL before it is sent, and sent by the worker: a webhook gets 10 seconds to answer 2xx, then is retried with growing waits, for up to an hour; email is retried likewise. The dashboard lists each channel's deliveries of the last 30 days, with their outcome, and can send a test.
 - **The dashboard's inbox:** each alert that fires or resolves, and each held-back summary, is also an item in the notifications of everyone who can see the rule (uptime and alerts at view, and one of the areas its kind watches), whether or not the rule has channels, written in the alert's transaction, so it is there once ([access](access.md#notifications), [dashboard](dashboard.md#notifications)). The instance's storage and backup warnings, raised and cleared, and the backup notices are items for the owner and admins. Items are not emailed.
 
@@ -89,7 +105,6 @@ At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects,
 ## Not in the first version
 
 - Slack and Discord messages in their own formats (a webhook can reach a small relay meanwhile), SMS, and phone calls.
-- Alerts on matching log lines.
 - Checks from several locations, and checks other than HTTP (TCP, ping, DNS); heartbeat checks that a job reports to.
 - Status pages, on-call schedules, escalation, and maintenance windows (a check can be paused).
 
@@ -278,9 +293,24 @@ Built on 26 November 2026, from the design [above](#alerts-on-data-that-stops-ar
 - **Access:** `events_stopped` needs web analytics or product analytics at view, `telemetry_stopped` monitoring. Its inbox items need uptime and alerts and one of the two analytics areas: `notifications.any_areas` (migration 0031) holds areas a reader needs one of, besides `areas`, all of which they need.
 - **Tests:** `apps/api/tests/stopped-alerts.test.ts` (each source, by arrival, below N, a new rule's first window, the filters, the environment, another project's data, the messages, the worker's pass, the rows read, the routes' checks, and who sees the rules, their alerts, and their inbox items), and `apps/web/tests/browser/stopped-alerts.test.tsx` (the form, its sources by access, the bodies sent, the rule's row and edit form).
 
+### Log lines match, as built
+
+Built on 26 November 2026, from the design [above](#alerts-on-matching-log-lines). Code: `apps/api/src/alerts/log-rules.ts`, with `kinds.ts`, `telemetry-rules.ts`, and `telemetry/logs.ts` (`filterConditions`); and `apps/web/src/features/alerts/` and `apps/web/src/features/telemetry/logs-page.tsx` ([the dashboard](dashboard.md#813-alerts)). The notifications' bodies are in [webhooks](webhooks.md#loglines-and-loglines_resolved). No PostgreSQL migration: a kind is text, and its settings are JSON.
+
+- **Kind:** `log_lines`, named "Log lines match". It is a telemetry rule: taken, bounded, and recorded as above, and it needs `monitoring` at view to see it and uptime and alerts at manage to change it ([access](access.md#alert-rules-and-the-areas-they-watch)).
+- **Settings:** `environment` (production when none is sent), `service` (null for all), `severity` (`trace`, `debug`, `info`, `warn`, `error`, or `fatal`, the Logs page's steps; `error` when none is sent; null for any severity), `search` (the words, at most 200 characters and 8 words; text without a word is stored as null), `windowMinutes` (5 to 60, 5 by default), and `maxCount` (0 to 1,000,000, 0 by default). Errors: `invalid_window`, `invalid_severity`, `invalid_search`, and `invalid_max_count`.
+- **One matcher.** The query's filters come from `filterConditions`, the function the Logs list, its chart, and its live view use: the project, the environment, the service, `severity_number` at or above the step's first number, and `body ILIKE '%word%'` for each word, cut as the text index cuts bodies. So the words read the body's text index (`body_text`); a test checks `EXPLAIN indexes = 1` of the rule's own query, as `telemetry-dashboard.test.ts` checks the page's.
+- **Counting by arrival:** `received_at` in the window, which ends 30 seconds before the evaluation (`ARRIVAL_LAG_MS`), and the event time from an hour before the window to an hour after it (`TELEMETRY_LATE_MS`, as "data stops arriving" rules bound it), since the table is ordered by project, then event time. A line that arrives more than an hour after its own time is not counted.
+- **The count** stops at N + 1 (`LIMIT`), so the message says "at least 1" or "more than N" rather than an exact number. The query reads without `FINAL`: a retried copy of a line counts twice until its day is merged, which the logs table forces within about an hour of the day's last insert. That can fire a rule with N above 0 one line early, never miss a line.
+- **Measured** in a test database: a project with 86,400 error lines over two days (one every 2 seconds), a 5-minute rule: 10,769 rows read, both for a service with no lines and for matching lines (the count stopping at 4). That is the window and the hour on either side of it in event time, in whole granules.
+- **Firing and resolving** (`judge`): fires when the count is above N; resolves at the next evaluation whose window holds N or fewer, without the other telemetry rules' wait, since the window is already a whole one. A new rule reads a whole window at once, lines that arrived before it was added included.
+- **Notifications:** `log.lines` and `log.lines_resolved`. The message names the project, the filter (severity, service, the words in quotes), the environment, and the window: "Main site: at least 1 log line of Error or above from server in production in the last 5 minutes.", "Main site: more than 2 log lines of Error or above from server with the words "timeout" in production in the last 10 minutes.", and, resolved, "Main site: no log lines of … in the last 5 minutes." (with "N log lines …, at or below the rule's N." when N is above 0). It holds the rule's settings only, never a line's body or attributes. The inbox titles: "Log lines matched: <rule>", "Log lines normal: <rule>".
+- **The link** opens the Logs page with `env`, `service`, `severity`, `q` (the words), `start`, and `end`: from 5 minutes before the window's first arrival (`LINK_LEAD_MS`, since a line arrives a little after its own time) to the evaluation, in whole minutes. The page lists lines by their own time, so a counted line whose time is more than 5 minutes before the window is outside the link's range. When the link is past 2,048 characters, it leaves out the words, then the service; the message keeps them.
+- **The save warning** looks for one log line of the rule's service and environment in the last 24 hours, by arrival, of any severity, and says when none arrived.
+- **Tests:** `apps/api/tests/log-alerts.test.ts` (one line with N = 0 fires; lines below the severity, of another service, without the words, of another environment or project do not count; by arrival; above N, the count's cap, and the messages; no line's text in a notification; the link; the worker's pass; the text index; the rows read; the routes' checks; who sees the rules and their inbox items; the Logs page's time window), and `apps/web/tests/browser/log-alerts.test.tsx` (the dialog's defaults, checks, and body; the rule's row and edit form; the Logs page opened from an alert's link).
+
 ### Not done in step 4
 
-- Alerts on matching log lines.
 - A per-minute rollup of requests by route, which would let route rules read a few rows a minute instead of the window's spans, and allow windows past 30 minutes.
 - A route rule cannot narrow to an HTTP method or status code beyond what its route names.
 - A metric rule on a histogram's observations per second, on an attribute of the resource other than `host.name`, or on more than one attribute value.

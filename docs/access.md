@@ -136,13 +136,13 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 
 A rule shows what it watches: an error rule shows error groups and messages, a telemetry rule services, routes, and metrics, an AI rule models and features, a "data stops arriving" rule event names, services, and metrics. So each kind also needs one of the areas it watches, at view (`sourceAreasOf` in `apps/api/src/alerts/kinds.ts`):
 
-| Kinds                                                                      | Also needs                                  |
-| -------------------------------------------------------------------------- | ------------------------------------------- |
-| `check_down`, `certificate_expiring`                                       | Nothing more                                |
-| `error_new`, `error_regressed`, `error_spike`                              | `errors` view                               |
-| `route_latency`, `route_failures`, `metric_threshold`, `telemetry_stopped` | `monitoring` view                           |
-| `ai_cost`, `ai_failures`, `ai_latency`                                     | `ai` view                                   |
-| `events_stopped`                                                           | `web_analytics` or `product_analytics` view |
+| Kinds                                                                                   | Also needs                                  |
+| --------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `check_down`, `certificate_expiring`                                                    | Nothing more                                |
+| `error_new`, `error_regressed`, `error_spike`                                           | `errors` view                               |
+| `route_latency`, `route_failures`, `metric_threshold`, `telemetry_stopped`, `log_lines` | `monitoring` view                           |
+| `ai_cost`, `ai_failures`, `ai_latency`                                                  | `ai` view                                   |
+| `events_stopped`                                                                        | `web_analytics` or `product_analytics` view |
 
 "Data stops arriving" is two kinds for this table: on events (`events_stopped`), which both analytics areas show, and on traces, logs, or metrics (`telemetry_stopped`), which monitoring shows ([uptime and alerts](uptime-alerts.md#data-stops-arriving-as-built)).
 
