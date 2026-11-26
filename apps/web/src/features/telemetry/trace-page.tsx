@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 import { formatWhole } from "../analytics/format";
 import { NoSuchProject } from "../projects/no-such-project";
+import { BrowserPart } from "./browser-part";
 import { formatDuration, formatOffset, formatPreciseMoment } from "./format";
 import { LogList } from "./log-list";
 import { SpanDetailCard } from "./span-detail";
@@ -184,7 +185,11 @@ function Detail({
   inWorkbench: boolean;
 }) {
   const detailRef = React.useRef<HTMLElement>(null);
-  const rows = React.useMemo(() => waterfallRows(trace.spans), [trace.spans]);
+  const rows = React.useMemo(
+    () => waterfallRows(trace.traceId, trace.spans),
+    [trace.traceId, trace.spans],
+  );
+  const browserAt = trace.start ?? at;
   const names = React.useMemo(
     () => new Map(trace.spans.map((span) => [span.spanId, span.name])),
     [trace.spans],
@@ -207,7 +212,12 @@ function Detail({
         {actions}
       </div>
       {trace.start === null ? (
-        <NoSpans trace={trace} at={at} />
+        <>
+          <NoSpans trace={trace} at={at} />
+          {browserAt !== undefined && (
+            <BrowserPart projectId={projectId} traceId={trace.traceId} at={browserAt} />
+          )}
+        </>
       ) : (
         <>
           <Card>
@@ -235,6 +245,9 @@ function Detail({
               </dl>
             </CardContent>
           </Card>
+          {browserAt !== undefined && (
+            <BrowserPart projectId={projectId} traceId={trace.traceId} at={browserAt} />
+          )}
           {trace.totalSpans > trace.spans.length && (
             <Alert>
               <InfoIcon />
@@ -254,7 +267,8 @@ function Detail({
               </CardTitle>
               <CardDescription>
                 Each span appears under its parent. Its bar shows when it ran within the trace.
-                Spans with missing parents appear at the top level. Times in {trace.timeZone}.
+                Spans with missing parents appear at the top level, as does a span under a
+                browser&apos;s request. Times in {trace.timeZone}.
               </CardDescription>
             </CardHeader>
             <CardContent className="[--block-surface:var(--card)]">

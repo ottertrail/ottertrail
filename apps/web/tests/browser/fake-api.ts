@@ -92,6 +92,7 @@ import type {
   SpanDetail,
   TraceChart,
   TraceDetail,
+  BrowserTrace,
   TraceList,
   TraceSummary,
 } from "../../src/lib/traces-api.ts";
@@ -283,6 +284,8 @@ export interface FakeApi {
   traces: (query: URLSearchParams) => TraceList | Response;
   /** Answers GET /api/projects/:id/traces/:traceId; by default, fakeTrace. */
   trace: (traceId: string, query: URLSearchParams) => TraceDetail | Response;
+  /** Answers GET /api/projects/:id/traces/:traceId/browser; by default, no browser event names it. */
+  browserTrace: (traceId: string, query: URLSearchParams) => BrowserTrace | Response;
   /** Answers GET /api/projects/:id/traces/:traceId/spans/:spanId; by default, fakeSpan. */
   span: (traceId: string, spanId: string, query: URLSearchParams) => SpanDetail | Response;
   /** Answers GET /api/projects/:id/logs; by default, fakeLogs. */
@@ -674,6 +677,7 @@ export function fakeError(
     service: null,
     traceId: null,
     spanId: null,
+    requests: [],
   };
   return {
     timeZone: "Asia/Singapore",
@@ -923,6 +927,102 @@ const waterfallSpan = (
   offsetUs,
   durationUs,
 });
+
+/** A browser's request trace: its first half is its parent, the browser's request (traces.ts). */
+export const FAKE_REQUEST_TRACE_ID = "7d3c9e0a51f24b6c8e2a90d4c1b7f365";
+
+/**
+ * The TypeError group's detail from a page with data-traces: the latest
+ * occurrence has its page load's trace and the page's last requests.
+ */
+export function fakeTracedBrowserError(
+  fingerprint: string,
+  query: URLSearchParams,
+  api: FakeApi,
+): ErrorDetail | Response {
+  const detail = fakeError(fingerprint, query, api);
+  if (detail instanceof Response) return detail;
+  const [latest, ...rest] = detail.occurrences;
+  if (latest === undefined) return detail;
+  return {
+    ...detail,
+    occurrences: [
+      {
+        ...latest,
+        traceId: FAKE_TRACE_ID,
+        spanId: FAKE_SPANS.root,
+        requests: [
+          {
+            method: "GET",
+            path: "/api/cart",
+            status: 200,
+            durationMs: 84,
+            traceId: "1f0e4d2c3b5a69788796a5b4c3d2e1f0",
+          },
+          {
+            method: "POST",
+            path: "/api/cart/items",
+            status: 201,
+            durationMs: 132,
+            traceId: "2a3b4c5d6e7f80919a8b7c6d5e4f3a2b",
+          },
+          {
+            method: "POST",
+            path: "/api/orders/5120/charge",
+            status: 502,
+            durationMs: 1840,
+            traceId: FAKE_REQUEST_TRACE_ID,
+          },
+        ],
+      },
+      ...rest,
+    ],
+  };
+}
+
+/** The browser's part of FAKE_TRACE_ID: a page load, and the error that followed it. */
+export const FAKE_BROWSER_TRACE: BrowserTrace = {
+  timeZone: "Asia/Singapore",
+  errorsHidden: false,
+  usersHidden: false,
+  pageLoad: {
+    occurredAt: "2026-11-16T00:00:00.240Z",
+    path: "/checkout",
+    browser: "Chrome",
+    browserVersion: "131.0",
+    os: "Windows",
+    release: "1.4.2",
+    environment: "production",
+    userId: "ada",
+  },
+  errors: [
+    {
+      occurredAt: "2026-11-16T00:00:03.100Z",
+      path: "/checkout",
+      browser: "Chrome",
+      browserVersion: "131.0",
+      os: "Windows",
+      release: "1.4.2",
+      environment: "production",
+      userId: "ada",
+      eventId: "00000000-0000-4000-8000-000000000001",
+      fingerprint: ERROR_FINGERPRINTS.typeError,
+      type: "TypeError",
+      message: "Cannot read properties of undefined (reading 'total')",
+      replayId: "00000000-0000-4000-8000-0000000000aa",
+      request: null,
+    },
+  ],
+};
+
+/** A trace no browser event names. */
+export const NO_BROWSER_TRACE: BrowserTrace = {
+  timeZone: "Asia/Singapore",
+  errorsHidden: false,
+  usersHidden: false,
+  pageLoad: null,
+  errors: [],
+};
 
 /** The charge's trace: an HTTP request, its query, the charge that failed, its call, and a span whose parent never came. */
 export function fakeTrace(traceId: string): TraceDetail {
@@ -4487,6 +4587,11 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.traceChart(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const browserPath = /^\/api\/projects\/[^/]+\/traces\/([^/]+)\/browser$/.exec(path);
+  if (browserPath?.[1] !== undefined) {
+    const result = api.browserTrace(browserPath[1], url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   const tracePath = /^\/api\/projects\/[^/]+\/traces\/([^/]+)$/.exec(path);
   if (tracePath?.[1] !== undefined) {
     const result = api.trace(tracePath[1], url.searchParams);
@@ -4812,6 +4917,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     replayTimeline: fakeReplayTimeline,
     traces: fakeTraces,
     trace: fakeTrace,
+    browserTrace: () => NO_BROWSER_TRACE,
     span: fakeSpan,
     logs: fakeLogs,
     log: fakeLog,

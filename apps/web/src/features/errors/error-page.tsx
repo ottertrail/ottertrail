@@ -8,6 +8,7 @@ import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import { PageTitle } from "@/components/page-header";
 import { StatStrip } from "@/components/stat-strip";
+import { StatusBadge } from "@/components/status-badge";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -280,29 +281,34 @@ const traceTitle = (occurrence: Occurrence) =>
 function TraceLink({
   projectId,
   occurrence,
+  traceId = occurrence.traceId ?? "",
+  spanId = occurrence.spanId,
   className,
 }: {
   projectId: string;
-  occurrence: Occurrence & { traceId: string };
+  occurrence: Occurrence;
+  /** Another trace than the occurrence's own, such as a request's. */
+  traceId?: string;
+  spanId?: string | null;
   className?: string;
 }) {
   // Traces belong to monitoring: without it, the ID shows as text (docs/access.md).
   const canOpen = useAccess().canUse("monitoring");
   if (!canOpen) {
-    return <span className="font-mono">{occurrence.traceId}</span>;
+    return <span className="font-mono">{traceId}</span>;
   }
   return (
     <Link
       to="/projects/$projectId/traces/$traceId"
-      params={{ projectId, traceId: occurrence.traceId }}
+      params={{ projectId, traceId }}
       search={{
         at: occurrence.occurredAt,
-        ...(occurrence.spanId === null ? {} : { span: occurrence.spanId }),
+        ...(spanId === null ? {} : { span: spanId }),
       }}
       className={className ?? "font-mono text-link hover:underline"}
-      aria-label={`Open trace ${occurrence.traceId}`}
+      aria-label={`Open trace ${traceId}`}
     >
-      {occurrence.traceId}
+      {traceId}
     </Link>
   );
 }
@@ -336,6 +342,88 @@ function ServerSection({ projectId, occurrence }: { projectId: string; occurrenc
           </div>
         ))}
       </dl>
+    </DetailSection>
+  );
+}
+
+/** A request's status as its server gave it, or why there is none. */
+const statusText = (status: number) => (status === 0 ? "No answer" : String(status));
+
+/**
+ * The latest browser occurrence's page load trace and its last requests,
+ * when the page has data-traces (docs/errors.md).
+ */
+function BrowserSection({ projectId, occurrence }: { projectId: string; occurrence: Occurrence }) {
+  return (
+    <DetailSection
+      title="Browser"
+      description="The latest occurrence's page load and the requests its page made before it, each with its trace."
+    >
+      <dl className="flex min-w-0 flex-col gap-1">
+        <dt className="text-xs text-ink-subtle">Page load trace</dt>
+        <dd className="text-sm break-all text-ink">
+          {occurrence.traceId === null ? (
+            <span className="text-ink-subtle">
+              None: the error came after an in-app navigation, or the server sent no trace.
+            </span>
+          ) : (
+            <TraceLink projectId={projectId} occurrence={occurrence} />
+          )}
+        </dd>
+      </dl>
+      {occurrence.requests.length > 0 && (
+        <div className="flex min-w-0 flex-col gap-2">
+          <h4 className="text-sm font-medium text-ink">Requests before the error</h4>
+          <Table className={stackTable}>
+            <caption className="sr-only">Requests before the error, oldest first</caption>
+            <TableHeader className="@max-3xl:sr-only">
+              <TableRow>
+                <TableHead>Method</TableHead>
+                <TableHead>Path</TableHead>
+                <TableHead className="text-right">Status</TableHead>
+                <TableHead className="text-right">Duration</TableHead>
+                <TableHead>Trace</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className={stackTable}>
+              {occurrence.requests.map((request, index) => (
+                <TableRow key={`${request.traceId}-${index}`} className={stackRow}>
+                  <TableCell data-label="Method" className={`font-mono ${stackCell}`}>
+                    {request.method}
+                  </TableCell>
+                  <TableCell data-label="Path" className={`font-mono ${stackCell}`}>
+                    <TruncatedText text={request.path} className="max-w-64" />
+                  </TableCell>
+                  <TableCell data-label="Status" className={`text-right tabular-nums ${stackCell}`}>
+                    {request.status >= 400 || request.status === 0 ? (
+                      <StatusBadge tone="critical">{statusText(request.status)}</StatusBadge>
+                    ) : (
+                      statusText(request.status)
+                    )}
+                  </TableCell>
+                  <TableCell
+                    data-label="Duration"
+                    className={`text-right tabular-nums ${stackCell}`}
+                  >
+                    {formatWhole(request.durationMs)} ms
+                  </TableCell>
+                  <TableCell data-label="Trace" className={`font-mono ${stackCell}`}>
+                    <TruncatedText text={request.traceId} className="max-w-40">
+                      <TraceLink
+                        projectId={projectId}
+                        occurrence={occurrence}
+                        traceId={request.traceId}
+                        spanId={null}
+                        className="text-link hover:underline"
+                      />
+                    </TruncatedText>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </DetailSection>
   );
 }
@@ -520,6 +608,11 @@ function Detail({
       {detail.source === "server" && latest !== undefined && (
         <ServerSection projectId={projectId} occurrence={latest} />
       )}
+      {detail.source === "browser" &&
+        latest !== undefined &&
+        (latest.traceId !== null || latest.requests.length > 0) && (
+          <BrowserSection projectId={projectId} occurrence={latest} />
+        )}
       <StackCard
         projectId={projectId}
         source={detail.source}

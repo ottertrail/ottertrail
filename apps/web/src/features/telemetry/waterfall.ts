@@ -1,4 +1,4 @@
-import type { WaterfallSpan } from "@/lib/traces-api";
+import { isBrowserParent, type WaterfallSpan } from "@/lib/traces-api";
 
 export interface WaterfallRow {
   span: WaterfallSpan;
@@ -9,8 +9,12 @@ export interface WaterfallRow {
 
 const byStart = (a: WaterfallSpan, b: WaterfallSpan) => a.offsetUs - b.offsetUs;
 
-/** Show missing parents at the top level and cut parent cycles so each span appears once. */
-export function waterfallRows(spans: readonly WaterfallSpan[]): WaterfallRow[] {
+/**
+ * Show missing parents at the top level and cut parent cycles so each span
+ * appears once. A span under the browser's request, which is never sent,
+ * is a root, not an orphan.
+ */
+export function waterfallRows(traceId: string, spans: readonly WaterfallSpan[]): WaterfallRow[] {
   const ids = new Set(spans.map((span) => span.spanId));
   const children = new Map<string, WaterfallSpan[]>();
   const tops: WaterfallSpan[] = [];
@@ -38,7 +42,7 @@ export function waterfallRows(spans: readonly WaterfallSpan[]): WaterfallRow[] {
     }
   };
   for (const span of tops.toSorted(byStart)) {
-    visit(span, 0, span.parentSpanId !== "");
+    visit(span, 0, span.parentSpanId !== "" && !isBrowserParent(traceId, span.parentSpanId));
   }
   for (const span of spans.toSorted(byStart)) {
     if (!placed.has(span)) visit(span, 0, true);

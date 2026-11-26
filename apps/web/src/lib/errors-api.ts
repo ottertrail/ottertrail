@@ -125,13 +125,26 @@ export interface Occurrence {
   release: string | null;
   /** null: the page recorded no replay for it. */
   replay: OccurrenceReplay | null;
-  /**
-   * A server's exception (received over OTLP): its service, and the trace
-   * and span it happened in. null for a browser's error.
-   */
+  /** A server's exception (received over OTLP): its service. null for a browser's error. */
   service: string | null;
+  /**
+   * A server's exception: the trace and span it happened in. A browser's
+   * error with data-traces: its page load's trace, from Server-Timing.
+   */
   traceId: string | null;
   spanId: string | null;
+  /** A browser's last requests before the error, oldest first (data-traces). */
+  requests: BrowserRequest[];
+}
+
+/** A request a page made before an error. */
+export interface BrowserRequest {
+  method: string;
+  path: string;
+  /** 0: no answer came. */
+  status: number;
+  durationMs: number;
+  traceId: string;
 }
 
 /** Where an occurrence comes from: the tracker in a browser, or a server over OTLP. */
@@ -278,6 +291,14 @@ const isReplayStatus = (value: unknown): value is ReplayStatus =>
 export const isOccurrenceReplay = (value: unknown): value is OccurrenceReplay =>
   isRecord(value) && isText(value.id) && isReplayStatus(value.status);
 
+const isBrowserRequest = (value: unknown): value is BrowserRequest =>
+  isRecord(value) &&
+  isText(value.method) &&
+  isText(value.path) &&
+  isNumber(value.status) &&
+  isNumber(value.durationMs) &&
+  isText(value.traceId);
+
 const isOccurrence = (value: unknown): value is Occurrence =>
   isRecord(value) &&
   isText(value.eventId) &&
@@ -295,7 +316,8 @@ const isOccurrence = (value: unknown): value is Occurrence =>
   (value.replay === null || isOccurrenceReplay(value.replay)) &&
   isTextOrNull(value.service) &&
   isTextOrNull(value.traceId) &&
-  isTextOrNull(value.spanId);
+  isTextOrNull(value.spanId) &&
+  isListOf(value.requests, isBrowserRequest);
 
 const isNumberOrNull = (value: unknown) => value === null || isNumber(value);
 

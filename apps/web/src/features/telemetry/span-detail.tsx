@@ -8,7 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isTraceId } from "@/lib/logs-api";
-import { type SpanDetail, type SpanKind, spanQuery, type WaterfallSpan } from "@/lib/traces-api";
+import {
+  isBrowserParent,
+  type SpanDetail,
+  type SpanKind,
+  spanQuery,
+  type WaterfallSpan,
+} from "@/lib/traces-api";
 
 import { formatWhole } from "../analytics/format";
 import { AiContentNote } from "./ai-content";
@@ -65,10 +71,15 @@ function Facts({
       value:
         span.parentSpanId === ""
           ? "None: a root span"
-          : parentName === undefined
-            ? `${span.parentSpanId} (not received)`
-            : `${parentName} (${span.parentSpanId})`,
-      mono: span.parentSpanId !== "" && parentName === undefined,
+          : isBrowserParent(span.traceId, span.parentSpanId)
+            ? "The browser's request, which sends no span"
+            : parentName === undefined
+              ? `${span.parentSpanId} (not received)`
+              : `${parentName} (${span.parentSpanId})`,
+      mono:
+        span.parentSpanId !== "" &&
+        parentName === undefined &&
+        !isBrowserParent(span.traceId, span.parentSpanId),
     },
     { label: "Release", value: span.release || "(none)" },
     { label: "Environment", value: span.environment },

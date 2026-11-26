@@ -74,6 +74,50 @@ export interface TraceDetail {
   logsTruncated: boolean;
 }
 
+/** A browser's page view or error that names a trace. */
+export interface BrowserView {
+  occurredAt: string;
+  path: string;
+  browser: string | null;
+  browserVersion: string | null;
+  os: string | null;
+  release: string | null;
+  environment: string;
+  /** null for an anonymous visitor, or without the users area. */
+  userId: string | null;
+}
+
+export interface BrowserTraceError extends BrowserView {
+  eventId: string;
+  fingerprint: string;
+  type: string;
+  message: string;
+  /** null without a replay, or without the replays area. */
+  replayId: string | null;
+  /** The page's request this trace is; null when the error is of the page load. */
+  request: { method: string; path: string; status: number; durationMs: number } | null;
+}
+
+/** GET /api/projects/:id/traces/:traceId/browser */
+export interface BrowserTrace {
+  timeZone: string;
+  /** The member has no errors area: errors are left out. */
+  errorsHidden: boolean;
+  /** The member has no users area: user IDs are null. */
+  usersHidden: boolean;
+  /** The pageview of the page load the trace served. */
+  pageLoad: BrowserView | null;
+  errors: BrowserTraceError[];
+}
+
+/**
+ * Whether a span's parent is the browser's request, which is never sent:
+ * the tracker names it by the trace ID's first 16 digits
+ * (packages/tracker/src/traces.ts), and the span is then a root.
+ */
+export const isBrowserParent = (traceId: string, parentSpanId: string) =>
+  parentSpanId !== "" && parentSpanId === traceId.slice(0, 16);
+
 export interface SpanEvent {
   name: string;
   time: string | null;
@@ -173,6 +217,40 @@ const isTraceDetail = (value: unknown): value is TraceDetail =>
   isNumber(value.totalSpans) &&
   isListOf(value.logs, isLogSummary) &&
   typeof value.logsTruncated === "boolean";
+
+const isBrowserView = (value: unknown): value is BrowserView =>
+  isRecord(value) &&
+  isText(value.occurredAt) &&
+  isText(value.path) &&
+  isTextOrNull(value.browser) &&
+  isTextOrNull(value.browserVersion) &&
+  isTextOrNull(value.os) &&
+  isTextOrNull(value.release) &&
+  isText(value.environment) &&
+  isTextOrNull(value.userId);
+
+const isBrowserTraceError = (value: unknown): value is BrowserTraceError =>
+  isRecord(value) &&
+  isText(value.eventId) &&
+  isText(value.fingerprint) &&
+  isText(value.type) &&
+  isText(value.message) &&
+  isTextOrNull(value.replayId) &&
+  (value.request === null ||
+    (isRecord(value.request) &&
+      isText(value.request.method) &&
+      isText(value.request.path) &&
+      isNumber(value.request.status) &&
+      isNumber(value.request.durationMs))) &&
+  isBrowserView(value);
+
+const isBrowserTrace = (value: unknown): value is BrowserTrace =>
+  isRecord(value) &&
+  isText(value.timeZone) &&
+  typeof value.errorsHidden === "boolean" &&
+  typeof value.usersHidden === "boolean" &&
+  (value.pageLoad === null || isBrowserView(value.pageLoad)) &&
+  isListOf(value.errors, isBrowserTraceError);
 
 const isSpanEvent = (value: unknown): value is SpanEvent =>
   isRecord(value) &&
@@ -347,6 +425,21 @@ export const traceQuery = (projectId: string, traceId: string, at: string | unde
         isTraceDetail,
       );
     },
+  });
+
+/** The browser events that name a trace, read around `at`, its start. */
+export const browserTraceQuery = (projectId: string, traceId: string, at: string) =>
+  queryOptions({
+    queryKey: ["trace-browser", projectId, traceId, at],
+    retry: telemetryRetry,
+    queryFn: async ({ signal }) =>
+      expectShape(
+        await apiRequest(
+          `${projectPath(projectId)}/traces/${encodeURIComponent(traceId)}/browser?${new URLSearchParams({ at }).toString()}`,
+          { signal },
+        ),
+        isBrowserTrace,
+      ),
   });
 
 /** One span's attributes, events, and links. */
