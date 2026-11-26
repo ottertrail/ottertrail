@@ -47,16 +47,33 @@ Added on 18 November 2026: the numbers a team watches on its servers, not only w
 
 - **Below too:** a value under a threshold can be what matters: response times that drop suddenly (an empty page answers fast), a queue that stops moving, requests that stop coming.
 - **Evaluation:** by the worker every minute, from the same data and computations as the Services and Metrics pages, over windows of 5 to 60 minutes; each rule's query is bounded like the dashboard's, and the worker evaluates a few at a time, so rules cannot crowd out ingestion or the dashboard.
-- **Not yet:** alerts on matching log lines, and on data that stops arriving.
+- **Not yet:** alerts on matching log lines.
+
+### Alerts on data that stops arriving
+
+Added on 26 November 2026: if a site's tracker breaks, or a server stops sending telemetry without an error, a rule tells the team.
+
+| Rule                | Fires when                                                                                         | Resolves when                    |
+| ------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Data stops arriving | Fewer than N records of one source arrived in the last window (N is 1 by default: nothing arrived) | At least N arrived in the window |
+
+- **Sources:** events (what the tracker and server events send, optionally of one name, such as `pageview` or `waitlist_signup`), traces (spans, optionally of one service), logs (optionally of one service), or metrics (one metric, optionally of one `host.name`), in one environment. A larger N also catches a sharp drop.
+- **Windows:** 5, 10, 15, or 30 minutes, or 1, 2, 4, 6, 12, or 24 hours.
+- **By arrival:** records count by when they arrived, not when they happened, so late or backfilled data does not hide a stop.
+- **A new rule** judges only once it is a whole window old (since it was added, turned on, or changed), so its source has had a full window to send.
+- **Quiet hours:** a small site may have no visitors for hours at night. There are no schedules: pick a window that the site's quietest hours fill.
+- **Not in scope:** schedules or quiet hours, alerts on matching log lines, and heartbeat checks that a cron job reports to.
+
+How it is built is [below](#data-stops-arriving-as-built).
 
 ## Where alerts go
 
 Channels belong to the instance (its settings), so every project can use them; each rule picks one or more.
 
 - **Email:** a list of addresses. Sent through the SMTP server the instance is set up with (`SMTP_URL`, `EMAIL_FROM`); without one, the dashboard says email is not set up on this instance. Plain, short messages: what happened, when, and a link to the check or error in the dashboard. Ottertrail sends no other email from alerts.
-- **Webhook:** a JSON `POST` to a URL, for a team's own scripts or another service. Each request carries the time and a signature, an HMAC-SHA256 of the time and body with the channel's secret, so the receiver can check it came from Ottertrail and is not a replay. The body names the event (`check.down`, `check.up`, `certificate.expiring`, `error.new`, `error.regressed`, `error.spike`, `error.spike_resolved`, and for telemetry `route.latency`, `route.failures`, `metric.threshold` and their `_resolved` forms), the project, what it is about, and the dashboard link. The format is documented and versioned.
+- **Webhook:** a JSON `POST` to a URL, for a team's own scripts or another service. Each request carries the time and a signature, an HMAC-SHA256 of the time and body with the channel's secret, so the receiver can check it came from Ottertrail and is not a replay. The body names the event (`check.down`, `check.up`, `certificate.expiring`, `error.new`, `error.regressed`, `error.spike`, `error.spike_resolved`, and for telemetry `route.latency`, `route.failures`, `metric.threshold`, `data.stopped` and their `_resolved` forms), the project, what it is about, and the dashboard link. The format is documented and versioned.
 - **Delivery:** every notification is recorded in PostgreSQL before it is sent, and sent by the worker: a webhook gets 10 seconds to answer 2xx, then is retried with growing waits, for up to an hour; email is retried likewise. The dashboard lists each channel's deliveries of the last 30 days, with their outcome, and can send a test.
-- **The dashboard's inbox:** each alert that fires or resolves, and each held-back summary, is also an item in the notifications of everyone who can see the rule (uptime and alerts at view, and the area its kind watches), whether or not the rule has channels, written in the alert's transaction, so it is there once ([access](access.md#notifications), [dashboard](dashboard.md#notifications)). The instance's storage and backup warnings, raised and cleared, and the backup notices are items for the owner and admins. Items are not emailed.
+- **The dashboard's inbox:** each alert that fires or resolves, and each held-back summary, is also an item in the notifications of everyone who can see the rule (uptime and alerts at view, and one of the areas its kind watches), whether or not the rule has channels, written in the alert's transaction, so it is there once ([access](access.md#notifications), [dashboard](dashboard.md#notifications)). The instance's storage and backup warnings, raised and cleared, and the backup notices are items for the owner and admins. Items are not emailed.
 
 ## The dashboard
 
@@ -72,7 +89,7 @@ At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects,
 ## Not in the first version
 
 - Slack and Discord messages in their own formats (a webhook can reach a small relay meanwhile), SMS, and phone calls.
-- Alerts on matching log lines, and on data that stops arriving.
+- Alerts on matching log lines.
 - Checks from several locations, and checks other than HTTP (TCP, ping, DNS); heartbeat checks that a job reports to.
 - Status pages, on-call schedules, escalation, and maintenance windows (a check can be paused).
 
@@ -233,7 +250,7 @@ Built on 18 November 2026, from the design above, and revised the same day after
 Decided differently from the design, or settled where it said nothing:
 
 - **The window ends a minute before the evaluation**, so an alert comes a minute or two after a change; reading to the evaluation's own time would show a counter's rate low, and fire "below" rules, whenever the last export has not arrived.
-- **No value is not "back on the right side"**, so a route whose traffic stops does not resolve; alerts on data that stops arriving are still not built (a counter's rate below a value covers some of it).
+- **No value is not "back on the right side"**, so a route whose traffic stops does not resolve. Data that stops arriving has its own rule since 26 November 2026 ([below](#data-stops-arriving-as-built)).
 - **Route windows are at most 30 minutes**, not 60, and route rules read without `FINAL`, for the cost above.
 - **Rules are spread by when they were added**, each keeping its place in the minute, rather than spread over each minute's pass.
 - **Environment** is one per rule, production by default, as the telemetry pages read one at a time; the error rules' "all environments" has no telemetry counterpart.
@@ -245,9 +262,25 @@ Decided differently from the design, or settled where it said nothing:
 
 Added on 22 November 2026 with AI usage tracking: `ai_cost`, the estimated cost of a project's AI calls over the last hour, the last 24 hours, or the month so far above a value, `ai_failures`, their failed share over a window above a share, and `ai_latency` (added later the same day), their 95th-percentile duration over a window above a number of milliseconds, each optionally for one feature or model. They are telemetry rules: taken, bounded, judged, and recorded as above, and they need `ai` at view (not `monitoring`, [access](access.md#alert-rules-and-the-areas-they-watch)). Their settings, windows, and notifications are in [AI usage](ai-usage.md#alerts).
 
+### Data stops arriving, as built
+
+Built on 26 November 2026, from the design [above](#alerts-on-data-that-stops-arriving). Code: `apps/api/src/alerts/stopped-rules.ts`, with `kinds.ts`, `telemetry-rules.ts`, `fire.ts`, and `routes.ts`; migration `0031_notification_any_areas`; and `apps/web/src/features/alerts/` ([the dashboard](dashboard.md#813-alerts)). The notifications' bodies are in [webhooks](webhooks.md#datastopped-and-datastopped_resolved).
+
+- **Two kinds, one name.** Events and telemetry need different areas ([access](access.md#alert-rules-and-the-areas-they-watch)), and an alert's readers go by the kind it fired under (`alert_history.kind`), so the design's one kind is two in the API: `events_stopped` (source `events`) and `telemetry_stopped` (source `traces`, `logs`, or `metrics`). Both are named "Data stops arriving", and the form shows them as one: its **Data** select picks the kind. A rule changed from events to traces changes kind, as any rule may.
+- **Settings:** `source`, `environment` (production when none is sent), `eventName` (events), `service` (traces and logs), `metric` (required) and `host` (metrics), each null when unused or for all; `windowMinutes`, one of 5, 10, 15, 30, 60, 120, 240, 360, 720, or 1440 (60 by default); and `minCount`, 1 to 1,000,000 (1 by default). Other sources' fields are stored as null. Errors: `invalid_source`, `invalid_window`, `invalid_min_count`, `invalid_metric`, and `invalid_attribute` (a host past 1,000 characters).
+- **Evaluation:** with the telemetry rules, by the worker every minute (`takeDueRules`, the project budget, the dashboard's reader, settings, and limits, and the recorded failures above). One query per rule.
+- **Counting by arrival.** Every table has `received_at`: events and, since ClickHouse migration 0011, spans and metric rows carry the time the API received them; logs carry ClickHouse's clock as it wrote them (migration 0005). The window ends 30 seconds before the evaluation (`ARRIVAL_LAG_MS`, as error rules), so an insert still landing is counted the next minute. The tables are ordered by project, then their event time, not by arrival, so each query also bounds the event time: events from a day before the window (collection refuses older ones) to 5 minutes after it; telemetry from an hour before to an hour after (`TELEMETRY_LATE_MS`; OTLP takes times up to an hour ahead). Telemetry that arrives more than an hour after it happened, such as a backlog sent after an outage, is not counted: the rule stays firing until current data arrives.
+- **What counts:** events that web analytics counts (no errors, no Web Vitals), of one name or all; spans and log records of one service or all; points of one metric in `metric_points` and `metric_histograms`, of one host or all. Each query filters by project first and has `LIMIT N`, so it stops once it has enough; it reads without `FINAL`, so a retried copy counts twice until merged, which can delay an alert but never cause one.
+- **Measured** in a test database: a project with 86,400 spans over two days (one every 2 seconds), a 30-minute rule: 7,649 rows read, with or without matching data. With 172,800 spans (one a second) and a 24-hour rule: 93,505 rows read for a service with no spans (the window and the hour before it, in whole granules), 61,824 for one with spans. Never the project's whole retention. `apps/api/tests/stopped-alerts.test.ts` checks that a 30-minute rule reads at most 3 granules (24,576 rows).
+- **Firing and resolving** (`judge`): fires when the count is below N; resolves at the next evaluation with at least N, without the other telemetry rules' wait of a whole window. A rule whose window starts before its `active_since` has no value yet: it neither fires nor resolves.
+- **Notifications:** `data.stopped` and `data.stopped_resolved`. The message names the source and filter, the project, the environment, and the window: "No events from Main site in production in the last 30 minutes.", "Only 2 events named waitlist_signup from Main site in production in the last 1 hour, fewer than the rule's 3.", and, resolved, "Events arrive again from Main site in production." (with "At least N arrived in the last …" when N is above 1; the count stops at N). The link is the rule's page on the Alerts page. The inbox titles: "Data stopped arriving: <rule>", "Data arriving again: <rule>".
+- **The save warning** looks for one record of the rule's source in the last 24 hours, by arrival, and says when none arrived: the rule fires once it is a window old unless they arrive.
+- **Access:** `events_stopped` needs web analytics or product analytics at view, `telemetry_stopped` monitoring. Its inbox items need uptime and alerts and one of the two analytics areas: `notifications.any_areas` (migration 0031) holds areas a reader needs one of, besides `areas`, all of which they need.
+- **Tests:** `apps/api/tests/stopped-alerts.test.ts` (each source, by arrival, below N, a new rule's first window, the filters, the environment, another project's data, the messages, the worker's pass, the rows read, the routes' checks, and who sees the rules, their alerts, and their inbox items), and `apps/web/tests/browser/stopped-alerts.test.tsx` (the form, its sources by access, the bodies sent, the rule's row and edit form).
+
 ### Not done in step 4
 
-- Alerts on matching log lines, and on data that stops arriving.
+- Alerts on matching log lines.
 - A per-minute rollup of requests by route, which would let route rules read a few rows a minute instead of the window's spans, and allow windows past 30 minutes.
 - A route rule cannot narrow to an HTTP method or status code beyond what its route names.
 - A metric rule on a histogram's observations per second, on an attribute of the resource other than `host.name`, or on more than one attribute value.

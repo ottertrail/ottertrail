@@ -87,6 +87,8 @@ The body, version 1:
 | `ai.failures_resolved`      | It stays at or below it for the same window                                                   |
 | `ai.latency`                | The 95th-percentile duration of AI calls over the window is above the rule's threshold        |
 | `ai.latency_resolved`       | It stays at or below it for the same window                                                   |
+| `data.stopped`              | Fewer records of one source than the rule's minimum arrived in its window                     |
+| `data.stopped_resolved`     | At least the minimum arrived in the window again                                              |
 | `alert.held_back`           | A rule held notifications back after sending 20 in an hour; says how many, once the hour ends |
 | `storage.low`               | A storage warning starts, or becomes critical                                                 |
 | `storage.recovered`         | A storage warning ends                                                                        |
@@ -378,6 +380,10 @@ The subject has `type` `ai_failures`, `environment`, `feature`, `model`, `calls`
 #### `ai.latency` and `ai.latency_resolved`
 
 The subject has `type` `ai_latency`, `environment`, `feature`, `model`, `calls`, `windowMinutes`, `percentile` (always `p95`), `valueMs` (rounded to 3 decimals), and `thresholdMs`, and the message reads `Shop: the 95th percentile duration of AI calls for the model claude-sonnet-4-6 in production was 2 s over the last 10 minutes, above the rule's 1.5 s, across 20 calls.` `ai.latency_resolved` has the same subject, and a message such as `Shop: the 95th percentile duration of AI calls in production stayed at or below 1.5 s for 10 minutes: 100 ms over the last 10 minutes, across 24 calls.`
+
+#### `data.stopped` and `data.stopped_resolved`
+
+The subject has `type` `data_stopped`, `source` (`events`, `traces`, `logs`, or `metrics`), `environment`, `eventName`, `service`, `metric`, and `host` (null when the rule does not narrow to one, or its source has no such field), `windowMinutes`, `minCount` (the fewest records), and `count`: the records that arrived in the window, counted up to `minCount`. The message reads `No events from Main site in production in the last 30 minutes.`, or, below a minimum above 1, `Only 2 events named waitlist_signup from Main site in production in the last 1 hour, fewer than the rule's 3.` The link is the rule on the Alerts page. `data.stopped_resolved` has the same subject, and a message such as `Spans of the service api arrive again from Main site in production.` Records count by when they arrived ([uptime and alerts](uptime-alerts.md#data-stops-arriving-as-built)).
 
 #### `alert.held_back`
 
