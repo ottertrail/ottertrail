@@ -22,6 +22,8 @@ The same file switches off the internal logs Ottertrail never reads. ClickHouse 
 
 An exception from a span or a log record is kept twice: as an error event, for the event retention, and inside its span or log record, for the telemetry retention.
 
+With the tracker's `data-traces="on"`, a page load's events keep its server trace's IDs, and a browser error keeps the page's last 5 traced requests before it: method, path without query string, status, duration, and trace ID, never headers or bodies ([web analytics](web-analytics.md#traces)). They go with the event, for the event retention.
+
 ## The object store
 
 S3-compatible: Garage on the same server by default, or R2 or S3 ([deployment](deployment.md#session-replays-and-source-maps)). Prefixes are listed in `OBJECT_PREFIXES` (`backups/settings.ts`).

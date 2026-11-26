@@ -157,6 +157,7 @@ Some answers show less to a user without another area:
 - A funnel's list of who dropped off (`…/funnel/people`) needs `users` view as well as `product_analytics` view, since it lists user IDs: without `users` it answers 403, and the Funnel page shows each step's count without the link to its list.
 - The overview's signed-in users widget names the newest users only to users with `users` (`newest` is null otherwise). Its firing alerts hold only the kinds the user may see, as the Alerts page's do.
 - An error's occurrences and a user's events carry no replay, and a user's page no replays, without `replays`.
+- A trace's browser part (`…/traces/:traceId/browser`, [telemetry](telemetry.md#from-the-browser)) needs `monitoring` view, as the trace does; it holds errors only for users with `errors` (`errorsHidden` otherwise), user IDs only for users with `users` (`usersHidden`), and replay IDs only for users with `replays`.
 - The users routes (`…/users`, `…/users/:userId`) answer whether the project requires signed user IDs (`signedUserIdsRequired`) to anyone with `users` view, without the `projects` permission, as some other areas answer the settings their pages need (the replay mode, the heatmaps switch, the main goal): the pages say when the IDs they list could be made up ([web analytics](web-analytics.md#signed-user-ids)).
 - The replay and source map overviews (`GET …/replays`, `GET …/source-maps`) leave out `instance`, what all projects store together against the instance's limit, for users without the `projects` permission.
 

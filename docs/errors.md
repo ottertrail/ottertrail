@@ -151,6 +151,10 @@ Content-Encoding: gzip   (optional)
 - Maps are matched by release and path, not by an ID the build puts in each file: two builds given the same release and the same file names would share maps.
 - Maps are in the backups with the rest of the object store ([deployment](deployment.md#backups)). A restore run with `--without-objects` brings them back listed but unreadable: then upload the maps of the releases still in use again.
 
+## Traces from the browser
+
+With `data-traces="on"` on the tracker ([web analytics](web-analytics.md#traces)), a browser's error carries its page load's trace (`trace_id`, `span_id`, from the server's `Server-Timing`), when it happened on the page the visitor loaded, and the page's last 5 requests that carried a `traceparent` header, oldest first (`error_requests`: method, path, status, duration, trace ID; [telemetry](telemetry.md#the-browser-and-the-server)). The error's page shows them for the latest occurrence, in a Browser section: "Page load trace", and "Requests before the error", a table of method, path, status (a failure or no answer as a red badge), duration, and trace. Each trace ID links to the trace's page, read around the occurrence's time, for anyone with the monitoring area, as a server error's does; for others it is plain text. The API sends both with each occurrence (`traceId`, `spanId`, `requests`). The section is left out when the occurrence has neither. The fingerprint ignores them: two occurrences of an error after different requests stay one group.
+
 ## Server errors
 
 A server's exception, recorded on a span or in a log record and sent over OTLP ([telemetry](telemetry.md#exceptions-join-the-error-list)), is stored as an error event too, in the same table, grouped by the same rule, and listed with the browser's. It has the service's environment and release, the span's route as its path, the user's ID when the record names one (`user.id`), and three columns of its own: the service, and the trace and span it happened in. It has no visitor, browser, operating system, or location, so it counts towards a group's users but never its visitors.
