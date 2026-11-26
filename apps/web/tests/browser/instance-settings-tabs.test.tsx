@@ -19,7 +19,7 @@ const tabNames = () =>
     .elements()
     .map((tab) => tab.textContent);
 const panel = () => page.getByRole("tabpanel");
-const form = () => page.getByRole("form", { name: "Instance" });
+const form = () => page.getByRole("form", { name: "General" });
 const save = () => form().getByRole("button", { name: "Save instance settings" });
 const status = () => form().getByRole("status");
 /** Waits long enough for a click's effect to show, before asserting it had none. */
@@ -45,7 +45,7 @@ describe("the tabs each role sees", () => {
       "Notification channels",
       "Server log",
     ]);
-    await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
+    await expect.element(panel().getByRole("heading", { name: "General" })).toBeVisible();
     expect(currentPath(router)).toBe("/settings");
 
     await page.getByRole("tab", { name: "Location data" }).click();
@@ -100,7 +100,7 @@ describe("the tabs each role sees", () => {
   test("every tab stays mounted: the storage is measured when the page opens, on any tab", async () => {
     const api = installFakeApi();
     renderApp("/settings");
-    await expect.element(panel().getByRole("heading", { name: "Instance" })).toBeVisible();
+    await expect.element(panel().getByRole("heading", { name: "General" })).toBeVisible();
     await expect
       .poll(() => api.requests.filter((path) => path === "/api/settings/storage"))
       .toEqual(["/api/settings/storage"]);
@@ -118,7 +118,7 @@ describe("the save rule on General", () => {
   test("Save waits for a change, Discard undoes it, and the tab says it is unsaved", async () => {
     const api = installFakeApi();
     renderApp("/settings");
-    const name = form().getByRole("textbox", { name: "Name" });
+    const name = form().getByRole("textbox", { name: "Instance name" });
     await expect.element(name).toHaveValue("Acme Inc");
 
     await expect.element(status()).toHaveTextContent("No unsaved changes");
@@ -148,7 +148,7 @@ describe("the save rule on General", () => {
   test("a failed save says why and keeps the edits", async () => {
     installFakeApi();
     renderApp("/settings");
-    const name = form().getByRole("textbox", { name: "Name" });
+    const name = form().getByRole("textbox", { name: "Instance name" });
     await expect.element(name).toHaveValue("Acme Inc");
 
     const realFetch = globalThis.fetch;
@@ -175,12 +175,14 @@ describe("the save rule on General", () => {
   test("leaving with unsaved changes asks first; another tab keeps them", async () => {
     installFakeApi();
     const router = renderApp("/settings");
-    await form().getByRole("textbox", { name: "Name" }).fill("Acme Labs");
+    await form().getByRole("textbox", { name: "Instance name" }).fill("Acme Labs");
 
     // Another tab of the page is not leaving it: the edit stays.
     await page.getByRole("tab", { name: "Notification channels" }).click();
     await page.getByRole("tab", { name: /^General\s*, unsaved changes$/ }).click();
-    await expect.element(form().getByRole("textbox", { name: "Name" })).toHaveValue("Acme Labs");
+    await expect
+      .element(form().getByRole("textbox", { name: "Instance name" }))
+      .toHaveValue("Acme Labs");
 
     await workspaceMenu().getByRole("link", { name: "Projects" }).click();
     const ask = page.getByRole("dialog", { name: "Leave without saving?" });

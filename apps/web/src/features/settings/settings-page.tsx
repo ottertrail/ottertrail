@@ -134,8 +134,7 @@ function GeneralForm({
 
   return (
     <SettingsSection
-      title="Instance"
-      description="Applies to all projects."
+      title="General"
       form={form}
       onSave={(values) => save.mutate(values)}
       saving={save.isPending}
@@ -144,14 +143,14 @@ function GeneralForm({
     >
       <FieldGroup>
         <AvatarField
-          label="Icon"
+          label="Instance icon"
           value={form.values.avatar}
           onChange={(avatar) => form.set("avatar", avatar)}
           text={initialOf(form.values.name)}
           uploads={uploads}
         />
         <Field>
-          <FieldLabel htmlFor="settings-name">Name</FieldLabel>
+          <FieldLabel htmlFor="settings-name">Instance name</FieldLabel>
           <Input
             id="settings-name"
             name="name"

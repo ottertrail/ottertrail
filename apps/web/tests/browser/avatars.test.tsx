@@ -48,34 +48,34 @@ describe("the instance's icon", () => {
   test("choosing an image previews it as an unsaved change; Discard puts the initial back", async () => {
     const api = installFakeApi();
     renderApp("/settings");
-    const instance = form("Instance");
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    const instance = form("General");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
     expect(imageIn(instance.element())).toBeNull();
 
     await userEvent.upload(
-      page.getByLabelText("Icon, choose image"),
+      page.getByLabelText("Instance icon, choose image"),
       await imageFile("image/jpeg", 400, 100),
     );
     await expect.poll(() => imageIn(instance.element())).toMatch(/^data:image\/png;base64,/);
-    await expect.element(saveBar("Instance")).toHaveTextContent("Unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("Unsaved changes");
     // Cropped to its centre and made 256×256, as a PNG, whatever it was.
     expect(await sizeOf(imageIn(instance.element()) ?? "")).toEqual([256, 256]);
 
     await instance.getByRole("button", { name: "Discard" }).click();
     await expect.poll(() => imageIn(instance.element())).toBeNull();
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
     expect(api.avatarRequests).toEqual([]);
   });
 
   test("Save sends the PNG; the sidebar's head shows it; Remove takes it away", async () => {
     const api = installFakeApi();
     renderApp("/settings");
-    const instance = form("Instance");
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
-    await userEvent.upload(page.getByLabelText("Icon, choose image"), await imageFile());
+    const instance = form("General");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
+    await userEvent.upload(page.getByLabelText("Instance icon, choose image"), await imageFile());
     await instance.getByRole("button", { name: "Save instance settings" }).click();
 
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
     expect(api.avatarRequests).toEqual([
       { path: "/api/settings/avatar", method: "PUT", type: "image/png", bytes: expect.any(Number) },
     ]);
@@ -84,9 +84,9 @@ describe("the instance's icon", () => {
     await expect.poll(() => imageIn(instanceHead())).toBe(api.settings.avatarUrl);
 
     await instance.getByRole("button", { name: "Remove" }).click();
-    await expect.element(saveBar("Instance")).toHaveTextContent("Unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("Unsaved changes");
     await instance.getByRole("button", { name: "Save instance settings" }).click();
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
     expect(api.avatarRequests.at(-1)).toMatchObject({
       path: "/api/settings/avatar",
       method: "DELETE",
@@ -106,17 +106,19 @@ describe("the instance's icon", () => {
       ),
     });
     renderApp("/settings");
-    const instance = form("Instance");
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
-    await userEvent.upload(page.getByLabelText("Icon, choose image"), await imageFile());
-    await instance.getByRole("textbox", { name: "Name" }).fill("Acme Labs");
+    const instance = form("General");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
+    await userEvent.upload(page.getByLabelText("Instance icon, choose image"), await imageFile());
+    await instance.getByRole("textbox", { name: "Instance name" }).fill("Acme Labs");
     await instance.getByRole("button", { name: "Save instance settings" }).click();
 
     await expect
       .element(instance.getByText("The image could not be stored. Try again in a minute."))
       .toBeVisible();
-    await expect.element(saveBar("Instance")).toHaveTextContent("Unsaved changes");
-    await expect.element(instance.getByRole("textbox", { name: "Name" })).toHaveValue("Acme Labs");
+    await expect.element(saveBar("General")).toHaveTextContent("Unsaved changes");
+    await expect
+      .element(instance.getByRole("textbox", { name: "Instance name" }))
+      .toHaveValue("Acme Labs");
     expect(imageIn(instance.element())).toMatch(/^data:image\/png/);
     // The rest waits for the icon: nothing else was sent.
     expect(api.bodies.filter((body) => body.path === "/api/settings")).toEqual([]);
@@ -125,21 +127,21 @@ describe("the instance's icon", () => {
   test("a file the browser cannot read says so, and changes nothing", async () => {
     installFakeApi();
     renderApp("/settings");
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
     const broken = new File(["not really a picture"], "broken.png", { type: "image/png" });
-    await userEvent.upload(page.getByLabelText("Icon, choose image"), broken);
+    await userEvent.upload(page.getByLabelText("Instance icon, choose image"), broken);
     await expect
       .element(
         page.getByText("This file can't be read as an image. Choose a PNG, JPEG, WebP, or GIF."),
       )
       .toBeVisible();
-    await expect.element(saveBar("Instance")).toHaveTextContent("No unsaved changes");
+    await expect.element(saveBar("General")).toHaveTextContent("No unsaved changes");
   });
 
   test("without object storage, the field is disabled and says why", async () => {
     installFakeApi({ avatarUploads: false });
     renderApp("/settings");
-    const choose = form("Instance").getByRole("button", { name: "Icon, choose image" });
+    const choose = form("General").getByRole("button", { name: "Instance icon, choose image" });
     await expect.element(choose).toBeDisabled();
     await expect
       .element(page.getByText("Uploads need object storage. Set OBJECT_STORE_URL on the server."))

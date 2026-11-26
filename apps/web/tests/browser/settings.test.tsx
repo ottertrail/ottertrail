@@ -13,8 +13,10 @@ describe("the instance's settings", () => {
     await expect.element(page.getByText("Acme Inc", { exact: true })).toBeVisible();
     await workspace.getByRole("link", { name: "Settings" }).click();
 
-    await expect.element(page.getByRole("heading", { name: "Instance" })).toBeVisible();
-    await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("Acme Inc");
+    await expect.element(page.getByRole("heading", { name: "General" })).toBeVisible();
+    await expect
+      .element(page.getByRole("textbox", { name: "Instance name" }))
+      .toHaveValue("Acme Inc");
     await expect
       .element(page.getByRole("combobox", { name: "Timezone" }))
       .toHaveValue("Asia/Singapore");
@@ -29,7 +31,7 @@ describe("the instance's settings", () => {
       .element(page.getByText(/Reports use this timezone for day boundaries/))
       .toBeVisible();
 
-    await page.getByRole("textbox", { name: "Name" }).fill("Acme Labs");
+    await page.getByRole("textbox", { name: "Instance name" }).fill("Acme Labs");
     await timeZone.fill("berlin");
     await page.getByRole("option", { name: /^Europe\/Berlin/ }).click();
     await expect.element(timeZone).toHaveValue("Europe/Berlin");
@@ -40,7 +42,7 @@ describe("the instance's settings", () => {
 
     // The Save bar says the change is saved (it said "Saved." before the save rule).
     await expect
-      .element(page.getByRole("form", { name: "Instance" }).getByRole("status"))
+      .element(page.getByRole("form", { name: "General" }).getByRole("status"))
       .toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PATCH",
@@ -111,7 +113,7 @@ describe("the instance's settings", () => {
 
     await page.getByRole("button", { name: "Save instance settings" }).click();
     await expect
-      .element(page.getByRole("form", { name: "Instance" }).getByRole("status"))
+      .element(page.getByRole("form", { name: "General" }).getByRole("status"))
       .toHaveTextContent("No unsaved changes");
     expect(api.bodies).toContainEqual({
       method: "PATCH",
@@ -128,8 +130,10 @@ describe("the instance's settings", () => {
     await expect
       .element(page.getByRole("heading", { name: "Notification channels" }))
       .toBeVisible();
-    await expect.element(page.getByRole("heading", { name: "Instance" })).not.toBeInTheDocument();
-    await expect.element(page.getByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "General" })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("textbox", { name: "Instance name" }))
+      .not.toBeInTheDocument();
   });
 
   test("a member has no Settings page, and no link to it", async () => {
@@ -159,7 +163,7 @@ describe("the instance's settings", () => {
     await expect.element(notes).toHaveAttribute("rel", "noopener noreferrer");
     // Read-only: outside the form, so its Save bar has nothing to save.
     await expect
-      .element(page.getByRole("form", { name: "Instance" }).getByText("0.8.0"))
+      .element(page.getByRole("form", { name: "General" }).getByText("0.8.0"))
       .not.toBeInTheDocument();
 
     await page.getByRole("tab", { name: "Backups" }).click();
