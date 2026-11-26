@@ -20,6 +20,14 @@ import { type LogSummary, logsOfTrace } from "./logs.ts";
  */
 
 export const TRACES_PAGE_SIZE = 100;
+
+/**
+ * A root span: one without a parent, or a server span under the browser's
+ * request. The tracker sends no spans, and names its request as the
+ * parent by the trace ID's first 16 digits (packages/tracker/src/traces.ts),
+ * so the span the server started for it is where the trace begins.
+ */
+export const ROOT_SPAN = "(parent_span_id = '' OR parent_span_id = substring(trace_id, 1, 16))";
 /** Excess spans are counted for the truncation notice. */
 export const MAX_TRACE_SPANS = 2000;
 /** Search radius around a known time, such as an error occurrence. */
@@ -103,7 +111,7 @@ export async function listTraces(
       params,
       DASHBOARD_SETTINGS,
     ),
-    labelsInRange(reader, "spans", range, "AND parent_span_id = ''"),
+    labelsInRange(reader, "spans", range, `AND ${ROOT_SPAN}`),
   ]);
   const { page, next } = newestPage(rows, TRACES_PAGE_SIZE, (row) => row.start_ns);
   const counts = await spanCounts(reader, range.projectId, page, window);
@@ -156,7 +164,7 @@ function rootConditions(
   const conditions = [
     `project_id = ${params.add(range.projectId, "UUID")}`,
     `timestamp >= ${params.time(range.from)} AND timestamp < ${params.time(range.to)}`,
-    `parent_span_id = ''`,
+    ROOT_SPAN,
     `environment = ${params.add(range.environment, "String")}`,
   ];
   if (filters.service !== undefined) {

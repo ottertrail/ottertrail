@@ -150,6 +150,11 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("GET", "/traces/:traceId", `/traces/${TRACE_ID}`),
   request(
     "GET",
+    "/traces/:traceId/browser",
+    `/traces/${TRACE_ID}/browser?at=2026-11-16T10:00:00.000Z`,
+  ),
+  request(
+    "GET",
     "/traces/:traceId/spans/:spanId",
     `/traces/${TRACE_ID}/spans/00f067aa0ba902b7?start=1795003200000000000`,
   ),

@@ -185,6 +185,7 @@ const EXPECTED: Record<string, string> = {
   "GET /api/projects/:id/traces": "monitoring:view",
   "GET /api/projects/:id/traces/chart": "monitoring:view",
   "GET /api/projects/:id/traces/:traceId": "monitoring:view",
+  "GET /api/projects/:id/traces/:traceId/browser": "monitoring:view",
   "GET /api/projects/:id/traces/:traceId/spans/:spanId": "monitoring:view",
   "GET /api/projects/:id/logs": "monitoring:view",
   "GET /api/projects/:id/logs/volume": "monitoring:view",

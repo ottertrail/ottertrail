@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import type { FastifyPluginCallback } from "fastify";
 import type { Kysely } from "kysely";
 
-import { type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
@@ -12,6 +12,7 @@ import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts
 import type { Database } from "../db/schema.ts";
 import { effectiveTelemetryRetentionDays } from "../projects/telemetry-retention.ts";
 import { RANGE_PROPERTIES, type RangeQuery } from "../reports/routes.ts";
+import { browserTrace } from "./browser-trace.ts";
 import {
   DashboardQueryLimiter,
   dashboardReader,
@@ -340,6 +341,49 @@ export const telemetryDashboardRoutes: FastifyPluginCallback<{
       );
       // An empty trace is a valid result the page can display.
       return { timeZone, retentionDays, ...detail };
+    },
+  );
+
+  // The browser events that name the trace, around its start (`at`):
+  // errors, users, and replays only for those who may see them (docs/access.md).
+  app.get<{ Params: { id: string; traceId: string }; Querystring: { at: string } }>(
+    "/projects/:id/traces/:traceId/browser",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: TRACE_PARAMS,
+        querystring: {
+          type: "object",
+          required: ["at"],
+          additionalProperties: false,
+          properties: { at: { type: "string", pattern: MOMENT_PATTERN } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, timeZone, user } = accessOf(request);
+      const at = new Date(request.query.at);
+      if (Number.isNaN(at.getTime())) {
+        return reply.code(400).send({ error: "invalid_time", message: "at must be a real time." });
+      }
+      const see = {
+        errors: canUse(user, "errors", "view"),
+        users: canUse(user, "users", "view"),
+        replays: canUse(user, "replays", "view"),
+      };
+      const found = await browserTrace(
+        readerOf(reply),
+        projectId,
+        request.params.traceId.toLowerCase(),
+        at,
+        see,
+      );
+      return {
+        timeZone,
+        errorsHidden: !see.errors,
+        usersHidden: !see.users,
+        ...found,
+      };
     },
   );
 

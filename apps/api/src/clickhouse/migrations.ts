@@ -733,4 +733,35 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          ADD COLUMN IF NOT EXISTS output_includes_reasoning Bool DEFAULT true AFTER output_tokens`,
     ],
   },
+  {
+    name: "0015_events_browser_traces",
+    /**
+     * Browser events linked to server traces (docs/telemetry.md, "The
+     * browser and the server"): a page load's pageview, errors, and Web
+     * Vitals carry its trace in trace_id and span_id, as a server's
+     * exception does, and an error the page's last requests, with their
+     * traces, in error_requests (empty for every other event). A trace's
+     * page looks for both by trace ID: a bloom filter on each lets
+     * ClickHouse skip the granules without it.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+         ADD COLUMN IF NOT EXISTS error_requests Array(Tuple(
+           method LowCardinality(String),
+           path String,
+           status UInt16,
+           duration_ms UInt32,
+           trace_id String
+         )) AFTER replay_id`,
+      `ALTER TABLE ${database}.events
+         ADD INDEX IF NOT EXISTS trace_id_index trace_id TYPE bloom_filter GRANULARITY 4`,
+      `ALTER TABLE ${database}.events
+         ADD INDEX IF NOT EXISTS error_requests_trace_id_index error_requests.trace_id
+         TYPE bloom_filter GRANULARITY 4`,
+      `ALTER TABLE ${database}.events
+         MATERIALIZE INDEX trace_id_index SETTINGS mutations_sync = 1`,
+      `ALTER TABLE ${database}.events
+         MATERIALIZE INDEX error_requests_trace_id_index SETTINGS mutations_sync = 1`,
+    ],
+  },
 ];

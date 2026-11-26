@@ -52,8 +52,11 @@ describe("ClickHouse migrations", () => {
     });
     expect(await indexes.json()).toEqual([
       { name: "error_fingerprint_index", type: "bloom_filter" },
+      // A trace's browser events, by their page load's trace or a request's (0015).
+      { name: "error_requests_trace_id_index", type: "bloom_filter" },
       // For a first-seen rebuild's events that arrived while it ran (0013).
       { name: "received_at_index", type: "minmax" },
+      { name: "trace_id_index", type: "bloom_filter" },
       { name: "user_id_index", type: "bloom_filter" },
     ]);
   });

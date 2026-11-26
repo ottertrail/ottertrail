@@ -39,6 +39,11 @@ export interface NewEvent {
   error?: StoredError;
   /** For a server's exception received over OTLP: where it happened (telemetry/exceptions.ts). */
   server?: ServerOrigin;
+  /**
+   * For a browser's page load: the trace its server named in Server-Timing,
+   * in hex, on its pageview, errors, and Web Vitals (docs/telemetry.md).
+   */
+  trace?: { traceId: string; spanId: string };
 }
 
 export interface ServerOrigin {
@@ -57,6 +62,17 @@ export interface StoredError {
   fingerprint: string;
   /** The session replay that shows it, when the page recorded one (docs/session-replay.md). */
   replayId?: string;
+  /** The page's last requests before it, with their traces (docs/errors.md). */
+  requests?: BrowserRequest[];
+}
+
+/** A request a page made, as an error carries it; as ClickHouse's error_requests holds it. */
+export interface BrowserRequest {
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  trace_id: string;
 }
 
 /** Used by storeEvents() and tests/helpers/events.ts. */
@@ -92,7 +108,9 @@ export interface EventRow {
   error_handled: boolean | null;
   error_fingerprint: string | null;
   replay_id: string | null;
-  /** A server's exception's (ServerOrigin); "" for every other event. */
+  /** An error's page's last requests; empty for every other event. */
+  error_requests: BrowserRequest[];
+  /** A server's exception's (ServerOrigin), or a page load's trace; "" for every other event. */
   service: string;
   trace_id: string;
   span_id: string;
@@ -133,6 +151,7 @@ export function toClickHouse(event: EventRow) {
     error_handled: event.error_handled ?? false,
     error_fingerprint: event.error_fingerprint ?? "",
     replay_id: event.replay_id,
+    error_requests: event.error_requests,
     service: event.service,
     trace_id: event.trace_id,
     span_id: event.span_id,
@@ -172,9 +191,10 @@ export function toRow(projectId: string, event: NewEvent, receivedAt: Date): Eve
     error_handled: event.error?.handled ?? null,
     error_fingerprint: event.error?.fingerprint ?? null,
     replay_id: event.error?.replayId ?? null,
+    error_requests: event.error?.requests ?? [],
     service: event.server?.service ?? "",
-    trace_id: event.server?.traceId ?? "",
-    span_id: event.server?.spanId ?? "",
+    trace_id: event.server?.traceId ?? event.trace?.traceId ?? "",
+    span_id: event.server?.spanId ?? event.trace?.spanId ?? "",
   };
 }
 

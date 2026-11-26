@@ -128,6 +128,9 @@ interface IncomingEvent {
   userSignature?: string;
   /** What went wrong, for an event named "error" only (docs/errors.md). */
   error?: IncomingError;
+  /** The server's trace of the page load, from Server-Timing (docs/telemetry.md). */
+  traceId?: string;
+  spanId?: string;
 }
 
 interface IncomingError {
@@ -138,7 +141,42 @@ interface IncomingError {
   handled?: boolean;
   /** The session replay the page is sending for it (docs/session-replay.md). */
   replayId?: string;
+  /** The page's last requests before it, with data-traces="on" (docs/errors.md). */
+  requests?: IncomingRequest[];
 }
+
+interface IncomingRequest {
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+  traceId: string;
+}
+
+/** W3C Trace Context's IDs, in lowercase hex as the tracker sends them; all zeros is no ID. */
+const TRACE_ID_SCHEMA = { type: "string", pattern: "^(?!0{32}$)[0-9a-f]{32}$" } as const;
+const SPAN_ID_SCHEMA = { type: "string", pattern: "^(?!0{16}$)[0-9a-f]{16}$" } as const;
+
+/** Requests an error carries, at most (packages/tracker/src/traces.ts). */
+export const MAX_ERROR_REQUESTS = 5;
+
+/**
+ * A request as the tracker keeps it: a method; a path without query string
+ * or fragment, as URL.pathname writes it (printable ASCII but "?" and "#"); a status (0
+ * when no answer came); a duration of at most an hour; its trace.
+ */
+const REQUEST_SCHEMA = {
+  type: "object",
+  required: ["method", "path", "status", "durationMs", "traceId"],
+  additionalProperties: false,
+  properties: {
+    method: { type: "string", pattern: "^[A-Z]{1,16}$" },
+    path: { type: "string", maxLength: 2048, pattern: '^/[!"$->@-~]*$' },
+    status: { type: "integer", minimum: 0, maximum: 999 },
+    durationMs: { type: "integer", minimum: 0, maximum: 3_600_000 },
+    traceId: TRACE_ID_SCHEMA,
+  },
+} as const;
 
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
@@ -164,6 +202,7 @@ const ERROR_SCHEMA = {
     stack: { type: "string", maxLength: 16_000, pattern: MULTILINE_TEXT },
     handled: { type: "boolean" },
     replayId: { type: "string", pattern: UUID_PATTERN },
+    requests: { type: "array", maxItems: MAX_ERROR_REQUESTS, items: REQUEST_SCHEMA },
   },
 } as const;
 
@@ -232,7 +271,11 @@ const eventBatchSchema = {
           userSignature: { type: "string", pattern: USER_SIGNATURE_PATTERN },
           properties: PROPERTIES_SCHEMA,
           error: ERROR_SCHEMA,
+          traceId: TRACE_ID_SCHEMA,
+          spanId: SPAN_ID_SCHEMA,
         },
+        // A trace without its span, or a span without its trace, names nothing.
+        dependencies: { traceId: ["spanId"], spanId: ["traceId"] },
       },
     },
   },
@@ -662,8 +705,22 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
                     ...(event.error.replayId === undefined
                       ? {}
                       : { replayId: event.error.replayId.toLowerCase() }),
+                    ...(event.error.requests === undefined || event.error.requests.length === 0
+                      ? {}
+                      : {
+                          requests: event.error.requests.map((sent) => ({
+                            method: sent.method,
+                            path: sent.path,
+                            status: sent.status,
+                            duration_ms: sent.durationMs,
+                            trace_id: sent.traceId,
+                          })),
+                        }),
                   },
                 }),
+            ...(event.traceId === undefined || event.spanId === undefined
+              ? {}
+              : { trace: { traceId: event.traceId, spanId: event.spanId } }),
           };
         });
 

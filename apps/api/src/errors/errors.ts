@@ -3,6 +3,7 @@ import type { Kysely } from "kysely";
 import { forgetRegressions } from "../alerts/rules.ts";
 import { fromClickHouseTime, QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
+import type { BrowserRequest } from "../collection/event-store.ts";
 import type { Database } from "../db/schema.ts";
 import { ERROR } from "../visits/visits.ts";
 import { type Assignee, assigneesOf } from "./assignments.ts";
@@ -315,10 +316,13 @@ export interface Occurrence {
   release: string | null;
   /** The session replay its page sent with it, if any (docs/session-replay.md). */
   replayId: string | null;
-  /** OTLP service, trace, and span (docs/telemetry.md); null for browser errors. */
+  /** OTLP service (docs/telemetry.md); null for browser errors. */
   service: string | null;
+  /** A server's trace and span, or a browser's page load's (data-traces); null without one. */
   traceId: string | null;
   spanId: string | null;
+  /** A browser's last requests before it, oldest first (data-traces); empty for others. */
+  requests: { method: string; path: string; status: number; durationMs: number; traceId: string }[];
 }
 
 export type ErrorSource = "browser" | "server";
@@ -414,11 +418,12 @@ export async function errorDetail(
       service: string;
       trace_id: string;
       span_id: string;
+      error_requests: BrowserRequest[];
     }>(
       reader,
       `SELECT event_id, occurred_at, error_message, error_handled, error_stack, path, user_id,
               browser, browser_version, os, device_type, country, release, replay_id,
-              service, trace_id, span_id
+              service, trace_id, span_id, error_requests
        FROM events FINAL
        WHERE ${scoped(occurrenceParams)}
        ORDER BY occurred_at DESC, event_id DESC
@@ -474,6 +479,13 @@ export async function errorDetail(
       service: occurrence.service || null,
       traceId: occurrence.trace_id || null,
       spanId: occurrence.span_id || null,
+      requests: occurrence.error_requests.map((request) => ({
+        method: request.method,
+        path: request.path,
+        status: request.status,
+        durationMs: request.duration_ms,
+        traceId: request.trace_id,
+      })),
     })),
     source: (occurrenceRows[0]?.service ?? "") === "" ? "browser" : "server",
     stack: occurrenceRows[0]?.error_stack || null,
