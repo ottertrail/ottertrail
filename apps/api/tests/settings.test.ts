@@ -8,6 +8,7 @@ import {
   SETTINGS_CACHE_MS,
   updateInstanceSettings,
 } from "../src/settings/settings.ts";
+import { OTTERTRAIL_VERSION, releaseNotesUrl } from "../src/version.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { PROJECT_REQUESTS } from "./helpers/project-routes.ts";
 import {
@@ -20,6 +21,8 @@ const CHROME =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 const NOT_FOUND = { error: "not_found", message: "No project has this ID." };
 const UNAUTHORIZED = { error: "unauthorized", message: "Sign in to continue." };
+// Tests run the API from source: a development build, with no release to link to.
+const RUNNING_VERSION = { version: OTTERTRAIL_VERSION, releaseNotesUrl: null };
 describe("the access check and the instance's settings", () => {
   let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
   let carol: Awaited<ReturnType<typeof signedInUser>>;
@@ -115,6 +118,7 @@ describe("the access check and the instance's settings", () => {
         timeZone: "Asia/Singapore",
         updateLocationData: true,
         avatarUrl: null,
+        ...RUNNING_VERSION,
       },
     });
     for (const [method, payload] of [["GET"], ["PATCH", { name: "Carol's now" }]] as const) {
@@ -133,6 +137,7 @@ describe("the access check and the instance's settings", () => {
         timeZone: "Asia/Singapore",
         updateLocationData: true,
         avatarUrl: null,
+        ...RUNNING_VERSION,
       },
     });
     const rows = await dashboard.db.selectFrom("instance_settings").select("name").execute();
@@ -209,6 +214,22 @@ describe("the access check and the instance's settings", () => {
       `/api/projects/${site.id}/analytics?period=today`,
     );
     expect(report.json().timeZone).toBe("America/Los_Angeles");
+  });
+});
+
+describe("the running version", () => {
+  test("links a built release to its notes, never a development build", () => {
+    expect(releaseNotesUrl("0.8.0", true)).toBe(
+      "https://github.com/ottertrail/ottertrail/releases/tag/v0.8.0",
+    );
+    expect(releaseNotesUrl("12.0.31", true)).toBe(
+      "https://github.com/ottertrail/ottertrail/releases/tag/v12.0.31",
+    );
+    // Run from source, the version is the last release while the code has moved on.
+    expect(releaseNotesUrl("0.8.0", false)).toBeNull();
+    for (const version of ["0.9.0-rc.1", "0.8.0+abc123", "v0.8.0", "0.8", "", "0.8.0\n"]) {
+      expect(releaseNotesUrl(version, true)).toBeNull();
+    }
   });
 });
 

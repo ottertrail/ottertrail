@@ -10,6 +10,7 @@ import type { Database } from "../db/schema.ts";
 import type { LoadedLocationData } from "../enrichment/reload.ts";
 import { readUpdateStatus, type UpdateStatus } from "../enrichment/updates.ts";
 import { anyProjectUsesLocationDatabase } from "../projects/projects.ts";
+import { OTTERTRAIL_RELEASE_NOTES_URL, OTTERTRAIL_VERSION } from "../version.ts";
 import { canonicalTimeZone } from "../visitors/visitor-ids.ts";
 import {
   INVALID_TIME_ZONE,
@@ -20,9 +21,19 @@ import {
   updateInstanceSettings,
 } from "./settings.ts";
 
-/** Expose the icon as a URL. */
+/**
+ * Expose the icon as a URL. The version goes only to the owner: on a public
+ * route it would tell an attacker which known flaws to try.
+ */
 function view({ avatarKey, ...settings }: InstanceSettings) {
-  return { settings: { ...settings, avatarUrl: avatarUrlOf(avatarKey) } };
+  return {
+    settings: {
+      ...settings,
+      avatarUrl: avatarUrlOf(avatarKey),
+      version: OTTERTRAIL_VERSION,
+      releaseNotesUrl: OTTERTRAIL_RELEASE_NOTES_URL,
+    },
+  };
 }
 
 function updateView(status: UpdateStatus | null) {

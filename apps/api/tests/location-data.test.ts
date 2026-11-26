@@ -523,7 +523,7 @@ describe("the location data on the Settings page", () => {
     }
     // The name and timezone stay as they were.
     const on = await call(dashboard.cookie, "PATCH", "/api/settings", { updateLocationData: true });
-    expect(on.json().settings).toEqual({
+    expect(on.json().settings).toMatchObject({
       name: "Ada's company",
       timeZone: "UTC",
       updateLocationData: true,

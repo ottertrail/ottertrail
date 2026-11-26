@@ -21,6 +21,8 @@ export default defineConfig({
       "restore-backup": "scripts/restore-backup.ts",
     },
     platform: "node",
+    // Tells a built API from one run from source (src/version.ts).
+    define: { __OTTERTRAIL_BUNDLE__: "true" },
     // Bundling avoids installing about 180 MB of better-auth optional peers.
     deps: { alwaysBundle: [/./], onlyBundle: false },
     plugins: [
