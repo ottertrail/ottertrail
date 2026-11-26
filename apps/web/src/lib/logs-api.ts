@@ -85,6 +85,26 @@ export interface LogFilters {
   traceId?: string | undefined;
 }
 
+/**
+ * A time window the page opens on instead of its days, as an alert's link sends it: instants
+ * in UTC, `end` excluded, at most a day apart.
+ */
+export interface LogWindow {
+  start: string;
+  end: string;
+}
+
+const MAX_WINDOW_MS = 86_400_000;
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+export function logWindowFrom(search: { start?: unknown; end?: unknown }): LogWindow | undefined {
+  const { start, end } = search;
+  if (typeof start !== "string" || typeof end !== "string") return undefined;
+  if (!INSTANT.test(start) || !INSTANT.test(end)) return undefined;
+  const span = Date.parse(end) - Date.parse(start);
+  return span > 0 && span <= MAX_WINDOW_MS ? { start, end } : undefined;
+}
+
 /** Trace IDs as the API takes them: 32 hex digits. */
 export const isTraceId = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-fA-F]{32}$/.test(value);
@@ -138,6 +158,10 @@ function filterParams(environment: string, filters: LogFilters): Record<string, 
     ...(filters.traceId === undefined ? {} : { traceId: filters.traceId }),
   };
 }
+
+/** The days, or the time window that replaces them. */
+const periodParams = (range: PageRange, window: LogWindow | undefined): Record<string, string> =>
+  window === undefined ? rangeParams(range) : { start: window.start, end: window.end };
 
 /** The filters in a query key, each by name, so one left undefined and one left out are one query. */
 const filterKey = (filters: LogFilters) => [
@@ -197,13 +221,14 @@ export const logVolumeQuery = (
   range: PageRange,
   environment: string,
   filters: LogFilters,
+  window?: LogWindow,
 ) =>
   queryOptions({
-    queryKey: ["logs-volume", projectId, range, environment, ...filterKey(filters)],
+    queryKey: ["logs-volume", projectId, window ?? range, environment, ...filterKey(filters)],
     retry: telemetryRetry,
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
-        ...rangeParams(range),
+        ...periodParams(range, window),
         ...filterParams(environment, filters),
       });
       return expectShape(
@@ -270,14 +295,15 @@ export const logsQuery = (
   range: PageRange,
   environment: string,
   filters: LogFilters,
+  window?: LogWindow,
 ) =>
   infiniteQueryOptions({
     // Each filter by name, so a filter left undefined and one left out are the same query.
-    queryKey: ["logs", projectId, range, environment, ...filterKey(filters)],
+    queryKey: ["logs", projectId, window ?? range, environment, ...filterKey(filters)],
     retry: telemetryRetry,
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
-        ...rangeParams(range),
+        ...periodParams(range, window),
         ...filterParams(environment, filters),
         ...(pageParam === null ? {} : { before: pageParam }),
       });

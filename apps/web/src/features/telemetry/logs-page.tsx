@@ -7,6 +7,7 @@ import {
   PauseIcon,
   PlayIcon,
   SearchXIcon,
+  XIcon,
 } from "lucide-react";
 import * as React from "react";
 
@@ -43,6 +44,7 @@ import {
   type LogList as LogListAnswer,
   logsQuery,
   type LogSummary,
+  type LogWindow,
   SEVERITIES,
   severityOf,
 } from "@/lib/logs-api";
@@ -51,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { formatWhole } from "../analytics/format";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
+import { formatMoment } from "../uptime/format";
 import { ChoiceFilter, TextFilter } from "./filters";
 import { formatPreciseMoment } from "./format";
 import { LIVE_TIMING, type LiveNote, useAtTop, useLiveLogs } from "./live-logs";
@@ -63,6 +66,15 @@ const SEVERITY_CHOICES = SEVERITIES.map((item) => ({
   value: item.value,
   label: item.value === "fatal" ? "Fatal" : `${item.label} and above`,
 }));
+
+/** A time window in the instance's timezone: "26 Nov 2026, 10:20 to 10:31". */
+function windowText(window: LogWindow, timeZone: string): string {
+  const start = formatMoment(window.start, timeZone);
+  const end = formatMoment(window.end, timeZone);
+  const [startDay] = start.split(", ");
+  const [endDay, endTime] = end.split(", ");
+  return startDay === endDay ? `${start} to ${endTime ?? ""}` : `${start} to ${end}`;
+}
 
 const WARN = SEVERITIES.find((item) => item.value === "warn")?.from ?? 13;
 const ERROR = SEVERITIES.find((item) => item.value === "error")?.from ?? 17;
@@ -138,11 +150,13 @@ function Summary({
   logs,
   more,
   filters,
+  window,
 }: {
   first: LogListAnswer;
   logs: readonly LogSummary[];
   more: boolean;
   filters: LogFilters;
+  window: LogWindow | undefined;
 }) {
   const minimum = SEVERITIES.find((item) => item.value === filters.severity)?.from ?? 0;
   const warnings = logs.filter(
@@ -161,11 +175,18 @@ function Summary({
     <div className="flex flex-col gap-6 px-gutter py-5">
       <div className="flex flex-col gap-1">
         <h2 className="text-xl font-semibold text-ink">This period</h2>
-        <FilterBarRange
-          firstDay={first.firstDay}
-          lastDay={first.lastDay}
-          timeZone={first.timeZone}
-        />
+        {window === undefined ? (
+          <FilterBarRange
+            firstDay={first.firstDay}
+            lastDay={first.lastDay}
+            timeZone={first.timeZone}
+          />
+        ) : (
+          <p className="text-sm text-ink-muted tabular-nums">
+            {windowText(window, first.timeZone)}{" "}
+            <span className="text-ink-subtle">{first.timeZone}</span>
+          </p>
+        )}
       </div>
       <section aria-label="Records in the list" className="flex flex-col gap-3 border-t pt-5">
         <StatStrip label="Records in the list" stats={stats} />
@@ -462,23 +483,26 @@ export function LogsPage({
   environment = DEFAULT_ENVIRONMENT,
   filters,
   live = false,
+  window,
 }: {
   projectId: string;
   range: PageRange;
   environment?: string;
   filters: LogFilters;
   live?: boolean;
+  /** A time window that replaces the days, as an alert's link opens the page. */
+  window?: LogWindow | undefined;
 }) {
   const navigate = useNavigate();
   // Live skips the period query; cached results still populate the filters.
   const list = useInfiniteQuery({
-    ...logsQuery(projectId, range, environment, filters),
+    ...logsQuery(projectId, range, environment, filters, window),
     enabled: !live,
   });
   const [liveServices, setLiveServices] = React.useState<string[]>([]);
   const narrow = useMediaQuery(NARROW_WORKBENCH);
   const [openOnArrival, setOpenOnArrival] = React.useState<string | undefined>(undefined);
-  const search: LogsSearch = { range, environment, filters, live };
+  const search: LogsSearch = { range, environment, filters, live, window };
   // Keep selection across filter changes. Clear it when switching Live because the other view cannot hold it.
   const show = (next: Partial<LogsSearch>) =>
     void navigate({
@@ -520,7 +544,7 @@ export function LogsPage({
       range={range}
       environment={environment}
       answered={first}
-      onRange={(next) => show({ range: next })}
+      onRange={(next) => show({ range: next, window: undefined })}
       onEnvironment={(next) =>
         show({ environment: next, filters: { ...filters, service: undefined } })
       }
@@ -533,6 +557,16 @@ export function LogsPage({
             className="w-40 justify-start"
           >
             Live
+          </Button>
+        ) : window !== undefined ? (
+          <Button
+            variant="outline"
+            aria-label="Clear the time window"
+            className="justify-start tabular-nums"
+            onClick={() => show({ window: undefined })}
+          >
+            {first === undefined ? "Time window" : windowText(window, first.timeZone)}
+            <XIcon aria-hidden="true" />
           </Button>
         ) : undefined
       }
@@ -681,7 +715,7 @@ export function LogsPage({
         className="min-[64rem]:min-h-0 min-[64rem]:flex-1"
         ids={logs.map((log) => log.id)}
         param="log"
-        filterKey={JSON.stringify([range, environment, filters])}
+        filterKey={JSON.stringify([window ?? range, environment, filters])}
         onOpenPage={setOpenOnArrival}
         renderList={(props) => (
           <div className="flex flex-col">
@@ -690,7 +724,8 @@ export function LogsPage({
               range={range}
               environment={environment}
               filters={filters}
-              onRange={(next) => show({ range: next })}
+              window={window}
+              onRange={(next) => show({ range: next, window: undefined })}
             />
             <div
               className="flex flex-col transition-opacity data-[stale=true]:opacity-60"
@@ -754,7 +789,13 @@ export function LogsPage({
           empty ? (
             <div className="px-gutter py-5">{guidance}</div>
           ) : (
-            <Summary first={first} logs={logs} more={list.hasNextPage} filters={filters} />
+            <Summary
+              first={first}
+              logs={logs}
+              more={list.hasNextPage}
+              filters={filters}
+              window={window}
+            />
           )
         }
         renderDetail={(id) => (

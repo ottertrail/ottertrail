@@ -5258,6 +5258,7 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
         "route_failures",
         "metric_threshold",
         "telemetry_stopped",
+        "log_lines",
       ];
       const aiKinds = ["ai_cost", "ai_failures", "ai_latency"];
       return {

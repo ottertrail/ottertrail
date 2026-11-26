@@ -80,10 +80,14 @@ import {
   MAX_EVENT_NAME,
   MAX_MIN_COUNT,
   STOPPED_WINDOWS,
+  DEFAULT_LOG_SEVERITY,
+  DEFAULT_LOG_WINDOW,
+  DEFAULT_MAX_COUNT,
 } from "@/lib/alerts-api";
 import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
 import { hostsQuery } from "@/lib/hosts-api";
+import { isSeverity, SEVERITIES, type Severity } from "@/lib/logs-api";
 import { metricChartQuery, type MetricKind, METRIC_KINDS, metricsQuery } from "@/lib/metrics-api";
 import { productEventsQuery } from "@/lib/product-api";
 import { recentRoutesQuery } from "@/lib/services-api";
@@ -143,6 +147,10 @@ interface Draft {
   /** "" for all events. */
   eventName: string;
   minCount: string;
+  /** "Log lines match": "" for any severity, as on the Logs page. */
+  severity: Severity | "";
+  search: string;
+  maxCount: string;
   channelIds: string[];
 }
 
@@ -168,7 +176,9 @@ type TextFieldName =
   | "feature"
   | "minCalls"
   | "eventName"
-  | "minCount";
+  | "minCount"
+  | "search"
+  | "maxCount";
 
 type FieldName =
   | TextFieldName
@@ -179,7 +189,8 @@ type FieldName =
   | "aggregate"
   | "percentile"
   | "direction"
-  | "costWindow";
+  | "costWindow"
+  | "severity";
 
 const ALL_CHECKS = "";
 const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -197,6 +208,21 @@ const isRoute = (kind: RuleKind) => kind === "route_latency" || kind === "route_
 
 const text = (value: number | undefined | null) => (value == null ? "" : String(value));
 
+/** The most words a log search holds, and its longest text, as the API takes them. */
+const MAX_SEARCH_WORDS = 8;
+const MAX_SEARCH_LENGTH = 200;
+
+/** A log search's words, cut as the API cuts them (apps/api/src/telemetry/logs.ts, searchWords). */
+const searchWords = (search: string) =>
+  new Set(search.split(/[^A-Za-z0-9\u{80}-\u{10FFFF}]+/u).filter((word) => word !== ""));
+
+const defaultWindow = (kind: RuleKind) =>
+  isStoppedKind(kind)
+    ? DEFAULT_STOPPED_WINDOW
+    : kind === "log_lines"
+      ? DEFAULT_LOG_WINDOW
+      : DEFAULT_WINDOW_MINUTES;
+
 function draftOf(
   rule: Rule | undefined,
   prefill: RulePrefill,
@@ -212,10 +238,7 @@ function draftOf(
     days: String(settings.days ?? DEFAULT_CERTIFICATE_DAYS),
     environment: settings.environment ?? prefill.env ?? "",
     fingerprint: settings.fingerprint ?? prefill.fingerprint ?? "",
-    windowMinutes: String(
-      settings.windowMinutes ??
-        (isStoppedKind(kind) ? DEFAULT_STOPPED_WINDOW : DEFAULT_WINDOW_MINUTES),
-    ),
+    windowMinutes: String(settings.windowMinutes ?? defaultWindow(kind)),
     threshold: String(settings.threshold ?? DEFAULT_THRESHOLD),
     service: settings.service ?? prefill.service ?? "",
     route: settings.route ?? prefill.route ?? "",
@@ -239,6 +262,9 @@ function draftOf(
     source: settings.source ?? (kind === "telemetry_stopped" ? "traces" : "events"),
     eventName: settings.eventName ?? "",
     minCount: String(settings.minCount ?? DEFAULT_MIN_COUNT),
+    severity: settings.severity === undefined ? DEFAULT_LOG_SEVERITY : (settings.severity ?? ""),
+    search: settings.search ?? "",
+    maxCount: String(settings.maxCount ?? DEFAULT_MAX_COUNT),
     // Drop deleted channels. Default new rules to the sole channel, if present.
     channelIds:
       rule?.channelIds.filter((id) => channels.some((channel) => channel.id === id)) ??
@@ -364,6 +390,19 @@ function problemsOf(draft: Draft): Partial<Record<FieldName, string>> {
       }
     }
   }
+  if (draft.kind === "log_lines") {
+    const service = draft.service.trim();
+    if (service !== "" && !SERVICE.test(service)) {
+      problems.service = "Enter the service name from its logs (service.name).";
+    }
+    const search = draft.search.trim();
+    if (search.length > MAX_SEARCH_LENGTH || searchWords(search).size > MAX_SEARCH_WORDS) {
+      problems.search = `Enter at most ${MAX_SEARCH_WORDS} words, in ${MAX_SEARCH_LENGTH} characters.`;
+    }
+    if (!wholeIn(draft.maxCount, 0, MAX_MIN_COUNT)) {
+      problems.maxCount = `Enter a whole number of lines from 0 to ${MAX_MIN_COUNT.toLocaleString("en")}.`;
+    }
+  }
   if (draft.kind === "metric_threshold") {
     const metric = draft.metric.trim();
     if (metric === "" || metric.length > MAX_METRIC_NAME) {
@@ -422,6 +461,9 @@ function fieldOfError(code: string, kind: RuleKind): FieldName | undefined {
     invalid_attribute: "attributeValue",
     invalid_min_calls: "minCalls",
     invalid_filter: "feature",
+    invalid_severity: "severity",
+    invalid_search: "search",
+    invalid_max_count: "maxCount",
   };
   return fields[code];
 }
@@ -517,6 +559,15 @@ function settingsOf(draft: Draft): RuleSettings {
       }
       return { ...common, service: optional(draft.service) };
     }
+    case "log_lines":
+      return {
+        environment,
+        service: optional(draft.service),
+        severity: draft.severity === "" ? null : draft.severity,
+        search: optional(draft.search),
+        windowMinutes: Number(draft.windowMinutes),
+        maxCount: Number(draft.maxCount),
+      };
     default:
       return {};
   }
@@ -552,6 +603,8 @@ const KIND_HELP: Record<RuleKind, string> = {
     "Notifies when the 95th percentile duration of AI calls is above the threshold, then again after a full window at or below it. Windows below the minimum call count do not trigger or resolve alerts.",
   events_stopped: STOPPED_HELP,
   telemetry_stopped: STOPPED_HELP,
+  log_lines:
+    "Notifies when more lines than the number arrive in the window, then again when a window has no more. Lines match as on the Logs page.",
 };
 
 const COST_WINDOW_ITEMS: { value: CostWindow; label: string }[] = [
@@ -664,6 +717,15 @@ const STOPPED_WINDOW_ITEMS = STOPPED_WINDOWS.map((minutes) => ({
   label: windowLabel(minutes),
 }));
 
+/** The Logs page's severity steps, and any severity. */
+const SEVERITY_ITEMS = [
+  { value: "", label: "Any severity" },
+  ...SEVERITIES.map((item) => ({
+    value: item.value,
+    label: item.value === "fatal" ? "Fatal" : `${item.label} and above`,
+  })),
+];
+
 const pickerEnvironment = (draft: Draft) => {
   const typed = draft.environment.trim().toLowerCase();
   return ENVIRONMENT.test(typed) ? typed : DEFAULT_ENVIRONMENT;
@@ -679,7 +741,9 @@ function useSuggestions(projectId: string, draft: Draft, canReadEvents: boolean)
   const recent = useQuery({
     ...recentRoutesQuery(projectId, environment),
     enabled:
-      isRoute(draft.kind) || (stopped && (draft.source === "traces" || draft.source === "logs")),
+      isRoute(draft.kind) ||
+      draft.kind === "log_lines" ||
+      (stopped && (draft.source === "traces" || draft.source === "logs")),
   });
   const metricRule = draft.kind === "metric_threshold";
   const metricNames = metricRule || (stopped && draft.source === "metrics");
@@ -873,7 +937,13 @@ function RuleForm({
       return;
     }
     const found = RULE_KINDS.find((item) => item === value);
-    if (found !== undefined) change({ kind: found });
+    if (found === undefined || found === draft.kind) return;
+    // A log lines rule starts on its own window; the other kinds keep what was typed.
+    change(
+      found === "log_lines" || draft.kind === "log_lines"
+        ? { kind: found, windowMinutes: String(defaultWindow(found)) }
+        : { kind: found },
+    );
   };
   const stopped = isStoppedKind(draft.kind);
   const metricKinds = suggestions.metrics.filter((metric) => metric.name === draft.metric.trim());
@@ -965,6 +1035,37 @@ function RuleForm({
               onChange={(windowMinutes) => change({ windowMinutes })}
               error={errorOf("windowMinutes")}
             />
+          </div>
+        </>
+      )}
+      {draft.kind === "log_lines" && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {environmentField}
+            {textField("service", "Service (optional)", {
+              placeholder: "All services",
+              options: suggestions.services,
+            })}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Minimum severity"
+              value={draft.severity}
+              items={SEVERITY_ITEMS}
+              onChange={(next) => change({ severity: isSeverity(next) ? next : "" })}
+              error={errorOf("severity")}
+            />
+            {textField("search", "Words in the message (optional)", {
+              placeholder: "Any message",
+              description: "Each word, in any case.",
+            })}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {textField("maxCount", "More than (lines)", {
+              numeric: "numeric",
+              description: "0 notifies on any matching line.",
+            })}
+            {windowField}
           </div>
         </>
       )}

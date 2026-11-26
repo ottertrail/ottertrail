@@ -2,6 +2,7 @@ import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import type { Area } from "./access";
 import { apiRequest, expectShape } from "./api";
+import type { Severity } from "./logs-api";
 import { isMetricKind, type MetricKind } from "./metrics-api";
 import { isListOf, isNumber, isRecord, isText, isTextOrNull } from "./telemetry-shapes";
 
@@ -22,6 +23,7 @@ export const RULE_KINDS = [
   "ai_latency",
   "events_stopped",
   "telemetry_stopped",
+  "log_lines",
 ] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
@@ -42,6 +44,7 @@ export const KIND_LABEL: Record<RuleKind, string> = {
   ai_latency: "AI latency",
   events_stopped: "Data stops arriving",
   telemetry_stopped: "Data stops arriving",
+  log_lines: "Log lines match",
 };
 
 export const TELEMETRY_KINDS: readonly RuleKind[] = [
@@ -53,6 +56,7 @@ export const TELEMETRY_KINDS: readonly RuleKind[] = [
   "ai_latency",
   "events_stopped",
   "telemetry_stopped",
+  "log_lines",
 ];
 
 /** The kinds that watch AI calls (docs/ai-usage.md, "Alerts"). */
@@ -90,6 +94,11 @@ export const DEFAULT_STOPPED_WINDOW = 60;
 export const DEFAULT_MIN_COUNT = 1;
 export const MAX_MIN_COUNT = 1_000_000;
 export const MAX_EVENT_NAME = 200;
+
+/** A log lines rule: 5 minutes by default, more than 0 lines, of Error or above. */
+export const DEFAULT_LOG_WINDOW = 5;
+export const DEFAULT_MAX_COUNT = 0;
+export const DEFAULT_LOG_SEVERITY: Severity = "error";
 
 export const MAX_RULE_NAME = 100;
 export const DEFAULT_CERTIFICATE_DAYS = 14;
@@ -166,6 +175,10 @@ export interface RuleSettings {
   source?: DataSource;
   eventName?: string | null;
   minCount?: number;
+  /** "Log lines match": the minimum severity (null: any), the words (null: any), and the most lines without an alert. */
+  severity?: Severity | null;
+  search?: string | null;
+  maxCount?: number;
 }
 
 export interface Rule {

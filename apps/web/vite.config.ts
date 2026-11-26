@@ -13,8 +13,10 @@ import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
  * The build fails above these limits (docs/dashboard.md, "Code splitting").
  * gzip 256 since 26 November 2026: the router checks the funnel's `start`
  * and the product API checks the events' comparison, about 0.1 kB past 255.
+ * gzip 257 later that day: the router checks the Logs page's time window,
+ * which an alert's link opens, and the log lines rule kind, about 0.4 kB past 256.
  */
-const INITIAL_JS_BUDGET = { raw: 780, gzip: 256 };
+const INITIAL_JS_BUDGET = { raw: 780, gzip: 257 };
 
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 

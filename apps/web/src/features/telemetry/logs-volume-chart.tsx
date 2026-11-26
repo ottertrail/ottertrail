@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { type PageRange } from "@/lib/analytics-api";
-import { type LogFilters, logVolumeQuery } from "@/lib/logs-api";
+import { type LogFilters, type LogWindow, logVolumeQuery } from "@/lib/logs-api";
 
 import { formatWhole } from "../analytics/format";
 import { stepText } from "./chart-time";
@@ -16,15 +16,17 @@ export function LogsVolumeChart({
   range,
   environment,
   filters,
+  window,
   onRange,
 }: {
   projectId: string;
   range: PageRange;
   environment: string;
   filters: LogFilters;
+  window?: LogWindow | undefined;
   onRange: (range: PageRange) => void;
 }) {
-  const query = useQuery(logVolumeQuery(projectId, range, environment, filters));
+  const query = useQuery(logVolumeQuery(projectId, range, environment, filters, window));
   const volume = query.data;
   const frame: ListChartFrame | undefined = volume;
   const parts = volume === undefined ? [] : severityParts(volume);

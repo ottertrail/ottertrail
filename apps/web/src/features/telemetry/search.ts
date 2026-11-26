@@ -1,7 +1,7 @@
 import { type AiFilters, MAX_AI_LABEL } from "@/lib/ai-api";
 import { DEFAULT_ENVIRONMENT, DEFAULT_PERIOD, type PageRange } from "@/lib/analytics-api";
 import { DEFAULT_DATABASE_SORT, type DatabaseSort } from "@/lib/databases-api";
-import { isSeverity, isTraceId, type LogFilters } from "@/lib/logs-api";
+import { isSeverity, isTraceId, type LogFilters, type LogWindow } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { MIN_DURATIONS, type TraceFilters } from "@/lib/traces-api";
 
@@ -146,10 +146,13 @@ export interface LogsSearch {
   filters: LogFilters;
   /** Preserve the period while Live is on so switching back restores it. */
   live?: boolean | undefined;
+  /** A time window that replaces the days, as an alert's link opens the page. */
+  window?: LogWindow | undefined;
 }
 
-export const logsSearchOf = ({ range, environment, filters, live }: LogsSearch) => ({
+export const logsSearchOf = ({ range, environment, filters, live, window }: LogsSearch) => ({
   ...rangeSearch(range),
+  ...(window === undefined ? {} : { start: window.start, end: window.end }),
   ...(live === true ? { live: true } : {}),
   ...environmentSearch(environment),
   ...(filters.service === undefined ? {} : { service: filters.service }),

@@ -66,7 +66,7 @@ import {
 } from "@/lib/errors-api";
 import { lastProject } from "@/lib/last-project";
 import { lazyPage, withPage } from "@/lib/lazy-page";
-import { isTraceId } from "@/lib/logs-api";
+import { isTraceId, logWindowFrom } from "@/lib/logs-api";
 import { isMetricKind, type MetricKind } from "@/lib/metrics-api";
 import { markNavigated } from "@/lib/navigations";
 import { DEFAULT_OVERVIEW_PERIOD, isOverviewPeriod, type OverviewPeriod } from "@/lib/overview-api";
@@ -730,11 +730,17 @@ const logsRoute = createRoute({
       trace?: unknown;
       log?: unknown;
       live?: unknown;
+      start?: unknown;
+      end?: unknown;
     },
   ) => {
     const filters = logFiltersFrom(search);
+    // A time window from an alert's link (docs/telemetry.md, "The dashboard").
+    const window = logWindowFrom(search);
     return {
       ...rangeSearch(search),
+      start: window?.start,
+      end: window?.end,
       ...environmentSearch(search),
       // The live view (docs/dashboard.md, "Live").
       live: search.live === true || search.live === "true" ? true : undefined,
@@ -748,11 +754,13 @@ const logsRoute = createRoute({
   },
   component: withPage(LogsPage, function LogsRouteComponent() {
     const { projectId } = logsRoute.useParams();
-    const { period, from, to, env, service, severity, q, trace, live } = logsRoute.useSearch();
+    const { period, from, to, env, service, severity, q, trace, live, start, end } =
+      logsRoute.useSearch();
     return (
       <LogsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
+        window={start === undefined || end === undefined ? undefined : { start, end }}
         environment={env ?? DEFAULT_ENVIRONMENT}
         filters={{ service, severity, search: q, traceId: trace }}
         live={live === true}

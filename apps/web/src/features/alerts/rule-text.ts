@@ -1,4 +1,5 @@
 import type { Aggregate, ChannelName, CostWindow, Rule } from "@/lib/alerts-api";
+import { SEVERITIES } from "@/lib/logs-api";
 import type { Check } from "@/lib/uptime-api";
 
 const minutes = (count: number) => (count === 1 ? "1 minute" : `${count} minutes`);
@@ -48,6 +49,21 @@ function stoppedWhat(settings: Rule["settings"]): string {
   }
   const host = settings.host ?? null;
   return `points of the metric ${settings.metric ?? ""}${host === null ? "" : ` on the host ${host}`}`;
+}
+
+/** What a log lines rule counts: "log lines of Error or above from api with the words "timeout"". */
+function logLinesWhat(settings: Rule["settings"]): string {
+  const severity = SEVERITIES.find((item) => item.value === settings.severity);
+  const service = settings.service ?? null;
+  const search = settings.search ?? null;
+  return [
+    "log lines",
+    ...(severity === undefined
+      ? []
+      : [severity.value === "fatal" ? "of Fatal" : `of ${severity.label} or above`]),
+    ...(service === null ? [] : [`from ${service}`]),
+    ...(search === null ? [] : [`with the words "${search}"`]),
+  ].join(" ");
 }
 
 const usd = (value: number) =>
@@ -109,6 +125,11 @@ export function watchesText(rule: Rule, checks: readonly Pick<Check, "id" | "nam
     return minCount === 1
       ? `No ${what} arrive in ${over}, in ${environment}`
       : `Fewer than ${minCount.toLocaleString("en")} ${what} arrive in ${over}, in ${environment}`;
+  }
+  if (rule.kind === "log_lines") {
+    const most = settings.maxCount ?? 0;
+    const over = minutes(settings.windowMinutes ?? 5);
+    return `More than ${most.toLocaleString("en")} ${logLinesWhat(settings)} arrive in ${over}, in ${environment}`;
   }
   if (rule.kind === "metric_threshold") {
     const filters = [

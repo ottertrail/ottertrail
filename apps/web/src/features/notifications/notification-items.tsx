@@ -34,7 +34,12 @@ function iconOf(kind: string): { icon: typeof BugIcon; tone: string } {
   if (kind === "check.down") return { icon: CircleArrowDownIcon, tone: "text-destructive" };
   if (kind.startsWith("certificate.")) return { icon: ShieldAlertIcon, tone: "text-warning" };
   if (kind.startsWith("error.")) return { icon: BugIcon, tone: "text-destructive" };
-  if (kind.startsWith("route.") || kind.startsWith("metric.") || kind.startsWith("data.")) {
+  if (
+    kind.startsWith("route.") ||
+    kind.startsWith("metric.") ||
+    kind.startsWith("data.") ||
+    kind.startsWith("log.")
+  ) {
     return { icon: ActivityIcon, tone: "text-warning" };
   }
   if (kind.startsWith("ai.")) return { icon: SparklesIcon, tone: "text-warning" };
