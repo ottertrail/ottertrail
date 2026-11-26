@@ -980,21 +980,15 @@ export function fakeTracedBrowserError(
   };
 }
 
-/** The browser's part of FAKE_TRACE_ID: a page load, and the error that followed it. */
+/**
+ * The browser's part of FAKE_TRACE_ID, the charge: a request the checkout
+ * page made, carried by the error that followed it.
+ */
 export const FAKE_BROWSER_TRACE: BrowserTrace = {
   timeZone: "Asia/Singapore",
   errorsHidden: false,
   usersHidden: false,
-  pageLoad: {
-    occurredAt: "2026-11-16T00:00:00.240Z",
-    path: "/checkout",
-    browser: "Chrome",
-    browserVersion: "131.0",
-    os: "Windows",
-    release: "1.4.2",
-    environment: "production",
-    userId: "ada",
-  },
+  pageLoad: null,
   errors: [
     {
       occurredAt: "2026-11-16T00:00:03.100Z",
@@ -1010,9 +1004,25 @@ export const FAKE_BROWSER_TRACE: BrowserTrace = {
       type: "TypeError",
       message: "Cannot read properties of undefined (reading 'total')",
       replayId: "00000000-0000-4000-8000-0000000000aa",
-      request: null,
+      request: { method: "POST", path: "/orders/5120/charge", status: 502, durationMs: 182 },
     },
   ],
+};
+
+/** A page load's browser part: its pageview, without errors. */
+export const FAKE_PAGE_LOAD_TRACE: BrowserTrace = {
+  ...FAKE_BROWSER_TRACE,
+  pageLoad: {
+    occurredAt: "2026-11-16T00:00:00.240Z",
+    path: "/checkout",
+    browser: "Chrome",
+    browserVersion: "131.0",
+    os: "Windows",
+    release: "1.4.2",
+    environment: "production",
+    userId: "ada",
+  },
+  errors: [],
 };
 
 /** A trace no browser event names. */

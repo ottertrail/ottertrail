@@ -176,8 +176,8 @@ export function BrowserPart({
         </CardTitle>
         <CardDescription>
           {pageLoad !== null
-            ? `A page load at ${formatMoment(pageLoad.occurredAt, timeZone)}, in ${timeZone}.`
-            : "A request the page made before an error."}
+            ? `A page load, at ${formatMoment(pageLoad.occurredAt, timeZone)} in ${timeZone}.`
+            : `A request from the page ${view.path || "(none)"}.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

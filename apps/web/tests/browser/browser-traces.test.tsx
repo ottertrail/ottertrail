@@ -4,6 +4,7 @@ import { page } from "vite-plus/test/browser/context";
 import {
   ERROR_FINGERPRINTS,
   FAKE_BROWSER_TRACE,
+  FAKE_PAGE_LOAD_TRACE,
   FAKE_REQUEST_TRACE_ID,
   FAKE_TRACE_ID,
   fakeSpan,
@@ -69,7 +70,7 @@ describe("a browser error's page", () => {
 });
 
 describe("a trace's page", () => {
-  test("shows the page load it served, its user, and the error with its replay", async () => {
+  test("shows the request it is, its page and user, and the error with its replay", async () => {
     const api = installFakeApi({ browserTrace: () => FAKE_BROWSER_TRACE });
     renderApp(TRACE);
 
@@ -90,7 +91,10 @@ describe("a trace's page", () => {
       Browser: "Chrome 131.0, Windows",
       Release: "1.4.2",
       User: "ada",
+      Request: "POST /orders/5120/charge502182 ms",
     });
+    await expect.element(page.getByText("A request from the page /checkout.")).toBeVisible();
+    expect(page.getByText(/^A page load/).elements()).toEqual([]);
     await expect
       .element(page.getByRole("link", { name: "ada" }))
       .toHaveAttribute("href", `/projects/${PROJECT.id}/users/ada`);
@@ -100,6 +104,15 @@ describe("a trace's page", () => {
     await expect
       .element(page.getByRole("link", { name: "Play replay" }))
       .toHaveAttribute("href", expect.stringContaining("/replays/"));
+  });
+
+  test("says when the trace served a page load", async () => {
+    installFakeApi({ browserTrace: () => FAKE_PAGE_LOAD_TRACE });
+    renderApp(TRACE);
+    await expect
+      .element(page.getByText("A page load, at 16 Nov 2026, 08:00 in Asia/Singapore."))
+      .toBeVisible();
+    expect(page.getByText("Request", { exact: true }).elements()).toEqual([]);
   });
 
   test("a server span under the browser's request is a root", async () => {
@@ -142,10 +155,13 @@ describe("a trace's page", () => {
     installFakeApi({
       access: memberAccess({ monitoring: "view" }),
       browserTrace: () => ({
-        ...FAKE_BROWSER_TRACE,
+        ...FAKE_PAGE_LOAD_TRACE,
         errorsHidden: true,
         usersHidden: true,
-        pageLoad: FAKE_BROWSER_TRACE.pageLoad && { ...FAKE_BROWSER_TRACE.pageLoad, userId: null },
+        pageLoad: FAKE_PAGE_LOAD_TRACE.pageLoad && {
+          ...FAKE_PAGE_LOAD_TRACE.pageLoad,
+          userId: null,
+        },
         errors: [],
       }),
     });
