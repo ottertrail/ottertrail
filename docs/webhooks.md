@@ -130,6 +130,8 @@ Each alert's `subject` names what it is about, with `ruleId` and `ruleName`, the
 
 `check.up` has the same subject; its message is, for example, `Shop: the check "API health" (https://api.shop.example/health) is up again, after 25 minutes down.` (from the first failure of the run that took it down), or says the check was paused or its URL changed.
 
+For a [heartbeat check](uptime-alerts.md#heartbeat-checks), the subject's `url` is `null` (its ping URL is a secret and never sent), and the message names the heartbeat and says why: `Shop: the heartbeat "Nightly backup" is down. No ping for 1 day and 2 hours.`, `… is down. The job reported a failure.`, or `Shop: the heartbeat "Nightly backup" is up again, after 3 hours down.`
+
 #### `certificate.expiring` and `certificate.renewed`
 
 ```json

@@ -19,6 +19,18 @@ A check is an HTTP(S) request a dashboard user sets up for a project: a URL, `GE
 
 A check is a request the instance makes to an address a dashboard user types in, so it must not reach what is behind the instance: its own databases, the cloud's metadata service, or the private network. The URL must be `http` or `https`; its host is resolved first, and a check whose addresses include loopback, private, link-local, unique-local, shared (CGNAT), multicast, or unspecified ones is refused, at setup and on every run. The request then connects to the address that was checked, never resolving again (so DNS cannot answer differently in between), and every redirect is checked the same way. The body is read up to 1 MB for the word. A self-hosted install that must check its own private network can allow it with a setting; the hosted service does not. Webhook URLs follow the same rules.
 
+## Heartbeat checks
+
+Added on 26 November 2026. An HTTP check needs a URL to request; a cron job, a backup script, or a queue worker has none. A heartbeat check turns it around: the job calls the check's ping URL each time it runs, and the check goes down when the call does not come in time. A heartbeat is a kind of uptime check: it is on the Uptime page with the HTTP checks, counts toward the 50 checks of a project, and has the same incidents, uptime, pausing, Overview rows, and "check down" alert rules.
+
+- **Settings:** a name, how often a ping is expected (every 1, 5, 10, 15, or 30 minutes, 1, 2, 6, or 12 hours, 1 day, or 1 week; 1 day by default), and a grace time, how late a ping may be (1, 5, 10, 15, or 30 minutes, 1, 2, 6, or 12 hours, or 1 day). The grace time is by default the largest of these that is at most a fifth of the period, and at least 1 minute: 2 hours for a daily job, 10 minutes for an hourly one. No cron expressions: a job that runs at 03:00 every day is a daily heartbeat.
+- **The ping URL** is `https://<instance>/api/heartbeats/<token>`, with a token of 32 URL-safe characters (192 random bits). `GET`, `POST`, and `HEAD` all count, so a job can use whatever it has (`curl`, `wget`, a language's HTTP client). Any body is ignored, never read or stored. `<url>/fail` reports a failure. The answer is `OK` (200), at once; an unknown or paused token answers `Not found` (404), the same for both.
+- **States:** new (no ping yet), up, and down. A new heartbeat is never down before its first period and grace have passed since it was added. It is down when no ping came within the period plus the grace since the last one (or since it was added or resumed), or at once on `/fail`, and up again on the next ping. Each time down is an incident whose cause says why in plain words: "No ping for 1 day and 2 hours." or "The job reported a failure."
+- **Who sees the URL:** it is the heartbeat's capability: anyone who has it can mark the check up or down. The owner, admins, and members with Uptime and alerts at manage can see it, copy it, and make a new one, which stops the old URL at once. Members with view see the heartbeat, its state, and its pings, not the URL. Alerts name the heartbeat, never its URL.
+- **What a ping stores:** its time and whether it reported a failure, the latest 50 per heartbeat. Not the caller's address, headers, or body.
+
+Not in scope: cron expressions, a "start" ping and run durations, ping bodies or logs, and checks from other locations. How it is built is [below](#heartbeat-checks-as-built).
+
 ## Alerts
 
 A project's alert rules say what to watch and where to send it:
@@ -62,7 +74,7 @@ Added on 26 November 2026: if a site's tracker breaks, or a server stops sending
 - **By arrival:** records count by when they arrived, not when they happened, so late or backfilled data does not hide a stop.
 - **A new rule** judges only once it is a whole window old (since it was added, turned on, or changed), so its source has had a full window to send.
 - **Quiet hours:** a small site may have no visitors for hours at night. There are no schedules: pick a window that the site's quietest hours fill.
-- **Not in scope:** schedules or quiet hours, and heartbeat checks that a cron job reports to.
+- **Not in scope:** schedules or quiet hours. To watch a job that runs on a schedule, use a [heartbeat check](#heartbeat-checks).
 
 How it is built is [below](#data-stops-arriving-as-built).
 
@@ -93,19 +105,19 @@ Channels belong to the instance (its settings), so every project can use them; e
 
 ## The dashboard
 
-- **Uptime** (project nav): the project's checks, each with its state, uptime over the last 24 hours, 7 days, and 30 days, and its response time; add, edit, pause, and delete. A check's page: its response time over the period, its uptime, its incidents, and its latest failures with their causes.
+- **Uptime** (project nav): the project's checks, each with its state, uptime over the last 24 hours, 7 days, and 30 days, and its response time; add, edit, pause, and delete. A check's page: its response time over the period, its uptime, its incidents, and its latest failures with their causes. A heartbeat's row shows its last ping and when the next is expected; its page shows the ping URL, examples to paste, its uptime, its incidents, and its latest pings.
 - **Alerts** (project nav): the project's rules, with what each watches, its channels, whether it is firing now, and its recent alerts; add, edit, turn off.
 - **Notification channels** (instance settings): email lists and webhooks, with a test send and their recent deliveries; a webhook's secret is shown to the instance's dashboard users.
 - An error's page links to the rules that watch it.
 
 ## Limits
 
-At most 50 checks per project. Requests: 30-second timeout at most, 5 redirects, 1 MB of body read. Rules: at most 50 per project, 20 notifications an hour each. A webhook's answer is read only for its status. Channels: at most 20 per instance, 60 deliveries an hour each, 5 test sends a minute each; deliveries are kept 30 days.
+At most 50 checks per project, heartbeats included. Requests: 30-second timeout at most, 5 redirects, 1 MB of body read. Heartbeat pings: 60 at once from one client address (an IPv6 address by its /64), then one a second; 10 at once for one heartbeat, then one every 6 seconds; past either, 429 with `Retry-After`. The latest 50 pings of each heartbeat are kept. Rules: at most 50 per project, 20 notifications an hour each. A webhook's answer is read only for its status. Channels: at most 20 per instance, 60 deliveries an hour each, 5 test sends a minute each; deliveries are kept 30 days.
 
 ## Not in the first version
 
 - Slack and Discord messages in their own formats (a webhook can reach a small relay meanwhile), SMS, and phone calls.
-- Checks from several locations, and checks other than HTTP (TCP, ping, DNS); heartbeat checks that a job reports to.
+- Checks from several locations, and checks other than HTTP and heartbeats (TCP, ping, DNS).
 - Status pages, on-call schedules, escalation, and maintenance windows (a check can be paused).
 
 ## How it is built
@@ -147,6 +159,26 @@ Decided differently from the design, or settled where it said nothing:
 - A check of a host that resolves to several addresses uses the first (IPv4 first); it does not try the others when that one fails.
 - Names from `/etc/hosts` do not resolve (above).
 - Request headers, a body, or authentication for a check; checks from several locations.
+
+### Heartbeat checks, as built
+
+Built on 26 November 2026, from [the design above](#heartbeat-checks). Code: `apps/api/src/uptime/heartbeats.ts` (values, the token, the state changes), `heartbeat-routes.ts` (the ping), `routes.ts` (the dashboard's routes), `scheduler.ts` and the worker, and `apps/web/src/features/uptime/` (`heartbeat-form-dialog.tsx`, `heartbeat-parts.tsx`).
+
+- **Storage** (migration 0032). A heartbeat is a row of `uptime_checks` with `kind` `heartbeat`, so incidents, uptime, pausing, deletion, the Overview, and the "check down" rules need nothing new. Its request columns (URL, method, timeout, status codes, word, failures before down) are null, and a constraint keeps each kind's columns right. `interval_seconds` is its period, from its own list; `grace_seconds` its grace. `next_due_at` is its deadline: the last ping, or its creation, or resuming it, plus the period and the grace. `last_checked_at`, `last_up`, and `last_cause` describe its latest ping. `heartbeat_pings` keeps each ping's time and whether it reported a failure, the latest 50 per heartbeat, pruned in the ping's transaction; deleting the check or the project deletes them.
+- **The token** is 24 random bytes as base64url (`crypto.randomBytes`), kept as it is in `ping_token`, as a project's keys are kept, so those who may manage checks can see the URL again rather than only once: a cron line is often set up again later, and the people who can read it can already make a new one. Its SHA-256 is kept in `ping_token_hash`, under a unique index, and a ping looks the check up by the hash of the token it was sent, never by the token: the lookup's time depends on a hash, not on how many leading characters of a guess are right. The token reaches the browser only from `GET /api/projects/:id/checks/:checkId/ping-url` (Uptime and alerts at manage, `Cache-Control: no-store`); the check's own answers never hold it. `POST` on the same route makes a new token, with the dashboard's origin, and answers the new URL. The URL starts with the instance's `PUBLIC_URL`.
+- **The ping** (`heartbeat-routes.ts`): `GET` and `POST` `/api/heartbeats/:token` and `/api/heartbeats/:token/fail`; Fastify answers `HEAD` with each `GET`'s handler. It needs no session and no key, and is listed with the other public routes ([access](access.md#public-routes)). The route's own content-type parser takes any type and drops the body unread, so a job that sends JSON, a form, or a file gets the same answer. In order: the client address's limit, then the token's shape (32 base64url characters), then the lookup (a heartbeat, not paused), then the heartbeat's own limit, then `recordPing`, which locks the check's row and checks again that it is not paused. A token that fails any of these answers 404 `Not found`, whichever it was. The answer is plain text with `Cache-Control: no-store`. The request log masks the token (`redactUrl`), as it masks a reset link's.
+- **State** (`recordPing`, `markOverdue`, the heartbeat's counterparts of `recordOutcome`). A ping, in one transaction: records it, prunes the pings, moves the deadline to a period and grace from now, and sets the state: up (ending an open incident at the ping's time), or, for `/fail`, down with an incident from that moment, unless already down. A change goes to the "check down" rules at once, from the API (`evaluateCheckDown` for that check), so a `/fail` alerts without waiting for the worker; the worker's minute pass catches any the API missed.
+- **Overdue heartbeats.** Every 15 seconds the worker takes the heartbeats past their deadline, at most 500 at a time, with `FOR UPDATE SKIP LOCKED`, through a partial index of the heartbeats that can go down (`where not paused and kind = 'heartbeat' and state <> 'down'`, on `next_due_at`), so it never reads every check; a test checks the plan uses it. Each goes down in the same transaction, with an incident from its deadline and the cause "No ping for" the period and grace in words, and its change goes to the alert rules as an HTTP check's does. A ping waiting on a row the worker holds records after it, and brings the check up again.
+- **Changes.** Pausing ends an open incident and forgets the state, as for an HTTP check; a paused heartbeat answers 404 and records nothing. Resuming waits a whole period and grace from then. A new period or grace moves the deadline by the difference, so it still counts from the last ping. A heartbeat takes none of an HTTP check's fields, nor an HTTP check a grace (400 `invalid_field`).
+- **Alerts.** "Check down" rules take in heartbeats like any check. The message names "the heartbeat" and its name, without a URL, and the cause: `Shop: the heartbeat "Nightly backup" is down. No ping for 1 day and 2 hours.` The webhook subject's `url` is `null` ([webhooks](webhooks.md#checkdown-and-checkup)). Certificate rules pass over heartbeats.
+- **Routes** besides the ping: `POST /api/projects/:id/checks` with `kind: "heartbeat"`, `name`, `intervalSeconds`, and `graceSeconds`; `PATCH` with the same fields, or `paused`; `GET /api/projects/:id/checks/:checkId/pings` (Uptime and alerts at view: the latest 50, times and whether each failed); and the ping URL's two routes above. The results route answers a heartbeat with its uptime and no runs.
+- **Tests:** `apps/api/tests/heartbeats.test.ts` (adding, the lists and defaults, the URL, `GET`, `POST`, and `HEAD`, bodies of every kind ignored and never stored, the pings kept, unknown, malformed, and paused tokens, a new token, the states with the grace and pausing and a changed period, two workers taking each overdue heartbeat once, the index, the "check down" rule firing from `/fail` and from the worker and resolving on a ping without the token in any notification, who sees the URL and who can replace it, another project's heartbeat, and the limits per address and per heartbeat), and `apps/web/tests/browser/heartbeats.test.tsx`.
+
+Decided differently from the design, or settled where it said nothing:
+
+- **The grace's default** is the largest grace in the list that is at most a fifth of the period.
+- **The ping is limited after the lookup** for each heartbeat, so made-up tokens cannot fill the limiter's memory; the address's limit comes first and covers them.
+- **Pings are kept in PostgreSQL**, not ClickHouse: at most 50 rows per heartbeat, which its page reads as they are.
 
 ## Step 2, channels and delivery, as built
 
