@@ -28,6 +28,13 @@ import {
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
 import { cleanSignature, cleanUserId } from "./sanitize.ts";
+import {
+  pageLoadTrace,
+  type TracedRequest,
+  tracedOrigins,
+  traceRequests,
+  type TraceRef,
+} from "./traces.ts";
 import { createTracker, type Page, type SignedUser } from "./tracker.ts";
 import { browserTransport } from "./transport.ts";
 import { cleanPageUrl, cleanReferrer } from "./url.ts";
@@ -86,6 +93,17 @@ const RELEASE_PATTERN = /^[^\s\u0000-\u001F\u007F-\u009F]{1,200}$/u;
 function landing(): Page {
   const referrer = cleanReferrer(document.referrer);
   return { url: cleanPageUrl(location.href), ...(referrer === undefined ? {} : { referrer }) };
+}
+
+/**
+ * A sample attribute's share, 0 to 1: 1 without the attribute, undefined
+ * when it is invalid. Number("") is 0: an empty value is a mistake, not
+ * "record nothing".
+ */
+function sampleOf(text: string | undefined): number | undefined {
+  if (text === undefined) return 1;
+  const share = text.trim() === "" ? Number.NaN : Number(text);
+  return share >= 0 && share <= 1 ? share : undefined;
 }
 
 /** How long a page opened with an overlay link waits for o.js's answer before it records as usual. */
@@ -281,7 +299,9 @@ const REAL = Symbol.for("ottertrail.tracker");
     // yet counted the click that navigates.
     let vitals: Partial<Record<VitalName, number>> = {};
     let vitalsSent = false;
-    let landedOn: { page: Page; user: SignedUser | undefined } | undefined;
+    let landedOn:
+      | { page: Page; user: SignedUser | undefined; trace: TraceRef | undefined }
+      | undefined;
     const recordVital = (name: VitalName, value: number) => {
       if (!vitalsSent && Number.isFinite(value) && value >= 0) {
         // Milliseconds, and layout shift to four decimals, as the API takes them.
@@ -296,7 +316,7 @@ const REAL = Symbol.for("ottertrail.tracker");
         VITALS,
         landedOn.page,
         Object.fromEntries(measured.map(([name, value]) => [name.toLowerCase(), value])),
-        { user: landedOn.user },
+        { user: landedOn.user, trace: landedOn.trace },
       );
     };
 
@@ -325,13 +345,18 @@ const REAL = Symbol.for("ottertrail.tracker");
         };
       }
       viewedBy = user;
-      landedOn ??= { page: current, user };
-      tracker.track("pageview", current);
+      // The server's trace belongs to the page load, not to the app's own
+      // navigations after it, nor to a page restored from the cache.
+      pageTrace = loadTrace;
+      loadTrace = undefined;
+      requestsTraced = tracesOn && Math.random() < (tracesSample ?? 1);
+      landedOn ??= { page: current, user, trace: pageTrace };
+      tracker.track("pageview", current, undefined, { trace: pageTrace });
       // Heatmaps: this pageview is in the sample or not, decided now, kept nowhere.
       if (heatmapsDeclared) {
         heatmapPage =
           // A page whose URL is too long to send ("") has none.
-          current.url !== "" && Math.random() < heatmapSample
+          current.url !== "" && Math.random() < (heatmapSample ?? 1)
             ? { url: current.url, referrer: current.referrer, at: Date.now() }
             : null;
         if (heatmapPage !== null) loadHeatmaps();
@@ -357,12 +382,53 @@ const REAL = Symbol.for("ottertrail.tracker");
       }
     };
 
+    // Traces (traces.ts), only with data-traces="on": they change the
+    // site's own requests, and its servers must send Server-Timing.
+    const tracesOn = script?.dataset.traces === "on";
+    let loadTrace =
+      tracesOn && typeof performance === "object" ? pageLoadTrace(performance) : undefined;
+    let pageTrace: TraceRef | undefined;
+    let requestsTraced = false;
+    const tracesSample = sampleOf(script?.dataset.tracesSample);
+    if (tracesOn && tracesSample === undefined) {
+      warnOnce("data-traces-sample must be from 0 to 1. All pageviews are sampled.");
+    }
+    let recentRequests: (() => TracedRequest[]) | undefined;
+    if (tracesOn) {
+      const { origins, invalid } = tracedOrigins(
+        new URL(location.href).origin,
+        script?.dataset.tracesOrigins,
+      );
+      if (invalid) {
+        warnOnce(
+          "data-traces-origins takes origins such as https://api.example.com. Other entries are ignored.",
+        );
+      }
+      const own = new URL("/api/", host).href;
+      recentRequests = traceRequests({
+        target: window,
+        base: () => location.href,
+        origins,
+        sampled: () => requestsTraced,
+        skip: (url) => url.href.startsWith(own),
+        random: (size) => crypto.getRandomValues(new Uint8Array(size)),
+        now: () => performance.now(),
+      });
+    }
+
     // An error belongs to the page and user of that moment, as a custom event does.
     // With a replay recording, it carries the replay's ID.
+    // With traces, it carries the page load's trace and the last requests.
     const errors = createErrorCapture((error, properties) => {
       const replayId = recorder?.error();
+      const requests = recentRequests?.() ?? [];
       tracker.track(ERROR, current ?? landing(), properties, {
-        error: replayId === undefined ? error : { ...error, replayId },
+        error: {
+          ...error,
+          ...(replayId === undefined ? {} : { replayId }),
+          ...(requests.length === 0 ? {} : { requests }),
+        },
+        trace: pageTrace,
       });
     });
     if (script?.dataset.errors !== "off") {
@@ -414,14 +480,10 @@ const REAL = Symbol.for("ottertrail.tracker");
       );
     }
     const heatmapsDeclared = beside && heatmapsAsked;
-    const sampleText = script?.dataset.heatmapsSample;
-    // Number("") is 0: an empty value is a mistake, not "record nothing".
-    const sample =
-      sampleText === undefined ? 1 : sampleText.trim() === "" ? -1 : Number(sampleText);
-    let heatmapSample = 1;
-    if (sample >= 0 && sample <= 1) heatmapSample = sample;
-    else if (heatmapsDeclared)
+    const heatmapSample = sampleOf(script?.dataset.heatmapsSample);
+    if (heatmapsDeclared && heatmapSample === undefined) {
       warnOnce("data-heatmaps-sample must be from 0 to 1. All pageviews are sampled.");
+    }
     let heatmapPage: HeatmapPage | null = null;
     let heatmaps: HeatmapCapture | undefined;
     let heatmapsLoaded = false;

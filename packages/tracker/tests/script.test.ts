@@ -1835,3 +1835,109 @@ describe("the heatmap overlay", () => {
     }
   });
 });
+
+describe("traces", () => {
+  const TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const SPAN = "00f067aa0ba902b7";
+
+  /** The server named its trace in Server-Timing; the page's own requests answer 503. */
+  function tracedPage(attributes: Record<string, string>) {
+    vi.stubGlobal("performance", {
+      now: () => Date.now(),
+      getEntriesByType: (type: string) =>
+        type === "navigation"
+          ? [{ serverTiming: [{ name: "traceparent", description: `00-${TRACE}-${SPAN}-01` }] }]
+          : [],
+    });
+    const page = fakePage("https://example.com/checkout", "", { attributes });
+    const requests: { url: string; traceparent: string | null }[] = [];
+    const pageFetch = (url: string, init?: RequestInit) => {
+      requests.push({ url, traceparent: new Headers(init?.headers).get("traceparent") });
+      return Promise.resolve({ status: 503 });
+    };
+    Object.assign(page.window, { fetch: pageFetch });
+    const fetch = (url: string) =>
+      (page.window as unknown as { fetch: typeof pageFetch }).fetch(url);
+    return { page, requests, fetch };
+  }
+
+  test("are off by default: no trace is read and requests are left alone", async () => {
+    const { page, requests, fetch } = tracedPage({});
+    await runScript();
+    await fetch("/api/cart");
+    expect(requests[0]?.traceparent).toBeNull();
+    uncaught(page, failure("boom"));
+    const [error] = await errorsSent(page);
+    expect(page.events[0]).not.toHaveProperty("traceId");
+    expect(error).not.toHaveProperty("traceId");
+    expect(error?.error).not.toHaveProperty("requests");
+  });
+
+  test("the page load's pageview, errors, and Web Vitals carry its trace; later pages do not", async () => {
+    const { page, fetch, requests } = tracedPage({ traces: "on" });
+    await runScript();
+    recorder(page)("LCP", 1200);
+    await fetch("/api/cart?coupon=SECRET");
+    await vi.advanceTimersByTimeAsync(0);
+    uncaught(page, failure("first"));
+
+    page.window.location.href = "https://example.com/done";
+    page.window.history.pushState();
+    uncaught(page, failure("second"));
+    page.hide();
+    await page.settle();
+
+    const byName = (name: string) => page.events.filter((event) => event.name === name);
+    const [landing, next] = byName("pageview");
+    expect(landing).toMatchObject({ traceId: TRACE, spanId: SPAN });
+    expect(next).not.toHaveProperty("traceId");
+    expect(byName("vitals")[0]).toMatchObject({ traceId: TRACE, spanId: SPAN });
+
+    const [first, second] = byName("error");
+    expect(requests[0]?.traceparent).toMatch(/^00-[\da-f]{32}-[\da-f]{16}-01$/);
+    const sentTrace = requests[0]?.traceparent?.slice(3, 35);
+    const request = { method: "GET", path: "/api/cart", status: 503, traceId: sentTrace };
+    expect(first).toMatchObject({ traceId: TRACE, spanId: SPAN });
+    expect(first?.error?.requests).toEqual([{ ...request, durationMs: expect.any(Number) }]);
+    expect(second).not.toHaveProperty("traceId");
+    expect(second?.error?.requests).toMatchObject([request]);
+    expect(JSON.stringify(page.events)).not.toContain("SECRET");
+  });
+
+  test("a sample of 0 sends no header but keeps the page load's trace", async () => {
+    const { page, fetch, requests } = tracedPage({ traces: "on", tracesSample: "0" });
+    await runScript();
+    await fetch("/api/a");
+    expect(requests[0]?.traceparent).toBeNull();
+    page.hide();
+    await page.settle();
+    expect(page.events[0]).toMatchObject({ name: "pageview", traceId: TRACE });
+  });
+
+  test("an invalid sample warns and samples every pageview", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetch, requests } = tracedPage({ traces: "on", tracesSample: "" });
+    await runScript();
+    await fetch("/api/a");
+    expect(requests[0]?.traceparent).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      "Ottertrail: data-traces-sample must be from 0 to 1. All pageviews are sampled.",
+    );
+  });
+
+  test("only listed origins besides the page's own get the header, never Ottertrail", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetch, requests } = tracedPage({
+      traces: "on",
+      tracesOrigins: "https://api.example.com api.example.com",
+    });
+    await runScript();
+    await fetch("https://api.example.com/v1/me");
+    await fetch("https://cdn.example.net/x.json");
+    await fetch("https://ottertrail.example.com/api/events");
+    expect(requests.map((request) => request.traceparent !== null)).toEqual([true, false, false]);
+    expect(warn).toHaveBeenCalledWith(
+      "Ottertrail: data-traces-origins takes origins such as https://api.example.com. Other entries are ignored.",
+    );
+  });
+});

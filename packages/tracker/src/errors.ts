@@ -4,6 +4,7 @@
  * "error" event, cut to fit the API's limits.
  */
 import { cleanText } from "./sanitize.ts";
+import type { TracedRequest } from "./traces.ts";
 
 /** The event errors are sent as. Reserved: pages cannot send it with track(). */
 export const ERROR = "error";
@@ -21,6 +22,8 @@ export interface ErrorDetails {
   handled: boolean;
   /** The session replay recorded around this error, when one will be sent (replay-recorder.ts). */
   replayId?: string;
+  /** The page's last requests to traced origins, with data-traces="on" (traces.ts). */
+  requests?: TracedRequest[];
 }
 
 export interface ErrorCapture {

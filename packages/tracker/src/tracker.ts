@@ -6,6 +6,7 @@ import {
   sanitizeName,
   sanitizeProperties,
 } from "./sanitize.ts";
+import type { TraceRef } from "./traces.ts";
 import type { SendOutcome, Transport } from "./transport.ts";
 
 /** Matches the API: at most 50 events per batch. */
@@ -43,6 +44,9 @@ export interface QueuedEvent {
   userSignature?: string;
   /** For an "error" event: what went wrong. */
   error?: ErrorDetails;
+  /** The server's trace of the page load, on its pageview, errors, and Web Vitals (traces.ts). */
+  traceId?: string;
+  spanId?: string;
 }
 
 /** Room for one event in a request: the budget less the batch's own fields, release included. */
@@ -99,7 +103,8 @@ export interface Tracker {
   /**
    * Queues an event, with the signed-in user (setUser), or `extra.user`
    * when given: the user when the page was viewed, for its engagement
-   * report. `extra.error` goes with an "error" event. `extra.now` sends
+   * report. `extra.error` goes with an "error" event, `extra.trace` with
+   * the page load's events. `extra.now` sends
    * at once instead of after FLUSH_DELAY_MS, as for a site's own event,
    * which often comes just before the visitor leaves the page (a click on
    * a link). Never throws.
@@ -108,7 +113,12 @@ export interface Tracker {
     name: unknown,
     page: Page,
     properties?: unknown,
-    extra?: { user?: SignedUser | undefined; error?: ErrorDetails; now?: boolean },
+    extra?: {
+      user?: SignedUser | undefined;
+      error?: ErrorDetails;
+      trace?: TraceRef | undefined;
+      now?: boolean;
+    },
   ): void;
   /** Sends one batch now unless a send is in flight. Never rejects. */
   flush(): Promise<void>;
@@ -273,6 +283,9 @@ export function createTracker({
           ...(owner === undefined ? {} : { userId: owner.userId }),
           ...(owner?.signature === undefined ? {} : { userSignature: owner.signature }),
           ...(extra?.error === undefined ? {} : { error: { ...extra.error } }),
+          ...(extra?.trace === undefined
+            ? {}
+            : { traceId: extra.trace.traceId, spanId: extra.trace.spanId }),
         };
         fitError(event);
         queue.push(event);
