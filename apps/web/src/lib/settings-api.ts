@@ -11,6 +11,10 @@ export interface Settings {
   updateLocationData: boolean;
   /** The instance's icon, or null for its initial. */
   avatarUrl: string | null;
+  /** The running Ottertrail version, such as "0.8.0". */
+  version: string;
+  /** The release's notes on GitHub; null for a development build, which has none. */
+  releaseNotesUrl: string | null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -21,7 +25,9 @@ const isSettings = (value: unknown): value is Settings =>
   typeof value.name === "string" &&
   typeof value.timeZone === "string" &&
   typeof value.updateLocationData === "boolean" &&
-  (value.avatarUrl === null || typeof value.avatarUrl === "string");
+  (value.avatarUrl === null || typeof value.avatarUrl === "string") &&
+  typeof value.version === "string" &&
+  (value.releaseNotesUrl === null || typeof value.releaseNotesUrl === "string");
 
 const isSettingsBody = (value: unknown): value is { settings: Settings } =>
   isRecord(value) && isSettings(value.settings);

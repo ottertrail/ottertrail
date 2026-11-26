@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpRightIcon } from "lucide-react";
 import * as React from "react";
 
 import { AvatarField } from "@/components/avatar-field";
@@ -195,7 +196,36 @@ function GeneralTab({ onDirty }: InstanceTabProps) {
       />
     );
   }
-  return <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />;
+  return (
+    <>
+      <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />
+      <RunningVersion settings={settings.data} />
+    </>
+  );
+}
+
+/** Read-only, so outside the form: its Save bar would not store it. */
+function RunningVersion({ settings }: { settings: Settings }) {
+  return (
+    <dl className="flex max-w-2xl flex-wrap items-baseline gap-x-4 gap-y-1 py-6 text-sm">
+      <dt className="text-ink-subtle">Version</dt>
+      <dd className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-ink">
+        <span className="tabular-nums">{settings.version}</span>
+        {settings.releaseNotesUrl !== null && (
+          <a
+            href={settings.releaseNotesUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-link hover:underline"
+          >
+            Release notes
+            <ArrowUpRightIcon aria-hidden="true" className="size-3.5" />
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+        )}
+      </dd>
+    </dl>
+  );
 }
 
 function PageSkeleton() {

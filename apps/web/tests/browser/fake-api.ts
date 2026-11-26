@@ -2387,6 +2387,8 @@ export const SETTINGS: Settings = {
   timeZone: "Asia/Singapore",
   updateLocationData: true,
   avatarUrl: null,
+  version: "0.8.0",
+  releaseNotesUrl: "https://github.com/ottertrail/ottertrail/releases/tag/v0.8.0",
 };
 
 /** Both files loaded, and both updated by the worker without a problem. */

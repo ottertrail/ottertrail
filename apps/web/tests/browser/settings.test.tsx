@@ -142,6 +142,35 @@ describe("the instance's settings", () => {
     await expect.element(workspace.getByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
+  test("General shows the running version, with its release notes in a new tab", async () => {
+    installFakeApi();
+    renderApp("/settings");
+
+    const version = page.getByRole("definition").filter({ hasText: "0.8.0" });
+    await expect.element(version).toBeVisible();
+    await expect.element(page.getByRole("term")).toHaveTextContent("Version");
+    const notes = version.getByRole("link", { name: "Release notes (opens in a new tab)" });
+    await expect
+      .element(notes)
+      .toHaveAttribute("href", "https://github.com/ottertrail/ottertrail/releases/tag/v0.8.0");
+    await expect.element(notes).toHaveAttribute("target", "_blank");
+    await expect.element(notes).toHaveAttribute("rel", "noopener noreferrer");
+    // Read-only: outside the form, so its Save bar has nothing to save.
+    await expect
+      .element(page.getByRole("form", { name: "Instance" }).getByText("0.8.0"))
+      .not.toBeInTheDocument();
+  });
+
+  test("a development build shows its version without a link to notes that do not exist", async () => {
+    installFakeApi({
+      settings: { ...SETTINGS, version: "0.9.0-dev", releaseNotesUrl: null },
+    });
+    renderApp("/settings");
+
+    await expect.element(page.getByRole("definition")).toHaveTextContent("0.9.0-dev");
+    await expect.element(page.getByRole("link", { name: /Release notes/ })).not.toBeInTheDocument();
+  });
+
   test("signing out forgets the settings before someone else signs in", async () => {
     const api = installFakeApi();
     const router = renderApp("/projects");
