@@ -2,23 +2,37 @@
 
 Web analytics, product analytics, error tracking, and monitoring for small software teams, in one app you run on your own server.
 
+[Website](https://ottertrail.app) · [Documentation](https://docs.ottertrail.app) · [Latest release](https://github.com/ottertrail/ottertrail/releases/latest)
+
 Features ship in stages ([docs/roadmap.md](docs/roadmap.md)).
 
 ## What it does
 
 - Web analytics: pageviews, sources and campaigns, locations, devices, entry and exit pages, goals, and Web Vitals. It sets no cookies: the anonymous visitor ID changes every day. Bots, browsers in data centers, and referrer spam are left out.
-- Product analytics: custom events, events from your servers, funnels, retention, and the users your site signs in, with their activity.
+- Product analytics: custom events and events from your servers, compared with the period before and split by the source and campaign of their visit. Funnels of up to eight steps, with path patterns, breakdowns, conversion over time, and the signed-in users who dropped off. Weekly retention, and the users your site signs in, with their activity.
 - Heatmaps of clicks, scroll depth, rage clicks, and dead clicks, drawn over your live page or over a view of it you saved.
 - Errors from browsers and servers, grouped, mapped back to your code with source maps, and assigned to people. A session replay shows the minute before an error, masked in the visitor's browser before it is sent.
 - Traces, logs, and metrics over OpenTelemetry, with pages for services, database queries, and hosts, and the tokens, estimated cost, and latency of your app's AI calls.
 - Uptime checks, and alert rules that notify by email or signed webhook.
 - A team of an owner, admins, and members with access per area and project. People join by invitation; there is no open sign-up.
+- Erasure requests: delete everything stored about one signed-in user, from the dashboard or from your server.
 
 The browser tracker is about 5 KB gzipped and stores nothing on the visitor's device.
 
 ## Run it on your server
 
-Ottertrail runs on one Linux server with Docker Compose 2.23.1 or later and about 8 GB of memory. The documentation at [docs.ottertrail.app](https://docs.ottertrail.app) covers [installing it](https://docs.ottertrail.app/get-started/install/), [its settings](https://docs.ottertrail.app/self-hosting/configuration/), [backups](https://docs.ottertrail.app/self-hosting/backups/), and [updating](https://docs.ottertrail.app/self-hosting/updating/).
+Ottertrail runs on one Linux server with Docker Compose 2.23.1 or later and about 8 GB of memory. In an empty folder, download the latest release's files:
+
+```sh
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/compose.yaml
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/example.env
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/backup.sh
+curl -fLO https://github.com/ottertrail/ottertrail/releases/latest/download/restore.sh
+chmod +x backup.sh restore.sh
+cp example.env .env && chmod 600 .env
+```
+
+Then fill in the settings and start it, as [the install guide](https://docs.ottertrail.app/get-started/install/) describes. The documentation also covers [the settings](https://docs.ottertrail.app/self-hosting/configuration/), [backups](https://docs.ottertrail.app/self-hosting/backups/), and [updating](https://docs.ottertrail.app/self-hosting/updating/).
 
 ## Run it locally
 
