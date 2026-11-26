@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { AvatarField } from "@/components/avatar-field";
 import { NoAccess } from "@/components/no-access";
+import { PageActions } from "@/components/page-header";
 import { SettingsSection } from "@/components/settings-section";
 import { type SettingsTab, SettingsTabs } from "@/components/settings-tabs";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
@@ -196,27 +197,31 @@ function GeneralTab({ onDirty }: InstanceTabProps) {
       />
     );
   }
-  return (
-    <>
-      <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />
-      <RunningVersion settings={settings.data} />
-    </>
-  );
+  return <GeneralForm settings={settings.data} uploads={uploads} onDirty={onDirty} />;
 }
 
-/** Read-only, so outside the form: its Save bar would not store it. */
-function RunningVersion({ settings }: { settings: Settings }) {
+/**
+ * The running version, at the top right of the page on every tab. It comes
+ * with the owner-only settings (GET /api/settings), so others see nothing.
+ */
+function RunningVersion() {
+  const settings = useQuery(settingsQuery());
+  if (!settings.isSuccess) return null;
+  const { version, releaseNotesUrl } = settings.data;
   return (
-    <dl className="flex max-w-2xl flex-wrap items-baseline gap-x-4 gap-y-1 py-6 text-sm">
-      <dt className="text-ink-subtle">Version</dt>
-      <dd className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-ink">
-        <span className="tabular-nums">{settings.version}</span>
-        {settings.releaseNotesUrl !== null && (
+    // On a phone the title needs the room: only "v0.8.0" shows there.
+    <dl className="flex shrink-0 items-baseline gap-x-2 text-sm">
+      <dt className="text-ink-subtle max-sm:sr-only">Version</dt>
+      <dd className="flex items-baseline gap-x-3 whitespace-nowrap text-ink">
+        <span className="tabular-nums max-sm:before:text-ink-subtle max-sm:before:content-['v']">
+          {version}
+        </span>
+        {releaseNotesUrl !== null && (
           <a
-            href={settings.releaseNotesUrl}
+            href={releaseNotesUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-link hover:underline"
+            className="inline-flex items-center gap-0.5 text-link hover:underline max-sm:hidden"
           >
             Release notes
             <ArrowUpRightIcon aria-hidden="true" className="size-3.5" />
@@ -289,5 +294,14 @@ export function SettingsPage() {
   if (tabs.length === 0) {
     return <NoAccess />;
   }
-  return <SettingsTabs label="Instance settings" tabs={tabs} />;
+  return (
+    <>
+      {permissions.settings && (
+        <PageActions>
+          <RunningVersion />
+        </PageActions>
+      )}
+      <SettingsTabs label="Instance settings" tabs={tabs} />
+    </>
+  );
 }

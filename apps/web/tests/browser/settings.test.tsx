@@ -142,12 +142,14 @@ describe("the instance's settings", () => {
     await expect.element(workspace.getByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 
-  test("General shows the running version, with its release notes in a new tab", async () => {
+  test("the header shows the running version on every tab, with its release notes in a new tab", async () => {
     installFakeApi();
     renderApp("/settings");
 
     const version = page.getByRole("definition").filter({ hasText: "0.8.0" });
     await expect.element(version).toBeVisible();
+    // At the top right, beside the page's title.
+    expect(version.element().closest("[data-slot=page-header]")).not.toBeNull();
     await expect.element(page.getByRole("term")).toHaveTextContent("Version");
     const notes = version.getByRole("link", { name: "Release notes (opens in a new tab)" });
     await expect
@@ -159,6 +161,9 @@ describe("the instance's settings", () => {
     await expect
       .element(page.getByRole("form", { name: "Instance" }).getByText("0.8.0"))
       .not.toBeInTheDocument();
+
+    await page.getByRole("tab", { name: "Backups" }).click();
+    await expect.element(version).toBeVisible();
   });
 
   test("a development build shows its version without a link to notes that do not exist", async () => {
