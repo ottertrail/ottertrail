@@ -67,6 +67,24 @@ export default defineConfig({
     // The entry is about 510 kB. INITIAL_JS_BUDGET limits the full initial load;
     // this warning catches chunks well above the entry's size.
     chunkSizeWarningLimit: 600,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          // Recharts and the packages only it uses load as one chunk with the first page that
+          // draws a chart, instead of a chunk per chart kind, each named in the entry's preload
+          // map (docs/dashboard.md, "Charts on Recharts").
+          groups: [
+            {
+              name: "recharts",
+              // Otherwise the group takes React and everything else Recharts imports, and the
+              // entry then loads it.
+              includeDependenciesRecursively: false,
+              test: /[\\/]node_modules[\\/](recharts|victory-vendor|d3-[a-z-]+|internmap|@reduxjs[\\/]toolkit|redux|react-redux|reselect|immer|es-toolkit|decimal\.js-light|eventemitter3)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     // Keep API paths on the same origin in development; tests use noApiInTests.
