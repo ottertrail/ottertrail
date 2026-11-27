@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
-import { ChartKeys, ChartReadout, IsolatedDot } from "@/components/chart-kit";
+import { ChartKeys, ChartReadout, EdgeTick, IsolatedDot } from "@/components/chart-kit";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
   activeDot,
@@ -89,6 +89,10 @@ export function DayChart({
     width,
   );
 
+  const dayOf = (index: number) => {
+    const point = points[index];
+    return point === undefined ? "" : formatDay(point.day);
+  };
   const readout = (index: number) => {
     const point = points[index];
     return point === undefined
@@ -124,10 +128,8 @@ export function DayChart({
             {...X_AXIS}
             dataKey="index"
             ticks={xTicks}
-            tickFormatter={(index: number) => {
-              const point = points[index];
-              return point === undefined ? "" : formatDay(point.day);
-            }}
+            tickFormatter={dayOf}
+            tick={<EdgeTick format={dayOf} />}
           />
           <YAxis
             {...Y_AXIS}

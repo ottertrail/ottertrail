@@ -1,7 +1,7 @@
 import * as React from "react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 
-import { ChartKeys, ChartReadout, IsolatedDot } from "@/components/chart-kit";
+import { ChartKeys, ChartReadout, EdgeTick, IsolatedDot } from "@/components/chart-kit";
 import { TruncatedText } from "@/components/truncated-text";
 import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
@@ -166,6 +166,7 @@ export function TimeChart({
               dataKey="index"
               ticks={xTicks}
               tickFormatter={(index: number) => axis.label(index)}
+              tick={<EdgeTick format={axis.label} />}
             />
             <YAxis
               {...Y_AXIS}

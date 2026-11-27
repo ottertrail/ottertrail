@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
-import { ChartKeys, ChartReadout } from "@/components/chart-kit";
+import { ChartKeys, ChartReadout, EdgeTick } from "@/components/chart-kit";
 import { TruncatedText } from "@/components/truncated-text";
 import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
@@ -26,7 +26,10 @@ export interface BarPart {
   values: number[];
 }
 
-const GAP = 2;
+/** Surface between the parts of one bar. */
+const PART_GAP = 2;
+/** The least height a part with a value is drawn at, so a few errors under many records show. */
+const MIN_PART = 3;
 const MAX_BAR = 24;
 /** About the y axis's width and the margins, to size the gap between bars before drawing. */
 const AXIS_ROOM = 56;
@@ -37,8 +40,10 @@ interface Row {
 }
 
 /**
- * One part of one bar. Parts above the baseline give up 2px of their bottom, so the surface
- * shows between them, and the top part of each bar has rounded corners.
+ * One part of one bar. A part with a value is at least MIN_PART high, and the parts above it
+ * move up by what it gained, so the stack's numbers stay as they are and only its top grows.
+ * Parts above the baseline give up 2px of their bottom, so the surface shows between them, and
+ * the top part of each bar has rounded corners.
  */
 function PartShape({
   x = 0,
@@ -48,7 +53,6 @@ function PartShape({
   payload,
   part,
   parts,
-  gap,
 }: {
   x?: number;
   y?: number;
@@ -57,7 +61,6 @@ function PartShape({
   payload?: Row;
   part: number;
   parts: BarPart[];
-  gap: number;
 }) {
   const index = payload?.index ?? -1;
   const values = payload?.values ?? [];
@@ -65,8 +68,14 @@ function PartShape({
   if (self === undefined || (values[part] ?? 0) <= 0) return null;
   const below = values.slice(0, part).some((value) => value > 0);
   const isTop = !values.slice(part + 1).some((value) => value > 0);
-  const bottom = y + height - (below ? gap : 0);
-  const shown = Math.max(1, bottom - y);
+  // Recharts draws each part to scale: its height per unit gives the parts below theirs.
+  const perUnit = height / (values[part] ?? 1);
+  const lift = values
+    .slice(0, part)
+    .reduce((sum, value) => sum + (value > 0 ? Math.max(0, MIN_PART - value * perUnit) : 0), 0);
+  const gap = below ? PART_GAP : 0;
+  const bottom = y + height - lift - gap;
+  const shown = Math.max(MIN_PART, height - gap);
   const top = bottom - shown;
   const r = isTop ? Math.min(4, width / 2, shown) : 0;
   const right = x + width;
@@ -163,7 +172,8 @@ export function StackedBarChart({
   const axis = timeTicks(times, timeZone, stepSeconds);
   const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);
   const slot = buckets > 0 ? Math.max(0, width - AXIS_ROOM) / buckets : 0;
-  const gap = slot >= 4 ? GAP : slot >= 2 ? 1 : 0;
+  // Recharts leaves barCategoryGap on each side of a bar: 2px between bars, 1px when narrow.
+  const barGap = slot >= 6 ? 1 : slot >= 3 ? 0.5 : 0;
   const data: Row[] = times.map((_, index) => ({
     index,
     values: parts.map((part) => part.values[index] ?? 0),
@@ -219,7 +229,7 @@ export function StackedBarChart({
             data={data}
             margin={MARGIN}
             accessibilityLayer={false}
-            barCategoryGap={gap}
+            barCategoryGap={barGap}
             onClick={(state) => {
               const index = Number(state.activeTooltipIndex ?? Number.NaN);
               if (onSelect === undefined || !Number.isInteger(index)) return;
@@ -236,6 +246,7 @@ export function StackedBarChart({
               dataKey="index"
               ticks={xTicks}
               tickFormatter={(index: number) => axis.label(index)}
+              tick={<EdgeTick format={axis.label} />}
             />
             <YAxis
               {...Y_AXIS}
@@ -268,7 +279,7 @@ export function StackedBarChart({
                 fill={part.color}
                 maxBarSize={MAX_BAR}
                 isAnimationActive={false}
-                shape={<PartShape part={position} parts={parts} gap={gap} />}
+                shape={<PartShape part={position} parts={parts} />}
               />
             ))}
           </BarChart>

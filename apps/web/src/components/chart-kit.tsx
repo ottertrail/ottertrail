@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import { usePlotArea } from "recharts";
 
 /*
  * Parts every chart built on components/ui/chart.tsx shares (docs/design-system.md, "Charts"):
@@ -129,4 +130,39 @@ export function IsolatedDot({
     (series[index + 1] ?? null) === null;
   if (!alone || cx === undefined || cy === undefined) return null;
   return <circle cx={cx} cy={cy} r={4} fill={seriesColor} />;
+}
+
+/**
+ * An x axis label, as Recharts renders it at a tick's x and y: centered on its tick, but moved
+ * to start or end at the plot's edge where centering would cut it, so the first and last labels
+ * show whole. Its width is estimated at 6.5px a character, as `evenTicks` estimates it.
+ */
+export function EdgeTick({
+  x = 0,
+  y = 0,
+  payload,
+  format,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value?: unknown };
+  format: (value: number) => string;
+}) {
+  const plot = usePlotArea();
+  const text = typeof payload?.value === "number" ? format(payload.value) : "";
+  const half = (text.length * 6.5) / 2;
+  let anchor: "start" | "middle" | "end" = "middle";
+  let at = x;
+  if (plot !== undefined && x - half < plot.x) {
+    anchor = "start";
+    at = Math.max(plot.x, x - half);
+  } else if (plot !== undefined && x + half > plot.x + plot.width) {
+    anchor = "end";
+    at = Math.min(plot.x + plot.width, x + half);
+  }
+  return (
+    <text x={at} y={y} dy="0.71em" textAnchor={anchor} fontSize={11} className="fill-ink-subtle">
+      {text}
+    </text>
+  );
 }
