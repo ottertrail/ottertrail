@@ -408,7 +408,8 @@ describe("the traces list", () => {
       }),
     });
     expect(response.statusCode).toBe(200);
-    const list = (await get("/traces?period=today")).json();
+    // The last 7 days, not today: a minute ago is yesterday just after midnight.
+    const list = (await get("/traces?period=7d")).json();
     const names = list.traces
       .filter((trace: { traceId: string }) => trace.traceId === traceId)
       .map((trace: { name: string }) => trace.name);

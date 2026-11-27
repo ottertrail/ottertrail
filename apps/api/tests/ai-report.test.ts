@@ -711,7 +711,8 @@ describe("the chart", () => {
         feature: `f-${String(index).padStart(2, "0")}`,
       })),
     );
-    const chart = await report(`/projects/${many}/ai/chart?period=today&split=feature`);
+    // The last 7 days, not today: an hour ago is yesterday just after midnight.
+    const chart = await report(`/projects/${many}/ai/chart?period=7d&split=feature`);
     const keys = chart.series.map((line: { key: string; other: boolean }) => [
       line.key,
       line.other,
