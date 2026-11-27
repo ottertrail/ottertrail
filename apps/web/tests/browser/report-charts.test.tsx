@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser/context";
 
 import type { ServicesTrend } from "../../src/lib/services-api.ts";
+import { hoverAt } from "./chart-pointer.ts";
 import {
   deferred,
   type FakeApi,
@@ -36,7 +37,7 @@ const queriesOf = (api: FakeApi, path: string) =>
 
 /** The section of the chart titled `title`. */
 const chartOf = (title: string) =>
-  page.getByRole("heading", { name: title }).element().closest("[data-slot=chart]");
+  page.getByRole("heading", { name: title }).element().closest("[data-slot=report-chart]");
 
 /** A chart's legend: each entry's text and its key's color. */
 const legendOf = (title: string) =>
@@ -56,24 +57,9 @@ const strokesOf = (title: string) => [
 
 /** Moves the pointer over a chart's plot, `share` of the way across, and returns its tooltip's text. */
 async function hover(title: string, share: number) {
-  const plot = chartOf(title)?.querySelector<HTMLElement>("div.relative");
-  if (plot === null || plot === undefined) throw new Error(`${title} has no plot`);
-  const box = plot.getBoundingClientRect();
-  plot.dispatchEvent(
-    new PointerEvent("pointermove", {
-      bubbles: true,
-      clientX: box.left + 64 + (box.width - 80) * share,
-      clientY: box.top + 40,
-    }),
-  );
-  await expect.poll(() => plot.querySelector("div.bg-popover")).not.toBeNull();
-  const text = plot.querySelector("div.bg-popover")?.textContent;
-  // React reads a pointer leaving from pointerout, to the element it moved to.
-  plot.dispatchEvent(
-    new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }),
-  );
-  await expect.poll(() => plot.querySelector("div.bg-popover")).toBeNull();
-  return text;
+  const chart = chartOf(title);
+  if (chart === null || chart === undefined) throw new Error(`${title} has no plot`);
+  return hoverAt(chart, share);
 }
 
 /** Nothing in the content panel or the page scrolls sideways. */
@@ -243,22 +229,26 @@ describe("the metrics' sparklines", () => {
       lines.map((line) => line.querySelector(".sr-only")?.textContent),
     );
     // The line is decoration: hidden from screen readers, and no tab stop in the row.
-    expect(lines.map((line) => line.querySelector("svg")?.getAttribute("aria-hidden"))).toEqual([
-      "true",
-      "true",
-      "true",
-    ]);
+    expect(
+      lines.map((line) => line.querySelector("[data-slot=chart]")?.getAttribute("aria-hidden")),
+    ).toEqual(["true", "true", "true"]);
     expect(
       lines.filter(
-        (line) => line.querySelector("button, a, [tabindex]") !== null || line.matches("button"),
+        (line) =>
+          line.querySelector("button, a, [tabindex]:not([tabindex='-1'])") !== null ||
+          line.matches("button"),
       ),
     ).toEqual([]);
     // The histogram's missing 4th hour breaks its line in two; the others are one line.
-    const paths = lines.map((line) => line.querySelectorAll("path").length);
-    expect(paths).toEqual([2, 1, 1]);
+    const runs = lines.map(
+      (line) => line.querySelector(".recharts-line-curve")?.getAttribute("d")?.match(/M/g)?.length,
+    );
+    expect(runs).toEqual([2, 1, 1]);
     // The line is the de-emphasis gray; the latest value a dot in the first chart color.
     const [first] = lines;
-    expect(first?.querySelector("path")?.getAttribute("stroke")).toBe("var(--ink-subtle)");
+    expect(first?.querySelector(".recharts-line-curve")?.getAttribute("stroke")).toBe(
+      "var(--ink-subtle)",
+    );
     expect(first?.querySelector("circle:last-of-type")?.getAttribute("fill")).toBe(
       "var(--chart-1)",
     );

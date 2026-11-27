@@ -31,7 +31,7 @@ export function ReportChart({
   return (
     <section
       aria-labelledby={headingId}
-      data-slot="chart"
+      data-slot="report-chart"
       className={cn("flex min-w-0 flex-col gap-2 border-t pt-5", className)}
     >
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">

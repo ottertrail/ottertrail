@@ -3,6 +3,7 @@ import { page, userEvent } from "vite-plus/test/browser/context";
 
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { FunnelStep } from "../../src/lib/product-api.ts";
+import { hoverAt } from "./chart-pointer.ts";
 import { installFakeApi, memberAccess, PROJECT } from "./fake-api.ts";
 import { renderApp } from "./render.tsx";
 
@@ -196,24 +197,9 @@ const trendSection = () =>
 
 /** Moves the pointer over the trend's point at `index` of `count`, and returns the tooltip's text. */
 async function hoverTrend(index: number, count: number) {
-  const plot = trendSection()?.querySelector<HTMLElement>("div.relative");
-  if (plot === null || plot === undefined) throw new Error("The trend has no plot");
-  const box = plot.getBoundingClientRect();
-  plot.dispatchEvent(
-    new PointerEvent("pointermove", {
-      bubbles: true,
-      clientX: box.left + 48 + ((box.width - 64) * index) / (count - 1),
-      clientY: box.top + 40,
-    }),
-  );
-  await expect.poll(() => plot.querySelector("div.bg-popover")).not.toBeNull();
-  const text = plot.querySelector("div.bg-popover")?.textContent;
-  // React reads a pointer leaving from pointerout, to the element it moved to.
-  plot.dispatchEvent(
-    new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }),
-  );
-  await expect.poll(() => plot.querySelector("div.bg-popover")).toBeNull();
-  return text;
+  const chart = trendSection();
+  if (chart === null || chart === undefined) throw new Error("The trend has no plot");
+  return hoverAt(chart, index / (count - 1));
 }
 
 describe("conversion over time", () => {
@@ -227,8 +213,10 @@ describe("conversion over time", () => {
     expect(await hoverTrend(4, 7)).toBe("Sat 14 Nov3%conversion1,200at step 130at step 3");
     // Nobody did step 1 on 13 November: no point, not 0%.
     expect(await hoverTrend(3, 7)).toBe("Fri 13 NovNovisitors at step 1");
-    // The line breaks there: two runs of days, each its own line.
-    expect(trendSection()?.querySelectorAll("svg path[stroke]").length).toBe(2);
+    // The line breaks there: two runs of days.
+    expect(
+      trendSection()?.querySelector(".recharts-area-curve")?.getAttribute("d")?.match(/M/g)?.length,
+    ).toBe(2);
 
     // The numbers, as a table.
     await page.getByRole("button", { name: "Show the numbers" }).first().click();

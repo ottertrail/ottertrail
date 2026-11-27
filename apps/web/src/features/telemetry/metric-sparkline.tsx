@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
+import { Line as RechartsLine, LineChart, XAxis, YAxis } from "recharts";
 
 import { Missing } from "@/components/missing";
+import { ChartContainer } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PageRange } from "@/lib/analytics-api";
 import { type MetricKind, metricSparklineQuery } from "@/lib/metrics-api";
@@ -19,10 +21,40 @@ const SPARKLINE_MEASURES: Record<MetricKind, string> = {
 /** Match the API's maximum sparkline period in days. */
 export const SPARKLINE_MAX_DAYS = 7;
 
-const WIDTH = 96;
-const HEIGHT = 24;
 /** Leave room for the 2px stroke and latest-point dot. */
 const PAD = 3;
+const CONFIG = { value: { color: "var(--ink-subtle)" } };
+
+/** A point of the line: a dot where a value stands alone, and the latest value in chart-1. */
+function SparkDot({
+  series,
+  latest,
+  cx,
+  cy,
+  index = -1,
+}: {
+  series: (number | null)[];
+  latest: number;
+  cx?: number;
+  cy?: number;
+  index?: number;
+}) {
+  if (cx === undefined || cy === undefined || series[index] === null) return null;
+  if (index === latest) {
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={2.5}
+        fill="var(--chart-1)"
+        stroke="var(--background)"
+        strokeWidth={1}
+      />
+    );
+  }
+  const alone = (series[index - 1] ?? null) === null && (series[index + 1] ?? null) === null;
+  return alone ? <circle cx={cx} cy={cy} r={1.5} fill="var(--ink-subtle)" /> : null;
+}
 
 /** Provide hidden text and a hover title; the line itself adds no tab stop. */
 function Line({
@@ -36,64 +68,31 @@ function Line({
   const present = values.filter((value): value is number => value !== null);
   const low = Math.min(...present);
   const high = Math.max(...present);
-  const last = Math.max(1, values.length - 1);
-  const x = (index: number) => PAD + (index / last) * (WIDTH - 2 * PAD);
-  const y = (value: number) =>
-    high === low ? HEIGHT / 2 : PAD + (1 - (value - low) / (high - low)) * (HEIGHT - 2 * PAD);
-  const runs: number[][] = [];
-  let run: number[] = [];
-  values.forEach((value, index) => {
-    if (value === null) {
-      if (run.length > 0) runs.push(run);
-      run = [];
-    } else run.push(index);
-  });
-  if (run.length > 0) runs.push(run);
   const latest = values.findLastIndex((value) => value !== null);
+  const data = values.map((value, index) => ({ index, value }));
   return (
     <span data-slot="sparkline" title={label} className="flex h-6 w-24 items-center">
       <span className="sr-only">{label}</span>
-      <svg
-        aria-hidden="true"
-        width={WIDTH}
-        height={HEIGHT}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="block overflow-visible"
-      >
-        {runs.map((indexes) =>
-          indexes.length === 1 ? (
-            <circle
-              key={indexes[0]}
-              cx={x(indexes[0] ?? 0)}
-              cy={y(values[indexes[0] ?? 0] ?? 0)}
-              r={1.5}
-              fill="var(--ink-subtle)"
-            />
-          ) : (
-            <path
-              key={indexes[0]}
-              d={indexes
-                .map((index, n) => `${n === 0 ? "M" : "L"}${x(index)},${y(values[index] ?? 0)}`)
-                .join("")}
-              fill="none"
-              stroke="var(--ink-subtle)"
-              strokeWidth={2}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          ),
-        )}
-        {latest >= 0 && (
-          <circle
-            cx={x(latest)}
-            cy={y(values[latest] ?? 0)}
-            r={2.5}
-            fill="var(--chart-1)"
-            stroke="var(--background)"
-            strokeWidth={1}
+      <ChartContainer config={CONFIG} aria-hidden="true" className="aspect-auto h-6 w-24">
+        <LineChart
+          data={data}
+          margin={{ top: PAD, right: PAD, bottom: PAD, left: PAD }}
+          accessibilityLayer={false}
+        >
+          <XAxis dataKey="index" hide />
+          <YAxis hide domain={high === low ? [low - 1, high + 1] : [low, high]} />
+          <RechartsLine
+            dataKey="value"
+            stroke="var(--ink-subtle)"
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            dot={<SparkDot series={values} latest={latest} />}
+            activeDot={false}
+            isAnimationActive={false}
           />
-        )}
-      </svg>
+        </LineChart>
+      </ChartContainer>
     </span>
   );
 }

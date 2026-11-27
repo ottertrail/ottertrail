@@ -39,7 +39,10 @@ const sortedBy = () =>
 /** The stroke of the line in the chart titled `title`. */
 const strokeOf = (title: string) =>
   [...document.querySelectorAll("svg path")]
-    .find((path) => path.closest("[data-slot=chart]")?.querySelector("h3")?.textContent === title)
+    .find(
+      (path) =>
+        path.closest("[data-slot=report-chart]")?.querySelector("h3")?.textContent === title,
+    )
     ?.getAttribute("stroke");
 
 const SHOP_TABLE = "Query shapes of shop on postgresql, those with the most time spent first";

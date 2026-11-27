@@ -1,9 +1,22 @@
 import * as React from "react";
+import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 
+import { ChartKeys, ChartReadout, IsolatedDot } from "@/components/chart-kit";
 import { TruncatedText } from "@/components/truncated-text";
+import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import {
+  activeDot,
+  AXIS_BAND,
+  evenTicks,
+  MARGIN,
+  PLOT_FRAME,
+  useWidth,
+  X_AXIS,
+  Y_AXIS,
+} from "@/lib/chart-axis";
 import { MISSING } from "@/lib/missing";
 
-import { bucketLabel, tickLabel, ticksFor } from "./chart-time";
+import { bucketLabel, ticksFor, timeTicks } from "./chart-time";
 
 /** Nulls break lines; isolated values draw as dots. A hidden range input provides keyboard navigation. The caller supplies the table view. */
 
@@ -15,23 +28,36 @@ export interface ChartLine {
 }
 
 const DEFAULT_PLOT_HEIGHT = 220;
-const AXIS_BAND = 28;
-const MARGIN = { top: 12, right: 16, left: 64 };
 
-/** Split runs at nulls to leave gaps in the line. */
-function runsOf(values: (number | null)[]): number[][] {
-  const runs: number[][] = [];
-  let run: number[] = [];
-  values.forEach((value, index) => {
-    if (value === null) {
-      if (run.length > 0) runs.push(run);
-      run = [];
-    } else {
-      run.push(index);
-    }
-  });
-  if (run.length > 0) runs.push(run);
-  return runs;
+/** The tooltip: Recharts passes `active` and `label`, the bucket's index. */
+function Readout({
+  active,
+  label,
+  lines,
+  labelOf,
+  formatValue,
+}: {
+  active?: boolean;
+  label?: unknown;
+  lines: ChartLine[];
+  labelOf: (index: number) => string;
+  formatValue: (value: number) => string;
+}) {
+  if (active !== true || typeof label !== "number") return null;
+  return (
+    <ChartReadout
+      title={labelOf(label)}
+      rows={lines.map((line) => {
+        const value = line.values[label];
+        return {
+          key: line.key,
+          color: line.color,
+          value: value === null || value === undefined ? MISSING : formatValue(value),
+          label: line.label,
+        };
+      })}
+    />
+  );
 }
 
 export function TimeChart({
@@ -59,61 +85,37 @@ export function TimeChart({
   domain?: { min: number; max: number } | undefined;
   plotHeight?: number;
 }) {
-  const chartHeight = 12 + plotHeight + AXIS_BAND;
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [width, setWidth] = React.useState(0);
-  const [active, setActive] = React.useState<number | null>(null);
-
-  React.useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (element === null) return undefined;
-    setWidth(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setWidth(entry.contentRect.width);
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
+  const [keyed, setKeyed] = React.useState<number | null>(null);
+  const [frameRef, width] = useWidth<HTMLDivElement>();
 
   const startMs = Date.parse(start);
-  const timeOf = (index: number) => {
+  const times = Array.from({ length: buckets }, (_, index) => {
     const known = starts?.[index];
     return known === undefined ? new Date(startMs + index * stepSeconds * 1000) : new Date(known);
-  };
+  });
   /** End labels at the next explicit start to reflect daylight saving changes. Daily buckets keep their day. */
   const labelOf = (index: number) => {
     const next = starts?.[index + 1];
+    const from = times[index] ?? new Date(startMs);
     const seconds =
       next === undefined || stepSeconds >= 86_400
         ? stepSeconds
-        : (Date.parse(next) - timeOf(index).getTime()) / 1000;
-    return bucketLabel(timeOf(index), seconds, timeZone);
+        : (Date.parse(next) - from.getTime()) / 1000;
+    return bucketLabel(from, seconds, timeZone);
   };
-  const last = buckets - 1;
   const all = lines.flatMap((line) => line.values.filter((value) => value !== null));
   const ticks = ticksFor(Math.min(domain?.min ?? 0, ...all), Math.max(domain?.max ?? 0, ...all));
-  const bottom = ticks[0] ?? 0;
-  const top = ticks.at(-1) ?? 1;
-  const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
-  const x = (index: number) =>
-    MARGIN.left + (buckets <= 1 ? plotWidth / 2 : (index / last) * plotWidth);
-  const y = (value: number) =>
-    MARGIN.top + plotHeight - ((value - bottom) / (top - bottom)) * plotHeight;
-
-  const spanSeconds = buckets * stepSeconds;
-  const labelSpacing = spanSeconds <= 36 * 3600 ? 56 : stepSeconds >= 86_400 ? 64 : 104;
-  const labelEvery = Math.max(
-    1,
-    Math.ceil(buckets / Math.max(1, Math.floor(plotWidth / labelSpacing))),
+  const axis = timeTicks(times, timeZone, stepSeconds);
+  const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);
+  // Series keys can hold dots (model names), which Recharts would read as paths, so each line
+  // reads its value by position.
+  const data = times.map((_, index) => ({
+    index,
+    values: lines.map((line) => line.values[index] ?? null),
+  }));
+  const config: ChartConfig = Object.fromEntries(
+    lines.map((line) => [line.key, { label: line.label, color: line.color }]),
   );
-
-  function bucketAt(clientX: number): number | null {
-    const element = containerRef.current;
-    if (element === null || buckets === 0) return null;
-    const offset = clientX - element.getBoundingClientRect().left - MARGIN.left;
-    const index = buckets <= 1 ? 0 : Math.round((offset / plotWidth) * last);
-    return Math.min(last, Math.max(0, index));
-  }
 
   const valueText = (value: number | null | undefined) =>
     value === null || value === undefined ? "no data" : formatValue(value);
@@ -121,11 +123,10 @@ export function TimeChart({
     0,
     ...lines.map((line) => line.values.findLastIndex((value) => value !== null)),
   );
-  const shown = active ?? latest;
-  const readout = `${labelOf(shown)}: ${lines
-    .map((line) => `${line.label} ${valueText(line.values[shown])}`)
-    .join(", ")}`;
-  const tooltipOnLeft = active !== null && x(active) > width / 2;
+  const readout = (index: number) =>
+    `${labelOf(index)}: ${lines
+      .map((line) => `${line.label} ${valueText(line.values[index])}`)
+      .join(", ")}`;
 
   return (
     <div className="flex flex-col gap-3">
@@ -143,153 +144,62 @@ export function TimeChart({
           ))}
         </ul>
       )}
-      <div
-        ref={containerRef}
-        className="relative w-full rounded-md has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring"
-        style={{ height: chartHeight }}
-        onPointerMove={(event) => setActive(bucketAt(event.clientX))}
-        onPointerLeave={() => setActive(null)}
-      >
-        {buckets > 0 && (
-          <input
-            type="range"
-            className="sr-only"
-            aria-label={label}
-            aria-valuetext={readout}
-            min={0}
-            max={last}
-            step={1}
-            value={shown}
-            onChange={(event) => setActive(Number(event.target.value))}
-            onFocus={() => setActive(shown)}
-            onBlur={() => setActive(null)}
-          />
-        )}
-        {width > 0 && (
-          <svg width={width} height={chartHeight} aria-hidden="true" className="block">
-            {ticks.map((tick) => (
-              <g key={tick}>
-                <line
-                  x1={MARGIN.left}
-                  x2={width - MARGIN.right}
-                  y1={y(tick)}
-                  y2={y(tick)}
-                  stroke="var(--hairline)"
-                  strokeWidth={1}
-                  shapeRendering="crispEdges"
-                />
-                <text
-                  x={MARGIN.left - 8}
-                  y={y(tick)}
-                  textAnchor="end"
-                  dominantBaseline="middle"
-                  className="fill-ink-subtle text-[11px] tabular-nums"
-                >
-                  {formatValue(tick)}
-                </text>
-              </g>
-            ))}
-            {Array.from({ length: buckets }, (_, index) => index)
-              .filter((index) => (last - index) % labelEvery === 0)
-              .map((index) => (
-                <text
-                  key={index}
-                  x={x(index)}
-                  y={MARGIN.top + plotHeight + 18}
-                  textAnchor={index === 0 ? "start" : index === last ? "end" : "middle"}
-                  className="fill-ink-subtle text-[11px]"
-                >
-                  {tickLabel(timeOf(index), timeZone, stepSeconds, spanSeconds)}
-                </text>
-              ))}
+      <div ref={frameRef} className={PLOT_FRAME} data-slot="time-chart">
+        <ChartKeys
+          label={label}
+          count={buckets}
+          index={keyed}
+          fallback={latest}
+          valueText={readout}
+          onIndex={setKeyed}
+        />
+        <ChartContainer
+          config={config}
+          aria-hidden="true"
+          className="aspect-auto w-full"
+          style={{ height: MARGIN.top + plotHeight + AXIS_BAND }}
+        >
+          <LineChart data={data} margin={MARGIN} accessibilityLayer={false}>
+            <CartesianGrid vertical={false} stroke="var(--hairline)" />
+            <XAxis
+              {...X_AXIS}
+              dataKey="index"
+              ticks={xTicks}
+              tickFormatter={(index: number) => axis.label(index)}
+            />
+            <YAxis
+              {...Y_AXIS}
+              ticks={ticks}
+              domain={[ticks[0] ?? 0, ticks.at(-1) ?? 1]}
+              tickFormatter={formatValue}
+            />
+            <ChartTooltip
+              cursor={{ stroke: "var(--hairline-tertiary)" }}
+              isAnimationActive={false}
+              position={{ y: 8 }}
+              wrapperStyle={{ zIndex: 10 }}
+              {...(keyed === null ? {} : { active: true, defaultIndex: keyed })}
+              content={<Readout lines={lines} labelOf={labelOf} formatValue={formatValue} />}
+            />
             {lines.toReversed().map((line) => {
-              const runs = runsOf(line.values);
-              const at = (index: number) => y(line.values[index] ?? 0);
+              const position = lines.indexOf(line);
               return (
-                <g key={line.key}>
-                  {runs
-                    .filter((run) => run.length > 1)
-                    .map((run) => (
-                      <path
-                        key={run[0]}
-                        d={run
-                          .map((index, n) => `${n === 0 ? "M" : "L"}${x(index)},${at(index)}`)
-                          .join("")}
-                        fill="none"
-                        stroke={line.color}
-                        strokeWidth={2}
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                      />
-                    ))}
-                  {runs
-                    .filter((run) => run.length === 1)
-                    .map((run) => (
-                      <circle
-                        key={run[0]}
-                        cx={x(run[0] ?? 0)}
-                        cy={at(run[0] ?? 0)}
-                        r={4}
-                        fill={line.color}
-                      />
-                    ))}
-                </g>
+                <Line
+                  key={line.key}
+                  name={line.label}
+                  dataKey={(row: (typeof data)[number]) => row.values[position]}
+                  stroke={line.color}
+                  strokeWidth={2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  dot={<IsolatedDot series={line.values} seriesColor={line.color} />}
+                  activeDot={activeDot(line.color)}
+                  isAnimationActive={false}
+                />
               );
             })}
-            {active !== null && (
-              <g pointerEvents="none">
-                <line
-                  x1={x(active)}
-                  x2={x(active)}
-                  y1={MARGIN.top}
-                  y2={MARGIN.top + plotHeight}
-                  stroke="var(--hairline-tertiary)"
-                  strokeWidth={1}
-                  shapeRendering="crispEdges"
-                />
-                {lines.map((line) => {
-                  const value = line.values[active];
-                  return value === null || value === undefined ? null : (
-                    <circle
-                      key={line.key}
-                      cx={x(active)}
-                      cy={y(value)}
-                      r={4}
-                      fill={line.color}
-                      stroke="var(--block-surface, var(--background))"
-                      strokeWidth={2}
-                    />
-                  );
-                })}
-              </g>
-            )}
-          </svg>
-        )}
-        {active !== null && (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute top-2 z-10 max-w-80 min-w-44 rounded-lg border bg-popover px-3 py-2 text-xs shadow-md"
-            style={tooltipOnLeft ? { right: width - x(active) + 12 } : { left: x(active) + 12 }}
-          >
-            <p className="mb-1.5 text-ink-subtle">{labelOf(active)}</p>
-            <ul className="flex flex-col gap-1">
-              {lines.map((line) => (
-                <li key={line.key} className="flex min-w-0 items-center gap-2">
-                  <span
-                    className="h-0.5 w-3 shrink-0 rounded-full"
-                    style={{ background: line.color }}
-                  />
-                  <span className="font-semibold whitespace-nowrap text-ink tabular-nums">
-                    {line.values[active] === null || line.values[active] === undefined
-                      ? MISSING
-                      : formatValue(line.values[active])}
-                  </span>
-                  <span className="truncate text-ink-subtle">{line.label}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+          </LineChart>
+        </ChartContainer>
       </div>
     </div>
   );

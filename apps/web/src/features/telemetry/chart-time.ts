@@ -78,3 +78,34 @@ export function stepText(seconds: number): string {
   }
   return `${seconds} seconds`;
 }
+
+/**
+ * The x axis's candidate ticks, by bucket index, and their labels: every bucket for a day or
+ * less ("14:00") and for daily buckets ("24 Nov"); over several days of shorter buckets, the
+ * first bucket of each day, named by its day. The axis then drops any label that would touch
+ * its neighbor, counting from the end, so a narrow chart shows fewer.
+ */
+export function timeTicks(
+  times: Date[],
+  timeZone: string,
+  stepSeconds: number,
+): { ticks: number[]; label: (index: number) => string } {
+  const spanSeconds = times.length * stepSeconds;
+  const all = times.map((_, index) => index);
+  if (spanSeconds <= 36 * 3600 || stepSeconds >= 86_400) {
+    return {
+      ticks: all,
+      label: (index) => tickLabel(times[index] ?? new Date(0), timeZone, stepSeconds, spanSeconds),
+    };
+  }
+  const days = times.map((date) => {
+    const part = parts(date, timeZone, { day: "numeric", month: "short" });
+    return `${part("day")} ${part("month")}`;
+  });
+  const startsDay = (index: number) => {
+    if (index > 0) return days[index] !== days[index - 1];
+    const part = parts(times[0] ?? new Date(0), timeZone, { hour: "2-digit", minute: "2-digit" });
+    return part("hour") === "00" && part("minute") === "00";
+  };
+  return { ticks: all.filter(startsDay), label: (index) => days[index] ?? "" };
+}

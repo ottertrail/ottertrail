@@ -448,7 +448,7 @@ describe("views", () => {
     installFakeApi();
     renderApp(`${P}/hosts/web-1`);
     await expect.element(page.getByRole("heading", { name: "Load average" })).toBeVisible();
-    const charts = [...document.querySelectorAll("[data-slot=chart]")];
+    const charts = [...document.querySelectorAll("[data-slot=report-chart]")];
     expect(charts).toHaveLength(8);
     const lefts = new Set(charts.map((chart) => Math.round(chart.getBoundingClientRect().left)));
     const widths = new Set(charts.map((chart) => Math.round(chart.getBoundingClientRect().width)));

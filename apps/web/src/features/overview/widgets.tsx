@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRightIcon } from "lucide-react";
+import { Area, AreaChart, ReferenceLine, XAxis, YAxis } from "recharts";
 
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
@@ -11,6 +12,7 @@ import { type Stat, StatStrip } from "@/components/stat-strip";
 import { StatusBadge } from "@/components/status-badge";
 import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
+import { ChartContainer } from "@/components/ui/chart";
 import {
   Table,
   TableBody,
@@ -955,16 +957,9 @@ export function MainGoalWidget(props: WidgetProps) {
   );
 }
 
+const DAY_LINE = { visitors: { color: "var(--chart-1)" } };
+
 function DayLine({ days }: { days: { day: string; visitors: number }[] }) {
-  const width = 600;
-  const height = 64;
-  const max = Math.max(1, ...days.map((point) => point.visitors));
-  const x = (index: number) =>
-    days.length === 1 ? width / 2 : (index / (days.length - 1)) * width;
-  const y = (value: number) => height - 2 - (value / max) * (height - 6);
-  const line = days
-    .map((point, index) => `${index === 0 ? "M" : "L"}${x(index)},${y(point.visitors)}`)
-    .join(" ");
   const first = days[0];
   const last = days.at(-1);
   const busiest = days.reduce(
@@ -974,32 +969,25 @@ function DayLine({ days }: { days: { day: string; visitors: number }[] }) {
   if (first === undefined || last === undefined) return null;
   return (
     <figure className="flex flex-col gap-1">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        className="h-16 w-full"
-      >
-        <line
-          x1="0"
-          x2={width}
-          y1={height - 1}
-          y2={height - 1}
-          className="stroke-border"
-          strokeWidth="1"
-          vectorEffect="non-scaling-stroke"
-        />
-        <path
-          d={`${line} L${width},${height - 1} L0,${height - 1} Z`}
-          className="fill-chart-1/15"
-        />
-        <path
-          d={line}
-          className="fill-none stroke-chart-1"
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
+      <ChartContainer config={DAY_LINE} aria-hidden="true" className="aspect-auto h-16 w-full">
+        <AreaChart
+          data={days}
+          margin={{ top: 4, right: 1, bottom: 1, left: 1 }}
+          accessibilityLayer={false}
+        >
+          <XAxis dataKey="day" hide />
+          <YAxis hide domain={[0, (max: number) => Math.max(1, max)]} />
+          <ReferenceLine y={0} stroke="var(--border)" />
+          <Area
+            dataKey="visitors"
+            stroke="var(--chart-1)"
+            strokeWidth={2}
+            fill="var(--chart-1)"
+            fillOpacity={0.15}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ChartContainer>
       <p className="sr-only">
         Visitors per day, from {formatWhole(first.visitors)} on {formatDay(first.day)} to{" "}
         {formatWhole(last.visitors)} on {formatDay(last.day)}; most, {formatWhole(busiest.visitors)}

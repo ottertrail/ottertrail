@@ -28,7 +28,10 @@ const cellsOf = (row: Element | undefined) =>
 
 /** The legend entries of the chart titled `title`. */
 const legendOf = (title: string) => {
-  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=chart]");
+  const card = page
+    .getByRole("heading", { name: title })
+    .element()
+    .closest("[data-slot=report-chart]");
   return [...(card?.querySelectorAll("ul[aria-label=Legend] li") ?? [])].map(
     (item) => item.textContent,
   );
@@ -36,7 +39,10 @@ const legendOf = (title: string) => {
 
 /** The y-axis labels of the chart titled `title`: right-aligned, left of the plot. */
 const axisOf = (title: string) => {
-  const card = page.getByRole("heading", { name: title }).element().closest("[data-slot=chart]");
+  const card = page
+    .getByRole("heading", { name: title })
+    .element()
+    .closest("[data-slot=report-chart]");
   return [...(card?.querySelectorAll("svg text[text-anchor=end]") ?? [])]
     .filter((text) => Number(text.getAttribute("x")) < 100)
     .map((text) => text.textContent);
@@ -127,7 +133,9 @@ describe("a host's page", () => {
     await expect.element(sidebarLink("Hosts")).toHaveAttribute("data-active");
     await expect.element(page.getByText("Reporting")).toBeVisible();
 
-    const titles = [...document.querySelectorAll("[data-slot=chart] h3")].map((h) => h.textContent);
+    const titles = [...document.querySelectorAll("[data-slot=report-chart] h3")].map(
+      (h) => h.textContent,
+    );
     expect(titles).toEqual([
       "CPU busy (%)",
       "CPU time by state (%)",
@@ -169,7 +177,7 @@ describe("a host's page", () => {
     const card = page
       .getByRole("heading", { name: "Memory used (bytes)" })
       .element()
-      .closest("[data-slot=chart]");
+      .closest("[data-slot=report-chart]");
     const button = [...(card?.querySelectorAll("button") ?? [])].find(
       (item) => item.textContent === "Show the numbers",
     );

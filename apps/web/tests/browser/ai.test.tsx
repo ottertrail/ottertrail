@@ -191,7 +191,7 @@ describe("the AI page", () => {
       ["search-index", "var(--chart-4)"],
     ]);
     // One y-axis, one measure: a single chart.
-    expect(document.querySelectorAll("[data-slot=chart]")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-slot=report-chart]")).toHaveLength(1);
   });
 
   test("past eight lines, the rest fold into Other, in gray; a 95th percentile is not added up", async () => {
