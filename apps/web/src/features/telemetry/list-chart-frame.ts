@@ -58,5 +58,6 @@ export function bucketRange(frame: ListChartFrame, index: number): PageRange | u
   return { from, to };
 }
 
-export const selectHint = (frame: ListChartFrame) =>
-  frame.stepSeconds > DAY_SECONDS ? "Click to show these days" : "Click to show this day";
+/** What choosing a bar does. A finger's first tap shows the bar's numbers, so it takes another. */
+export const selectHint = (frame: ListChartFrame, touch = false) =>
+  `${touch ? "Tap again" : "Click"} to show ${frame.stepSeconds > DAY_SECONDS ? "these days" : "this day"}`;

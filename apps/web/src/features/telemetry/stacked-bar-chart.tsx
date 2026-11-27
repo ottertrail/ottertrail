@@ -1,8 +1,20 @@
 import * as React from "react";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
+import { ChartKeys, ChartReadout } from "@/components/chart-kit";
 import { TruncatedText } from "@/components/truncated-text";
+import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import {
+  AXIS_BAND,
+  evenTicks,
+  MARGIN,
+  PLOT_FRAME,
+  useWidth,
+  X_AXIS,
+  Y_AXIS,
+} from "@/lib/chart-axis";
 
-import { tickLabel, ticksFor } from "./chart-time";
+import { ticksFor, timeTicks } from "./chart-time";
 import { bucketStart, type ListChartFrame, listBucketLabel } from "./list-chart-frame";
 
 /** A hidden range input provides keyboard navigation. The caller supplies the table view. */
@@ -14,10 +26,105 @@ export interface BarPart {
   values: number[];
 }
 
-const AXIS_BAND = 28;
-const MARGIN = { top: 12, right: 16, left: 56 };
 const GAP = 2;
 const MAX_BAR = 24;
+/** About the y axis's width and the margins, to size the gap between bars before drawing. */
+const AXIS_ROOM = 56;
+
+interface Row {
+  index: number;
+  values: number[];
+}
+
+/**
+ * One part of one bar. Parts above the baseline give up 2px of their bottom, so the surface
+ * shows between them, and the top part of each bar has rounded corners.
+ */
+function PartShape({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  payload,
+  part,
+  parts,
+  gap,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  payload?: Row;
+  part: number;
+  parts: BarPart[];
+  gap: number;
+}) {
+  const index = payload?.index ?? -1;
+  const values = payload?.values ?? [];
+  const self = parts[part];
+  if (self === undefined || (values[part] ?? 0) <= 0) return null;
+  const below = values.slice(0, part).some((value) => value > 0);
+  const isTop = !values.slice(part + 1).some((value) => value > 0);
+  const bottom = y + height - (below ? gap : 0);
+  const shown = Math.max(1, bottom - y);
+  const top = bottom - shown;
+  const r = isTop ? Math.min(4, width / 2, shown) : 0;
+  const right = x + width;
+  return (
+    <path
+      data-part={self.key}
+      data-bucket={index}
+      fill={self.color}
+      d={`M${x},${bottom}V${top + r}Q${x},${top} ${x + r},${top}H${right - r}Q${right},${top} ${right},${top + r}V${bottom}Z`}
+    />
+  );
+}
+
+/** The tooltip: Recharts passes `active` and `label`, the bucket's index. */
+function Readout({
+  active,
+  label,
+  frame,
+  parts,
+  totals,
+  formatValue,
+  hint,
+}: {
+  active?: boolean;
+  label?: unknown;
+  frame: ListChartFrame;
+  parts: BarPart[];
+  totals: number[];
+  formatValue: (value: number) => string;
+  hint?: string | undefined;
+}) {
+  if (active !== true || typeof label !== "number") return null;
+  return (
+    <ChartReadout
+      title={listBucketLabel(frame, label)}
+      rows={[
+        ...parts.map((part) => ({
+          key: part.key,
+          color: part.color,
+          marker: "square" as const,
+          value: formatValue(part.values[label] ?? 0),
+          label: part.label,
+        })),
+        ...(parts.length >= 2
+          ? [
+              {
+                key: "total",
+                value: formatValue(totals[label] ?? 0),
+                label: "In all",
+                total: true,
+              },
+            ]
+          : []),
+      ]}
+      footer={hint}
+    />
+  );
+}
 
 export function StackedBarChart({
   frame,
@@ -36,61 +143,39 @@ export function StackedBarChart({
   formatValue: (value: number) => string;
   plotHeight?: number;
   onSelect?: ((index: number) => void) | undefined;
-  selectHint?: string | undefined;
+  /** What a click on a bar does; `touch` when a finger chose the bar, which takes a second tap. */
+  selectHint?: ((touch: boolean) => string) | undefined;
 }) {
   const { stepSeconds, timeZone } = frame;
   const buckets = frame.bucketStarts.length;
-  const chartHeight = MARGIN.top + plotHeight + AXIS_BAND;
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [width, setWidth] = React.useState(0);
-  const [active, setActive] = React.useState<number | null>(null);
+  const [frameRef, width] = useWidth<HTMLDivElement>();
+  const [keyed, setKeyed] = React.useState<number | null>(null);
+  // A tap shows a bar's tooltip; a second tap on the same bar selects it, so a finger can read
+  // a bar before choosing it. A drag to other bars starts again.
+  const [touch, setTouch] = React.useState(false);
+  const [armed, setArmed] = React.useState<number | null>(null);
 
-  React.useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (element === null) return undefined;
-    setWidth(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setWidth(entry.contentRect.width);
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  const timeOf = (index: number) => bucketStart(frame, index);
-  const last = buckets - 1;
   const totals = Array.from({ length: buckets }, (_, index) =>
     parts.reduce((sum, part) => sum + (part.values[index] ?? 0), 0),
   );
   const ticks = ticksFor(0, Math.max(0, ...totals));
-  const top = ticks.at(-1) ?? 1;
-  const plotWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
-  const slot = buckets > 0 ? plotWidth / buckets : 0;
+  const times = Array.from({ length: buckets }, (_, index) => bucketStart(frame, index));
+  const axis = timeTicks(times, timeZone, stepSeconds);
+  const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);
+  const slot = buckets > 0 ? Math.max(0, width - AXIS_ROOM) / buckets : 0;
   const gap = slot >= 4 ? GAP : slot >= 2 ? 1 : 0;
-  const barWidth = Math.max(1, Math.min(MAX_BAR, slot - gap));
-  const center = (index: number) => MARGIN.left + (index + 0.5) * slot;
-  const baseline = MARGIN.top + plotHeight;
-  const y = (value: number) => baseline - (value / top) * plotHeight;
-
-  const spanSeconds = buckets * stepSeconds;
-  const labelSpacing = spanSeconds <= 36 * 3600 ? 56 : stepSeconds >= 86_400 ? 64 : 104;
-  const labelEvery = Math.max(
-    1,
-    Math.ceil(buckets / Math.max(1, Math.floor(plotWidth / labelSpacing))),
+  const data: Row[] = times.map((_, index) => ({
+    index,
+    values: parts.map((part) => part.values[index] ?? 0),
+  }));
+  const config: ChartConfig = Object.fromEntries(
+    parts.map((part) => [part.key, { label: part.label, color: part.color }]),
   );
-
-  function bucketAt(clientX: number): number | null {
-    const element = containerRef.current;
-    if (element === null || buckets === 0 || slot === 0) return null;
-    const offset = clientX - element.getBoundingClientRect().left - MARGIN.left;
-    return Math.min(last, Math.max(0, Math.floor(offset / slot)));
-  }
 
   const describe = (index: number) =>
     `${listBucketLabel(frame, index)}: ${formatValue(totals[index] ?? 0)} in all${parts
       .map((part) => `, ${part.label} ${formatValue(part.values[index] ?? 0)}`)
       .join("")}`;
-  const shown = active ?? Math.max(0, last);
-  const tooltipOnLeft = active !== null && center(active) > width / 2;
 
   return (
     <div className="flex flex-col gap-3">
@@ -109,149 +194,85 @@ export function StackedBarChart({
         </ul>
       )}
       <div
-        ref={containerRef}
+        ref={frameRef}
         data-slot="stacked-bar-chart"
-        className={`relative w-full rounded-md has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring ${
-          onSelect === undefined ? "" : "cursor-pointer"
-        }`}
-        style={{ height: chartHeight }}
-        onPointerMove={(event) => setActive(bucketAt(event.clientX))}
-        onPointerLeave={() => setActive(null)}
-        onPointerUp={(event) => {
-          const index = bucketAt(event.clientX);
-          if (onSelect !== undefined && index !== null) onSelect(index);
-        }}
+        className={`${PLOT_FRAME} ${onSelect === undefined ? "" : "cursor-pointer"}`}
+        onPointerDown={(event) => setTouch(event.pointerType === "touch")}
+        onTouchMove={() => setArmed(null)}
       >
-        {buckets > 0 && (
-          <input
-            type="range"
-            className="sr-only"
-            aria-label={label}
-            aria-valuetext={describe(shown)}
-            min={0}
-            max={last}
-            step={1}
-            value={shown}
-            onChange={(event) => setActive(Number(event.target.value))}
-            onFocus={() => setActive(shown)}
-            onBlur={() => setActive(null)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && onSelect !== undefined) onSelect(shown);
+        <ChartKeys
+          label={label}
+          count={buckets}
+          index={keyed}
+          fallback={Math.max(0, buckets - 1)}
+          valueText={describe}
+          onIndex={setKeyed}
+          onEnter={onSelect}
+        />
+        <ChartContainer
+          config={config}
+          aria-hidden="true"
+          className="aspect-auto w-full"
+          style={{ height: MARGIN.top + plotHeight + AXIS_BAND }}
+        >
+          <BarChart
+            data={data}
+            margin={MARGIN}
+            accessibilityLayer={false}
+            barCategoryGap={gap}
+            onClick={(state) => {
+              const index = Number(state.activeTooltipIndex ?? Number.NaN);
+              if (onSelect === undefined || !Number.isInteger(index)) return;
+              if (touch && armed !== index) {
+                setArmed(index);
+                return;
+              }
+              onSelect(index);
             }}
-          />
-        )}
-        {width > 0 && (
-          <svg width={width} height={chartHeight} aria-hidden="true" className="block">
-            {ticks.map((tick) => (
-              <g key={tick}>
-                <line
-                  x1={MARGIN.left}
-                  x2={width - MARGIN.right}
-                  y1={y(tick)}
-                  y2={y(tick)}
-                  stroke="var(--hairline)"
-                  strokeWidth={1}
-                  shapeRendering="crispEdges"
-                />
-                <text
-                  x={MARGIN.left - 8}
-                  y={y(tick)}
-                  textAnchor="end"
-                  dominantBaseline="middle"
-                  className="fill-ink-subtle text-[11px] tabular-nums"
-                >
-                  {formatValue(tick)}
-                </text>
-              </g>
-            ))}
-            {Array.from({ length: buckets }, (_, index) => index)
-              .filter((index) => (last - index) % labelEvery === 0)
-              .map((index) => (
-                <text
-                  key={index}
-                  x={Math.min(width - MARGIN.right, Math.max(MARGIN.left, center(index)))}
-                  y={baseline + 18}
-                  textAnchor={index === 0 ? "start" : index === last ? "end" : "middle"}
-                  className="fill-ink-subtle text-[11px]"
-                >
-                  {tickLabel(timeOf(index), timeZone, stepSeconds, spanSeconds)}
-                </text>
-              ))}
-            {active !== null && (
-              <rect
-                x={MARGIN.left + active * slot}
-                y={MARGIN.top}
-                width={slot}
-                height={plotHeight}
-                fill="var(--hairline)"
-                opacity={0.6}
-              />
-            )}
-            {totals.map((total, index) => {
-              if (total === 0) return null;
-              const left = center(index) - barWidth / 2;
-              const radius = Math.min(4, barWidth / 2);
-              const shownParts = parts.filter((part) => (part.values[index] ?? 0) > 0);
-              let below = 0;
-              return (
-                <g key={index} data-bucket={index}>
-                  {shownParts.map((part, n) => {
-                    const value = part.values[index] ?? 0;
-                    const bottom = y(below) - (n === 0 ? 0 : gap);
-                    below += value;
-                    const upper = y(below);
-                    const height = Math.max(1, bottom - upper);
-                    const isTop = n === shownParts.length - 1;
-                    const r = isTop ? Math.min(radius, height) : 0;
-                    const right = left + barWidth;
-                    const topEdge = bottom - height;
-                    return (
-                      <path
-                        key={part.key}
-                        data-part={part.key}
-                        fill={part.color}
-                        d={`M${left},${bottom}V${topEdge + r}Q${left},${topEdge} ${left + r},${topEdge}H${right - r}Q${right},${topEdge} ${right},${topEdge + r}V${bottom}Z`}
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })}
-          </svg>
-        )}
-        {active !== null && (
-          <div
-            aria-hidden="true"
-            data-slot="chart-tooltip"
-            className="pointer-events-none absolute top-2 z-10 max-w-80 min-w-44 rounded-lg border bg-popover px-3 py-2 text-xs shadow-md"
-            style={
-              tooltipOnLeft ? { right: width - center(active) + 12 } : { left: center(active) + 12 }
-            }
           >
-            <p className="mb-1.5 text-ink-subtle">{listBucketLabel(frame, active)}</p>
-            <ul className="flex flex-col gap-1">
-              {parts.map((part) => (
-                <li key={part.key} className="flex min-w-0 items-center gap-2">
-                  <span className="size-2 shrink-0 rounded-sm" style={{ background: part.color }} />
-                  <span className="font-semibold whitespace-nowrap text-ink tabular-nums">
-                    {formatValue(part.values[active] ?? 0)}
-                  </span>
-                  <span className="truncate text-ink-subtle">{part.label}</span>
-                </li>
-              ))}
-              {parts.length >= 2 && (
-                <li className="flex min-w-0 items-center gap-2 border-t pt-1">
-                  <span className="size-2 shrink-0" />
-                  <span className="font-semibold whitespace-nowrap text-ink tabular-nums">
-                    {formatValue(totals[active] ?? 0)}
-                  </span>
-                  <span className="truncate text-ink-subtle">In all</span>
-                </li>
-              )}
-            </ul>
-            {selectHint !== undefined && <p className="mt-1.5 text-ink-subtle">{selectHint}</p>}
-          </div>
-        )}
+            <CartesianGrid vertical={false} stroke="var(--hairline)" />
+            <XAxis
+              {...X_AXIS}
+              dataKey="index"
+              ticks={xTicks}
+              tickFormatter={(index: number) => axis.label(index)}
+            />
+            <YAxis
+              {...Y_AXIS}
+              ticks={ticks}
+              domain={[0, ticks.at(-1) ?? 1]}
+              tickFormatter={formatValue}
+            />
+            <ChartTooltip
+              cursor={{ fill: "var(--hairline)", opacity: 0.6 }}
+              isAnimationActive={false}
+              position={{ y: 8 }}
+              wrapperStyle={{ zIndex: 10 }}
+              {...(keyed === null ? {} : { active: true, defaultIndex: keyed })}
+              content={
+                <Readout
+                  frame={frame}
+                  parts={parts}
+                  totals={totals}
+                  formatValue={formatValue}
+                  hint={selectHint?.(touch)}
+                />
+              }
+            />
+            {parts.map((part, position) => (
+              <Bar
+                key={part.key}
+                name={part.label}
+                stackId="stack"
+                dataKey={(row: Row) => row.values[position]}
+                fill={part.color}
+                maxBarSize={MAX_BAR}
+                isAnimationActive={false}
+                shape={<PartShape part={position} parts={parts} gap={gap} />}
+              />
+            ))}
+          </BarChart>
+        </ChartContainer>
       </div>
     </div>
   );

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser/context";
+import { page } from "vite-plus/test/browser/context";
 
 import { LIVE_TIMING } from "../../src/features/telemetry/live-logs.ts";
 import type { LiveLogs, LogSummary } from "../../src/lib/logs-api.ts";
+import { barPoint, clickAt, plotPoint, pointTo, tooltipOf } from "./chart-pointer.ts";
 import {
   type FakeApi,
   berlinDays,
@@ -49,18 +50,15 @@ const logRows = (name = "Log records, newest first") => [
   ...page.getByRole("list", { name }).element().querySelectorAll(":scope > li"),
 ];
 
-/** A pointer at bucket `index` of a chart, as a click selects it. */
-function clickBucket(plot: HTMLElement, index: number, buckets: number) {
-  const box = plot.getBoundingClientRect();
-  // The plot starts 56px in and ends 16px before the right edge.
-  const slot = (box.width - 56 - 16) / buckets;
-  plot.dispatchEvent(
-    new PointerEvent("pointerup", {
-      clientX: box.left + 56 + slot * (index + 0.5),
-      clientY: box.top + 60,
-      bubbles: true,
-    }),
-  );
+/** A click on bucket `index` of a chart's `buckets`. */
+const clickBucket = async (plot: HTMLElement, index: number, buckets: number) =>
+  clickAt(plot, barPoint(plot, index, buckets));
+
+/** The tooltip's text with the pointer halfway across the plot. */
+async function hoverText(plot: HTMLElement) {
+  pointTo(plot, plotPoint(plot, 0.5));
+  await expect.poll(() => tooltipOf(plot)).not.toBeNull();
+  return tooltipOf(plot)?.textContent;
 }
 
 function expectNoSidewaysScroll(width: number) {
@@ -87,10 +85,9 @@ describe("the logs chart", () => {
     ]);
     // Status colors for what is wrong, neutrals for the rest, errors on the baseline.
     const plot = plotOf("Records over time");
-    const first = plot?.querySelector('[data-bucket="0"]');
     expect(
-      [...(first?.querySelectorAll("path") ?? [])].map((part) => [
-        part.dataset.part,
+      [...(plot?.querySelectorAll('path[data-bucket="0"]') ?? [])].map((part) => [
+        part.getAttribute("data-part"),
         part.getAttribute("fill"),
       ]),
     ).toEqual([
@@ -109,10 +106,9 @@ describe("the logs chart", () => {
 
     // Hovering a bar shows its counts.
     if (plot === null) throw new Error("no plot");
-    await userEvent.hover(plot);
-    const tooltip = plot.querySelector("[data-slot=chart-tooltip]");
-    expect(tooltip?.textContent).toMatch(/In all/);
-    expect(tooltip?.textContent).toMatch(/Click to show this day$/);
+    const tooltip = await hoverText(plot);
+    expect(tooltip).toMatch(/In all/);
+    expect(tooltip).toMatch(/Click to show this day$/);
 
     // Its numbers, as a table.
     await chartSection("Records over time")
@@ -153,7 +149,7 @@ describe("the logs chart", () => {
     const plot = plotOf("Records over time");
     if (plot === null) throw new Error("no plot");
     // The 13th bucket of 2 hours: 11 November, from midnight in Singapore.
-    clickBucket(plot, 12, 84);
+    await clickBucket(plot, 12, 84);
     await expect
       .poll(() => router.state.location.search)
       .toEqual({ from: "2026-11-11", to: "2026-11-11", severity: "warn", q: "declined" });
@@ -166,9 +162,8 @@ describe("the logs chart", () => {
       .toBeVisible();
     const day = plotOf("Records over time");
     if (day === null) throw new Error("no plot");
-    await userEvent.hover(day);
-    expect(day.querySelector("[data-slot=chart-tooltip]")?.textContent).not.toMatch(/Click/);
-    clickBucket(day, 3, 96);
+    expect(await hoverText(day)).not.toMatch(/Click/);
+    await clickBucket(day, 3, 96);
     expect(router.state.location.search).toMatchObject({ from: "2026-11-11", to: "2026-11-11" });
   });
 
@@ -198,7 +193,7 @@ describe("the logs chart", () => {
     const plot = plotOf("Records over time");
     if (plot === null) throw new Error("no plot");
     // 26 October, the first day after the clocks went back: its midnight is 23:00 UTC.
-    clickBucket(plot, 55, 90);
+    await clickBucket(plot, 55, 90);
     await expect
       .poll(() => router.state.location.search)
       .toEqual({ from: "2026-10-26", to: "2026-10-26" });
@@ -304,15 +299,12 @@ describe("the traces chart", () => {
     expect(legendOf("Traces over time")).toEqual(["With errors", "Without errors"]);
     const plot = plotOf("Traces over time");
     expect(
-      [...(plot?.querySelectorAll('[data-bucket="0"] path') ?? [])].map((part) =>
+      [...(plot?.querySelectorAll('path[data-bucket="0"]') ?? [])].map((part) =>
         part.getAttribute("fill"),
       ),
     ).toEqual(["var(--status-critical)", "var(--chart-neutral)"]);
     if (plot === null) throw new Error("no plot");
-    await userEvent.hover(plot);
-    expect(plot.querySelector("[data-slot=chart-tooltip]")?.textContent).toMatch(
-      /With errors.*Without errors.*In all/,
-    );
+    expect(await hoverText(plot)).toMatch(/With errors.*Without errors.*In all/);
 
     await page.getByRole("button", { name: "Duration" }).click();
     await expect.element(chartSection("Duration over time")).toBeVisible();
@@ -345,7 +337,7 @@ describe("the traces chart", () => {
     await expect.element(page.getByRole("slider", { name: /^Traces per 2 hours/ })).toBeVisible();
     const plot = plotOf("Traces over time");
     if (plot === null) throw new Error("no plot");
-    clickBucket(plot, 83, 84);
+    await clickBucket(plot, 83, 84);
     await expect
       .poll(() => router.state.location.search)
       .toEqual({ from: "2026-11-16", to: "2026-11-16" });

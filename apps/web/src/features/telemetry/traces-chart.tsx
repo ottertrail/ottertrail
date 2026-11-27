@@ -122,7 +122,11 @@ export function TracesChart({
                         if (next !== undefined) onRange(next);
                       }
                 }
-                selectHint={bucketRange(chart, 0) === undefined ? undefined : selectHint(chart)}
+                selectHint={
+                  bucketRange(chart, 0) === undefined
+                    ? undefined
+                    : (touch) => selectHint(chart, touch)
+                }
               />
             ) : (
               <TimeChart

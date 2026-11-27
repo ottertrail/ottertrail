@@ -90,7 +90,11 @@ export function LogsVolumeChart({
                       if (next !== undefined) onRange(next);
                     }
               }
-              selectHint={bucketRange(frame, 0) === undefined ? undefined : selectHint(frame)}
+              selectHint={
+                bucketRange(frame, 0) === undefined
+                  ? undefined
+                  : (touch) => selectHint(frame, touch)
+              }
             />
           </div>
         )
