@@ -93,7 +93,7 @@ function PartShape({
 function Readout({
   active,
   label,
-  frame,
+  labelOf,
   parts,
   totals,
   formatValue,
@@ -101,7 +101,7 @@ function Readout({
 }: {
   active?: boolean;
   label?: unknown;
-  frame: ListChartFrame;
+  labelOf: (index: number) => string;
   parts: BarPart[];
   totals: number[];
   formatValue: (value: number) => string;
@@ -110,7 +110,7 @@ function Readout({
   if (active !== true || typeof label !== "number") return null;
   return (
     <ChartReadout
-      title={listBucketLabel(frame, label)}
+      title={labelOf(label)}
       rows={[
         ...parts.map((part) => ({
           key: part.key,
@@ -143,9 +143,12 @@ export function StackedBarChart({
   plotHeight = 140,
   onSelect,
   selectHint,
+  bucketName,
 }: {
   /** Bucket starts follow the instance timezone. */
   frame: ListChartFrame;
+  /** A bar's name in its tooltip and readout, such as "Week of 16 Nov"; by default its start. */
+  bucketName?: ((index: number) => string) | undefined;
   /** Stack and list legend entries in the supplied order, from the baseline up. */
   parts: BarPart[];
   label: string;
@@ -182,8 +185,9 @@ export function StackedBarChart({
     parts.map((part) => [part.key, { label: part.label, color: part.color }]),
   );
 
+  const labelOf = bucketName ?? ((index: number) => listBucketLabel(frame, index));
   const describe = (index: number) =>
-    `${listBucketLabel(frame, index)}: ${formatValue(totals[index] ?? 0)} in all${parts
+    `${labelOf(index)}: ${formatValue(totals[index] ?? 0)} in all${parts
       .map((part) => `, ${part.label} ${formatValue(part.values[index] ?? 0)}`)
       .join("")}`;
 
@@ -262,7 +266,7 @@ export function StackedBarChart({
               {...(keyed === null ? {} : { active: true, defaultIndex: keyed })}
               content={
                 <Readout
-                  frame={frame}
+                  labelOf={labelOf}
                   parts={parts}
                   totals={totals}
                   formatValue={formatValue}

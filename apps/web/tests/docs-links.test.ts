@@ -45,6 +45,7 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/projects/$projectId/product/events": ["Events", "/product-analytics/custom-events/"],
   "/projects/$projectId/product/funnel": ["Funnel", "/product-analytics/funnels/"],
   "/projects/$projectId/product/retention": ["Retention", "/product-analytics/retention/"],
+  "/projects/$projectId/product/active-users": ["Active users", "/product-analytics/active-users/"],
   "/projects/$projectId/users/$userId": ["User", "/users/the-users-page/#a-users-page"],
   "/projects/$projectId/errors/$fingerprint": ["Error", "/errors/resolving/#the-groups-page"],
   "/projects/$projectId/replays/$replayId": ["Replay", "/session-replay/error-replays/#the-player"],

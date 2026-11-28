@@ -139,6 +139,10 @@ const ResetPasswordPage = lazyPage(
   "ResetPasswordPage",
 );
 const RetentionPage = lazyPage(() => import("@/features/product/retention-page"), "RetentionPage");
+const ActiveUsersPage = lazyPage(
+  () => import("@/features/product/active-users-page"),
+  "ActiveUsersPage",
+);
 const RulePage = lazyPage(() => import("@/features/alerts/rule-view"), "RulePage");
 const ServicePage = lazyPage(() => import("@/features/telemetry/service-page"), "ServicePage");
 const ServicesPage = lazyPage(() => import("@/features/telemetry/services-page"), "ServicesPage");
@@ -1423,6 +1427,23 @@ const productRetentionRoute = createRoute({
   }),
 });
 
+const productActiveUsersRoute = createRoute({
+  getParentRoute: () => productRoute,
+  path: "/active-users",
+  validateSearch: productRangeSearch,
+  component: withPage(ActiveUsersPage, function ProductActiveUsersRouteComponent() {
+    const { projectId } = productActiveUsersRoute.useParams();
+    const { period, from, to, env } = productActiveUsersRoute.useSearch();
+    return (
+      <ActiveUsersPage
+        projectId={projectId}
+        range={rangeFrom({ period, from, to })}
+        environment={env ?? DEFAULT_ENVIRONMENT}
+      />
+    );
+  }),
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/settings",
@@ -1540,6 +1561,7 @@ const routeTree = rootRoute.addChildren([
         productEventRoute,
         productFunnelRoute,
         productRetentionRoute,
+        productActiveUsersRoute,
       ]),
       projectSettingsRoute,
       unknownProjectPageRoute,

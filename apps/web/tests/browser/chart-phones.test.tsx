@@ -101,6 +101,7 @@ describe("the chart pages on a phone", () => {
       "a metric",
       `${P}/metrics/${encodeURIComponent("http.server.request.duration")}?kind=histogram`,
     ],
+    ["Active users", `${P}/product/active-users`],
     ["Services", `${P}/services`],
     ["a service", `${P}/services/web`],
     ["Databases", `${P}/databases`],

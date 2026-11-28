@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, ChevronRightIcon, UserRoundCheckIcon } from "lucide-react";
+import { ChevronRightIcon, UserRoundCheckIcon } from "lucide-react";
 import * as React from "react";
 
-import { ButtonAnchor } from "@/components/button-anchor";
-import { CopyableCode } from "@/components/copyable-code";
 import { Missing } from "@/components/missing";
 import { PINNED } from "@/components/pinned-column";
 import { ScrollHint } from "@/components/scroll-hint";
@@ -19,20 +17,15 @@ import {
 } from "@/components/ui/empty";
 import { DEFAULT_ENVIRONMENT, type PageRange, PERIODS, type Period } from "@/lib/analytics-api";
 import { ApiError } from "@/lib/api";
-import { DOCS_URL } from "@/lib/docs";
 import { type Cohort, type Retention, retentionQuery, type WeekAverage } from "@/lib/product-api";
 
 import { formatDay, formatDayRange, formatWhole } from "../analytics/format";
 import { ReportFilterBar } from "../errors/range-controls";
 import { NoSuchProject } from "../projects/no-such-project";
 import { formatShare } from "./format";
+import { NoSignedInUsers } from "./no-signed-in-users";
 import { LoadFailed, LoadingRows, Refreshing } from "./report-state";
 import { type ProductSearch, productSearchOf } from "./search";
-
-const IDENTIFY_EXAMPLE = `<script defer src="…/tracker.js" data-key="pk_…" data-user-id="42"></script>
-
-// A single-page app, when someone signs in without a page load:
-window.ottertrail?.identify("42");`;
 
 /**
  * The period picks the cohorts, one a week, so a period under 4 weeks
@@ -304,42 +297,6 @@ function RetentionNotes({ timeZone }: { timeZone: string }) {
   );
 }
 
-const NAMING_USERS_URL = `${DOCS_URL}/users/naming-users/`;
-
-function NoSignedInUsers() {
-  return (
-    <Empty className="border border-dashed p-10">
-      <EmptyHeader className="max-w-xl">
-        <EmptyMedia variant="icon">
-          <UserRoundCheckIcon />
-        </EmptyMedia>
-        <EmptyTitle>No signed-in users yet</EmptyTitle>
-        <EmptyDescription>
-          Retention follows signed-in users from week to week. Add{" "}
-          <code className="font-mono whitespace-nowrap">data-user-id</code> to the tracking snippet,
-          and call <code className="font-mono">window.ottertrail.identify(id)</code> when someone
-          signs in without a page load.
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent className="max-w-2xl">
-        <div className="w-full text-left">
-          <CopyableCode text={IDENTIFY_EXAMPLE} copyLabel="Copy the example" />
-        </div>
-        <ButtonAnchor
-          variant="outline"
-          href={NAMING_USERS_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          How to name signed-in users
-          <ArrowUpRightIcon aria-hidden="true" />
-          <span className="sr-only">(opens in a new tab)</span>
-        </ButtonAnchor>
-      </EmptyContent>
-    </Empty>
-  );
-}
-
 function NoCohorts({
   retention,
   environment,
@@ -435,7 +392,7 @@ export function RetentionPage({
                 onLonger={longest ? undefined : () => show({ range: { period: LONGEST } })}
               />
             ) : (
-              <NoSignedInUsers />
+              <NoSignedInUsers lead="Retention follows signed-in users from week to week." />
             )}
           </Refreshing>
         )}

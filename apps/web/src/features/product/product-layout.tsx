@@ -10,6 +10,7 @@ const TABS = [
   { to: "/projects/$projectId/product/events", label: "Events" },
   { to: "/projects/$projectId/product/funnel", label: "Funnel" },
   { to: "/projects/$projectId/product/retention", label: "Retention" },
+  { to: "/projects/$projectId/product/active-users", label: "Active users" },
 ] as const;
 
 /** Keep period and environment across reports; steps and property filters stay with their page. */

@@ -1,5 +1,6 @@
 import { stepsOverlap } from "../../src/features/product/funnel-steps.ts";
 import { type Area, type AreaLevel, PRESETS, type Role } from "../../src/lib/access.ts";
+import type { ActiveUsers } from "../../src/lib/active-users-api.ts";
 import {
   type FiringAlert,
   type HistoryEntry,
@@ -275,6 +276,8 @@ export interface FakeApi {
   ) => SavedFunnelResults | Response | Promise<SavedFunnelResults | Response>;
   /** Answers GET /api/projects/:id/retention; by default, fakeRetention. */
   retention: (query: URLSearchParams) => Retention | Response;
+  /** Answers GET /api/projects/:id/active-users; by default, fakeActiveUsers. */
+  activeUsers: (query: URLSearchParams) => ActiveUsers | Response;
   /**
    * The project's source maps: the routes list them by release, list a
    * release's files, and delete a release's. By default, fakeSourceMaps.
@@ -3689,6 +3692,71 @@ export function fakeRetention(query: URLSearchParams): Retention {
   });
 }
 
+/**
+ * WEEK's days, Tuesday 10 to Monday 16 November, in Singapore. Each day's
+ * new, returning, and resurrected users add up to its DAU, and its DAU is
+ * at most its WAU, at most its MAU.
+ */
+export const ACTIVE_DAYS = {
+  dau: [42, 45, 44, 40, 20, 18, 39],
+  new: [5, 6, 4, 3, 2, 1, 4],
+  resurrected: [3, 2, 3, 2, 1, 1, 2],
+  wau: [120, 122, 125, 124, 123, 121, 126],
+  mau: [300, 302, 305, 306, 308, 309, 310],
+} as const;
+
+const meanOf = (values: readonly number[]) =>
+  values.reduce((sum, value) => sum + value, 0) / values.length;
+
+export function activeUsersFixture(overrides: Partial<ActiveUsers> = {}): ActiveUsers {
+  const points = ACTIVE_DAYS.dau.map((dau, index) => {
+    const day = `2026-11-${String(10 + index).padStart(2, "0")}`;
+    const fresh = ACTIVE_DAYS.new[index] ?? 0;
+    const resurrected = ACTIVE_DAYS.resurrected[index] ?? 0;
+    const mau = ACTIVE_DAYS.mau[index] ?? 0;
+    return {
+      day,
+      // Midnight in Singapore is 16:00 UTC the day before.
+      start: new Date(Date.parse(`${day}T00:00:00Z`) - 8 * 3_600_000).toISOString(),
+      dau,
+      wau: ACTIVE_DAYS.wau[index] ?? 0,
+      mau,
+      stickiness: dau / mau,
+      new: fresh,
+      returning: dau - fresh - resurrected,
+      resurrected,
+    };
+  });
+  return {
+    ...WEEK,
+    environment: "production",
+    environments: ["production", "staging"],
+    unit: "day",
+    summary: {
+      users: 140,
+      averageDaily: meanOf(ACTIVE_DAYS.dau),
+      weekly: 126,
+      monthly: 310,
+      stickiness: meanOf(points.map((point) => point.stickiness)),
+    },
+    points,
+    previous: {
+      ...WEEK_BEFORE,
+      users: 120,
+      averageDaily: 30,
+      weekly: 110,
+      monthly: 280,
+      stickiness: 0.1,
+    },
+    identifiesUsers: true,
+    ...overrides,
+  };
+}
+
+export function fakeActiveUsers(query: URLSearchParams): ActiveUsers {
+  return activeUsersFixture({ environment: query.get("environment") ?? "production" });
+}
+
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -4840,6 +4908,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = await api.funnel(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/active-users$/.test(path)) {
+    const result = api.activeUsers(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/retention$/.test(path)) {
     const result = api.retention(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -5297,6 +5369,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     funnelTimes: fakeFunnelTimes,
     funnelResults: fakeFunnelResults,
     retention: fakeRetention,
+    activeUsers: fakeActiveUsers,
     resolutions: fakeResolutions(),
     assignments: {},
     assignees: FAKE_ASSIGNEES,

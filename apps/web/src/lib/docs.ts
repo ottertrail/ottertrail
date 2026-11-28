@@ -92,6 +92,10 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
     topic: "Retention",
     path: "/product-analytics/retention/",
   },
+  "/projects/$projectId/product/active-users": {
+    topic: "Active users",
+    path: "/product-analytics/active-users/",
+  },
   // Detail pages, where a section explains them better than their list's page.
   "/projects/$projectId/users/$userId": {
     topic: "User",
