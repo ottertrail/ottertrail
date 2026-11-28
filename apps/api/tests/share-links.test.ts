@@ -372,6 +372,53 @@ describe("the public routes", () => {
     expect(asProject.statusCode).toBe(401);
   });
 
+  test("filters take every operator and several values, as on the dashboard", async () => {
+    const visitors = async (query: string) => {
+      const response = await share(
+        production.token,
+        `/analytics?period=today&${query}`,
+        "203.0.113.20",
+      );
+      expect(response.statusCode).toBe(200);
+      return response.json().summary.visitors as number;
+    };
+    expect(await visitors("page=/pricing&page=/docs")).toBe(2);
+    expect(await visitors("page.not=/pricing")).toBe(1);
+    expect(await visitors("page.contains=PRIC")).toBe(1);
+    expect(await visitors("page.notContains=doc")).toBe(1);
+    expect(await visitors("country.not=DE")).toBe(0);
+    const list = await share(
+      production.token,
+      "/analytics/list?report=pages&period=today&page.contains=doc",
+      "203.0.113.20",
+    );
+    expect(list.json().rows.map((row: { path: string }) => row.path)).toEqual(["/docs"]);
+    // A filter never reaches another environment: staging's pages stay out.
+    expect(await visitors("page.contains=staging")).toBe(0);
+  });
+
+  test("refuses the filters the dashboard refuses", async () => {
+    const tooMany = Array.from({ length: 11 }, (_, index) => `page=/${index}`).join("&");
+    for (const query of [
+      "country.contains=D",
+      "browser.notContains=fire",
+      "page.contains=",
+      "page.like=/",
+      tooMany,
+      `page.contains=${"a".repeat(201)}`,
+      "page.contains=staging&environment=staging",
+    ]) {
+      for (const path of ["/analytics?period=today", "/analytics/list?period=today&report=pages"]) {
+        const response = await share(production.token, `${path}&${query}`, "203.0.113.21");
+        expect({ path, query: query.slice(0, 40), status: response.statusCode }).toEqual({
+          path,
+          query: query.slice(0, 40),
+          status: 400,
+        });
+      }
+    }
+  });
+
   test("an unknown, malformed, and revoked token answer the same 404", async () => {
     const revoked = await makeLink("Soon gone");
     expect((await share(revoked.token, "/analytics?period=today")).statusCode).toBe(200);

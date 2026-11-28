@@ -22,7 +22,14 @@ import {
   projectAnalytics,
   projectList,
 } from "./analytics.ts";
-import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
+import {
+  FILTER_NAMES,
+  type FilterName,
+  type FilterOperator,
+  MAX_LIMIT,
+  operatorsOf,
+  type ReportFilter,
+} from "./reports.ts";
 
 /** Bound query work per request. */
 export const MAX_RANGE_DAYS = 366;
@@ -74,14 +81,56 @@ function problem(code: string, message: string) {
 const NO_NUL = "^[^\\u0000]*$";
 
 /** Match the longest stored path; compare values without parsing. */
-const MAX_FILTER_LENGTH = 2048;
+export const MAX_FILTER_LENGTH = 2048;
 
-/** One query parameter per filter. An empty value matches visits where it is unknown. */
+/** A part to look for is typed by a person, so it is shorter. */
+export const MAX_CONTAINS_LENGTH = 200;
+
+/** Values one filter matches any of. */
+export const MAX_FILTER_VALUES = 10;
+
+/**
+ * A filter's query parameter: its name for is, with a suffix for the
+ * others: `country=DE&country=FR`, `country.not=DE`, `page.contains=/blog`.
+ */
+export const OPERATOR_SUFFIXES = {
+  is: "",
+  isNot: ".not",
+  contains: ".contains",
+  notContains: ".notContains",
+} as const satisfies Record<FilterOperator, string>;
+
+type FilterParameter = `${FilterName}${(typeof OPERATOR_SUFFIXES)[FilterOperator]}`;
+
+/** Each filter's values, one parameter per filter and operator, repeated for several values. */
+type FilterQuery = Partial<Record<FilterParameter, string[]>>;
+
+const isContains = (operator: FilterOperator) =>
+  operator === "contains" || operator === "notContains";
+
+const parameterOf = (name: FilterName, operator: FilterOperator): FilterParameter =>
+  `${name}${OPERATOR_SUFFIXES[operator]}`;
+
+const FILTER_PARAMETERS = FILTER_NAMES.flatMap((name) =>
+  operatorsOf(name).map((operator) => ({ parameter: parameterOf(name, operator), name, operator })),
+);
+
+/**
+ * A fixed value takes no contains parameter, so one is refused as unknown.
+ * An empty value of is or is not matches visits where it is unknown.
+ */
 const FILTER_PROPERTIES = Object.fromEntries(
-  FILTER_NAMES.map((name) => [
-    name,
-    // PostgreSQL cannot store NUL, so it can never match.
-    { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: NO_NUL },
+  FILTER_PARAMETERS.map(({ parameter, operator }) => [
+    parameter,
+    {
+      // Fastify's validator turns a single value into an array of one.
+      type: "array",
+      maxItems: MAX_FILTER_VALUES,
+      // PostgreSQL cannot store NUL, so it can never match.
+      items: isContains(operator)
+        ? { type: "string", minLength: 1, maxLength: MAX_CONTAINS_LENGTH, pattern: NO_NUL }
+        : { type: "string", maxLength: MAX_FILTER_LENGTH, pattern: NO_NUL },
+    },
   ]),
 );
 
@@ -155,10 +204,14 @@ export function requestDays(
   return { from: days.from, to: days.to };
 }
 
-function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilter[] {
-  return FILTER_NAMES.flatMap((name) => {
-    const value = query[name];
-    return value === undefined ? [] : [{ name, value: value === "" ? null : value }];
+function requestFilters(query: FilterQuery): ReportFilter[] {
+  return FILTER_PARAMETERS.flatMap(({ parameter, name, operator }) => {
+    const sent = query[parameter];
+    if (sent === undefined || sent.length === 0) return [];
+    const values = [...new Set(sent)].map((value) =>
+      value === "" && !isContains(operator) ? null : value,
+    );
+    return [{ name, operator, values }];
   });
 }
 
@@ -245,7 +298,7 @@ async function requestGoal(
 export type AnalyticsQuery = Omit<RangeQuery, "environment"> & {
   limit?: number;
 } & GoalQuery &
-  Partial<Record<FilterName, string>>;
+  FilterQuery;
 
 /** One full list's query, without the environment. */
 export type ListQuery = Omit<RangeQuery, "environment"> & {
@@ -254,7 +307,7 @@ export type ListQuery = Omit<RangeQuery, "environment"> & {
   offset?: number;
   limit?: number;
 } & GoalQuery &
-  Partial<Record<FilterName, string>>;
+  FilterQuery;
 
 const { environment: _environment, ...DAY_PROPERTIES } = RANGE_PROPERTIES;
 

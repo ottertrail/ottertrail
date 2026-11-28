@@ -924,14 +924,33 @@ Every report counts the events of one environment, `production` unless another i
 
 ### Filters
 
-A filter narrows every report to the visits that match it, and to those visits' events. Several filters must all match. Two kinds:
+A filter narrows every report to the visits that match it, and to those visits' events. Two kinds:
 
-- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, `release`): visits whose property has exactly the value its breakdown row shows, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits. An empty value matches visits where the property is unknown, the "Unknown" row.
-- **A page** (`page`): visits with a pageview of that path. Every number then describes those visits, so the pageviews count all their pages, not only the filtered one: filtering by `/pricing` shows what else visitors who saw the pricing page looked at.
+- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, `release`): the visit's own value, as its breakdown row shows it, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits.
+- **An event of the visit** (`page`, and `outbound`, `download`, `notFound` below): visits with a pageview of that path. Every number then describes those visits, so the pageviews count all their pages, not only the filtered one: filtering by `/pricing` shows what else visitors who saw the pricing page looked at.
+
+**Operators.** Each filter has one of four:
+
+| Operator         | Parameter                 | Keeps the visits                                   |
+| ---------------- | ------------------------- | -------------------------------------------------- |
+| is               | `country=DE`              | whose value is one of the values                   |
+| is not           | `country.not=DE`          | whose value is none of them, unknown values too    |
+| contains         | `page.contains=/blog`     | whose value holds one of the texts, ignoring case  |
+| does not contain | `page.notContains=/admin` | whose value holds none of them, unknown values too |
+
+For an event filter, "the value" is any of the visit's events: `page.not=/pricing` keeps the visits that never viewed `/pricing`, and `page.contains=/blog` those that viewed any page under it.
+
+- **Several values:** repeat the parameter, `country=DE&country=FR`. Any value matches (OR). Filters on different dimensions or operators must all match (AND): `page.contains=/blog&page.notContains=/blog/drafts`.
+- **Unknown:** with is and is not, an empty value is the unknown value, the "Unknown" row: `country=` keeps visits without a location, and `country.not=` those with one. An event always has a path, so `page=` matches nothing.
+- **Which take contains:** free text: pages, entry and exit pages, sources, the UTM fields, regions, cities, releases, outbound links, downloads, and not found pages. A fixed value takes is and is not only: country (a code), device type, browser, and operating system. `country.contains` is an unknown parameter, refused with 400.
+- **Contains** compares with `positionCaseInsensitiveUTF8`, never `LIKE`, so `%`, `_`, and `\` match themselves.
+- **Limits** (the route's schema, 400 past them): 10 values per filter; 2,048 characters per value of is and is not, the longest stored path; 1 to 200 characters per text of contains, which a person types. A limit on a request's size bounds the whole address too: Node's 16 KB for headers, or a proxy's, so very many long values are refused there first (431).
+
+Code: `FILTER_KINDS` and `filterCondition` in `apps/api/src/reports/reports.ts`, the parameters in `routes.ts`. Adding a filter is one line in `FILTER_KINDS` (and its expression, as before), and one in `FILTERS` of the dashboard's `lib/analytics-api.ts`.
 
 "Their events" is exact because a visit lies within one local day (visitor IDs change at midnight) and reports cover whole local days: every pageview and custom event in a range belongs to exactly one of the range's visits, from its first event to its last. Visitors and pageviews under a filter therefore count the matching visits' events. One small difference from the unfiltered page: the average time on a page leaves out stale engagement reports (section 6), which belong to no visit.
 
-Filter values are compared, never parsed or run: each name maps to a fixed expression and the value is a query parameter.
+Filter values are compared, never parsed or run: each name maps to a fixed expression and each value is a query parameter. `project_id` stays the first condition of every query.
 
 ### The goal filter
 
@@ -956,7 +975,7 @@ A goal, a saved goal or a custom event by name, does not narrow the visits, as a
 
 Code: `eventValues` in `apps/api/src/reports/reports.ts`. The answer has three lists, counted in the page's visits and filters as Pages is: `outboundLinks` and `fileDownloads` by `properties.url`, `notFoundPages` by path, each row `{ value, visitors, events }`, most visitors first, the top 10. `/analytics/list` takes them as `report=outboundLinks`, `fileDownloads`, or `notFoundPages`, with search and paging. With a goal, each row adds `converted`: its visitors who did it in a visit that reached the goal, as a page's Converted counts, most converted first.
 
-Three filters match them, as `page` matches a pageview: `outbound`, `download` (the stored URL), and `notFound` (the path) keep the visits with such an event of that value, and the filter and the list read the same expression, so a row's filter keeps exactly the visits the row counted. The Custom events list leaves the three out.
+Three filters match them, as `page` matches a pageview: `outbound`, `download` (the stored URL), and `notFound` (the path) keep the visits with such an event of that value, with the same four operators, and the filter and the list read the same expression, so a row's filter keeps exactly the visits the row counted. The Custom events list leaves the three out.
 
 ### Comparison with the previous period
 
@@ -1001,7 +1020,7 @@ Anyone with a project's [shared link](#shared-links) reads its Web analytics pag
 
 A secret address, `/share/<token>`, that shows one project's Web analytics page to anyone who has it, read-only, without signing in. Code: `apps/api/src/share/`, `apps/web/src/share/`, and `features/analytics/scope.ts`; who manages them: [access](access.md#shared-links); the settings tab: [dashboard](dashboard.md#shared-links).
 
-**What it shows.** The Web analytics page itself: the summary, the chart, every list and its Show all (outbound links, file downloads, and not found pages among them), custom events, the goals (read-only, shown once there are some: their names and counts, never what they match, which is Product analytics' setup), and Right now's live count, asked for once a minute (the dashboard asks every 15 seconds), for the environment chosen when the link was made (production by default). The period picker, the filters, and the goal filter work as on the dashboard; each is in the page's address. There is no environment picker, and the answers name no other environment.
+**What it shows.** The Web analytics page itself: the summary, the chart, every list and its Show all (outbound links, file downloads, and not found pages among them), custom events, the goals (read-only, shown once there are some: their names and counts, never what they match, which is Product analytics' setup), and Right now's live count, asked for once a minute (the dashboard asks every 15 seconds), for the environment chosen when the link was made (production by default). The period picker, the filters (every operator, several values, and their editor), and the goal filter work as on the dashboard; each is in the page's address. The shared routes take the same filter parameters and refuse what the dashboard's refuse: contains on a fixed value, more than 10 values, overlong values, and any unknown parameter, `environment` included. There is no environment picker, and the answers name no other environment.
 
 **What it never shows.** Users, Product analytics, Errors, Replays, Heatmaps, Speed, Monitoring, the project's settings and keys, and anything about members. No user ID, visitor ID, or replay is in any answer: the routes answer the same aggregates as the dashboard's report routes. No link leads into the dashboard: the heatmap and event links, the Right now view, Add goal, and the install hint are the dashboard's alone. The page names the project, with its icon, and says "Shared with Ottertrail. Read-only."
 

@@ -29,7 +29,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  activeFilters,
   type Analytics,
   type Breakdown,
   type DayPoint,
@@ -54,6 +53,7 @@ import { MISSING } from "@/lib/missing";
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
 import { DayChart } from "./day-chart";
+import { AddFilter, FilterChip } from "./filter-editor";
 import { FilterLink, GoalLink, PageLink } from "./filter-link";
 import {
   formatConversion,
@@ -71,7 +71,6 @@ import {
 import { GoalsCard } from "./goals-card";
 import {
   type FilterLinkFor,
-  filterText,
   fromBreakdown,
   fromEvents,
   fromEventValues,
@@ -788,19 +787,18 @@ function ActiveFilters({
   search: PageSearch;
   analytics: Analytics | undefined;
 }) {
-  const active = activeFilters(search.filters);
-  const { goal } = search;
-  if (active.length === 0 && goal === undefined) {
+  const { filters, goal } = search;
+  if (filters.length === 0 && goal === undefined) {
     return (
       <p className="text-sm text-ink-subtle">
-        No filters. Select a name in a table to filter by it.
+        No filters. Add one, or select a name in a table to filter by it.
       </p>
     );
   }
   const goalChip = goal === undefined ? undefined : goalText(goalName(goal, analytics));
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <ul aria-label="Filters" className="flex flex-wrap items-center gap-2">
+      <ul aria-label="Filters" className="flex min-w-0 flex-wrap items-center gap-2">
         {goalChip !== undefined && (
           <li className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink">
             <TruncatedText text={goalChip} />
@@ -814,29 +812,12 @@ function ActiveFilters({
             </PageLink>
           </li>
         )}
-        {active.map(([name, value]) => {
-          const text = filterText(name, value);
-          const others = Object.fromEntries(active.filter(([other]) => other !== name));
-          return (
-            <li
-              key={name}
-              className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink"
-            >
-              <TruncatedText text={text} />
-
-              <PageLink
-                search={{ ...search, filters: others }}
-                aria-label={`Remove the filter ${text}`}
-                className="rounded p-1 text-ink-subtle hover:bg-background/60 hover:text-ink"
-              >
-                <XIcon aria-hidden="true" className="size-3.5" />
-              </PageLink>
-            </li>
-          );
-        })}
+        {filters.map((filter) => (
+          <FilterChip key={`${filter.name}.${filter.operator}`} search={search} filter={filter} />
+        ))}
       </ul>
       <PageLink
-        search={{ ...search, filters: {}, goal: undefined }}
+        search={{ ...search, filters: [], goal: undefined }}
         className="text-sm whitespace-nowrap text-link hover:underline"
       >
         Clear filters
@@ -850,7 +831,7 @@ function NoData({ search, otherEnvironments }: { search: PageSearch; otherEnviro
   const neverReceived = dashboard?.lastEventAt === null;
   const canInstall = dashboard?.canInstall ?? false;
   const isYear = "period" in search.range && search.range.period === "12m";
-  if (!neverReceived && activeFilters(search.filters).length > 0) {
+  if (!neverReceived && search.filters.length > 0) {
     return (
       <Empty className="border border-dashed p-10">
         <EmptyHeader>
@@ -863,7 +844,7 @@ function NoData({ search, otherEnvironments }: { search: PageSearch; otherEnviro
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <PageLink button={{ variant: "outline" }} search={{ ...search, filters: {} }}>
+          <PageLink button={{ variant: "outline" }} search={{ ...search, filters: [] }}>
             Clear filters
           </PageLink>
         </EmptyContent>
@@ -894,7 +875,7 @@ function NoData({ search, otherEnvironments }: { search: PageSearch; otherEnviro
         <EmptyContent>
           <PageLink
             button={{ variant: "outline" }}
-            search={{ ...search, range: { period: "12m" }, filters: {} }}
+            search={{ ...search, range: { period: "12m" }, filters: [] }}
           >
             Show the last 12 months
           </PageLink>
@@ -966,6 +947,7 @@ export function AnalyticsView({
         }
         filters={
           <>
+            <AddFilter search={search} />
             <GoalMenu
               analytics={data}
               onGoal={(next) => {

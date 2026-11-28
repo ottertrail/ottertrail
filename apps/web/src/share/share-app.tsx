@@ -38,11 +38,17 @@ import { sharedPageQuery } from "@/lib/share-links-api";
 /** The page's address for `search`: the link's path, the period, filters, and goal. */
 function hrefOf(pathname: string, search: PageSearch): string {
   // The link names its environment; the address never does.
-  const { env: _env, ...params } = searchOf(search) as Record<string, string | undefined>;
-  const query = new URLSearchParams(
-    Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  ).toString();
-  return query === "" ? pathname : `${pathname}?${query}`;
+  const { env: _env, ...params } = searchOf(search) as Record<
+    string,
+    string | string[] | undefined
+  >;
+  const query = new URLSearchParams();
+  // A filter's values repeat its parameter: country=DE&country=FR.
+  for (const [key, value] of Object.entries(params)) {
+    for (const item of [value ?? []].flat()) query.append(key, item);
+  }
+  const text = query.toString();
+  return text === "" ? pathname : `${pathname}?${text}`;
 }
 
 /** Whether a click should open the link in this tab: not one asking for a new tab or window. */
@@ -197,7 +203,9 @@ export function ShareApp({ token, history }: { token: string; history: RouterHis
   }
 
   const { project, environment } = page.data;
-  const raw = Object.fromEntries(new URLSearchParams(search));
+  const params = new URLSearchParams(search);
+  const raw = Object.fromEntries(params);
+  const lists = Object.fromEntries([...params.keys()].map((key) => [key, params.getAll(key)]));
   return (
     <AnalyticsScopeContext value={scope}>
       <Frame
@@ -212,7 +220,7 @@ export function ShareApp({ token, history }: { token: string; history: RouterHis
       >
         <AnalyticsView
           range={rangeFrom(raw)}
-          filters={filtersFrom(raw)}
+          filters={filtersFrom(lists)}
           environment={environment}
           goalSearch={{ goal: raw.goal, goalEvent: raw.goalEvent }}
         />

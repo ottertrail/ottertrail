@@ -190,8 +190,8 @@ try {
       [label]: `${Math.round(once)} ms`,
     };
     for (const [name, filter] of [
-      ["filtered by a country", { name: "country", value: "DE" }],
-      ["filtered by a page", { name: "page", value: "/pricing" }],
+      ["filtered by a country", { name: "country", operator: "is", values: ["DE"] }],
+      ["filtered by a page", { name: "page", operator: "is", values: ["/pricing"] }],
     ] as const) {
       const ms = await measure(() =>
         projectAnalytics(bench, clickhouse, {

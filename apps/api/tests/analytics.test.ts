@@ -320,7 +320,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       timeZone: TIME_ZONE,
       ownHostnames: ["example.com"],
       environment: "production",
-      filters: [{ name: "country" as const, value: "DE" }],
+      filters: [{ name: "country" as const, operator: "is" as const, values: ["DE"] }],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
     const unfiltered = { table: "analytics_visits", filters: [] };
@@ -339,8 +339,8 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       ownHostnames: ["example.com"],
       environment: "production",
       filters: [
-        { name: "page" as const, value: "/" },
-        { name: "country" as const, value: "DE" },
+        { name: "page" as const, operator: "is" as const, values: ["/"] },
+        { name: "country" as const, operator: "is" as const, values: ["DE"] },
       ],
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
@@ -369,6 +369,213 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     [{ country: "D\u0000E" }, "a NUL character"],
   ])("refuses %j (%s)", async (query) => {
     expect((await filtered(query)).statusCode).toBe(400);
+  });
+});
+
+describe("filter operators and several values", () => {
+  let dashboard: Awaited<ReturnType<typeof signedInDashboard>>;
+  let projectId = "";
+
+  /** Paths with LIKE's own characters, which contains must match as themselves. */
+  const LITERAL_PATHS = [
+    "/sale/100%-off",
+    "/sale/1000-off",
+    "/a_b",
+    "/axb",
+    "/back\\slash",
+    "/backslash",
+  ];
+
+  beforeAll(async () => {
+    dashboard = await signedInDashboard({
+      timeZone: TIME_ZONE,
+      now: () => new Date("2026-11-17T17:00:00Z"),
+    });
+    projectId = (
+      await insertProject(dashboard.db, {
+        name: "Operator test",
+        allowed_hostnames: ["example.com"],
+      })
+    ).id;
+    await dashboard.store(projectId, [
+      ...EVENTS,
+      // One visit per path on the 17th, with no location: visitors 70 to 75.
+      ...LITERAL_PATHS.map((path, index) => pv(`7${index}`, "2026-11-17T06:00:00Z", path)),
+    ]);
+  });
+
+  afterAll(async () => {
+    await dashboard?.close();
+  });
+
+  /** The page for 16-17 November; a parameter sent several times holds several values. */
+  function request(query: [string, string][], path = "analytics") {
+    const params = new URLSearchParams([["from", "2026-11-16"], ["to", "2026-11-17"], ...query]);
+    return dashboard.app.inject({
+      url: `/api/projects/${projectId}/${path}?${params.toString()}`,
+      headers: { cookie: dashboard.cookie },
+    });
+  }
+  async function visits(query: [string, string][]): Promise<number> {
+    const response = await request(query);
+    expect(response.statusCode).toBe(200);
+    return response.json().summary.visits as number;
+  }
+  async function paths(query: [string, string][]): Promise<string[]> {
+    const response = await request([...query, ["report", "pages"]], "analytics/list");
+    expect(response.statusCode).toBe(200);
+    return (response.json().rows as { path: string }[]).map((row) => row.path).toSorted();
+  }
+
+  // The fixture's six visits (see "with filters") and six more, one per
+  // literal path, without a location: twelve in all.
+
+  test("is takes several values, any of which matches", async () => {
+    expect(await visits([])).toBe(12);
+    expect(await visits([["country", "DE"]])).toBe(3);
+    expect(
+      await visits([
+        ["country", "DE"],
+        ["country", "US"],
+      ]),
+    ).toBe(4);
+    // Unknown among them: DE's three visits and the eight without a location.
+    expect(
+      await visits([
+        ["country", "DE"],
+        ["country", ""],
+      ]),
+    ).toBe(11);
+    expect(
+      await visits([
+        ["page", "/pricing"],
+        ["page", "/docs"],
+      ]),
+    ).toBe(4);
+    // A value sent twice counts once.
+    expect(
+      await visits([
+        ["country", "DE"],
+        ["country", "DE"],
+      ]),
+    ).toBe(3);
+  });
+
+  test("is not keeps every other visit, those with an unknown value included", async () => {
+    expect(await visits([["country.not", "DE"]])).toBe(9);
+    expect(
+      await visits([
+        ["country.not", "DE"],
+        ["country.not", "US"],
+      ]),
+    ).toBe(8);
+    expect(await visits([["country.not", ""]])).toBe(4);
+    expect(await visits([["deviceType.not", "mobile"]])).toBe(11);
+    // A page: the visits that never viewed it.
+    expect(await visits([["page.not", "/pricing"]])).toBe(10);
+    expect(await paths([["page.not", "/pricing"]])).not.toContain("/pricing");
+    expect(await visits([["page.not", ""]])).toBe(12);
+  });
+
+  test("contains matches part of a value, ignoring case", async () => {
+    expect(await visits([["source.contains", "GOOGLE"]])).toBe(1);
+    expect(await visits([["page.contains", "PRIC"]])).toBe(2);
+    expect(
+      await visits([
+        ["page.contains", "pric"],
+        ["page.contains", "DOC"],
+      ]),
+    ).toBe(4);
+    expect(await visits([["city.contains", "munich"]])).toBe(1);
+    expect(await visits([["region.contains", ", de"]])).toBe(1);
+    expect(await visits([["entryPage.contains", "/sale/"]])).toBe(2);
+    // An unknown value contains nothing.
+    expect(await visits([["city.contains", "U"]])).toBe(2);
+  });
+
+  test("does not contain keeps the visits without it, unknown values included", async () => {
+    expect(await visits([["source.notContains", "google"]])).toBe(11);
+    expect(await visits([["page.notContains", "pric"]])).toBe(10);
+    expect(
+      await visits([
+        ["page.notContains", "pric"],
+        ["page.notContains", "doc"],
+      ]),
+    ).toBe(8);
+    expect(await visits([["city.notContains", "munich"]])).toBe(11);
+  });
+
+  test("filters on different dimensions, or operators, must all match", async () => {
+    expect(
+      await visits([
+        ["page.contains", "doc"],
+        ["country.not", "DE"],
+      ]),
+    ).toBe(1);
+    expect(
+      await visits([
+        ["page.contains", "/sale/"],
+        ["page.notContains", "%"],
+      ]),
+    ).toBe(1);
+    expect(
+      await paths([
+        ["country", "DE"],
+        ["page.notContains", "doc"],
+      ]),
+    ).toEqual(["/", "/pricing"]);
+  });
+
+  test("contains reads %, _, and \\ as themselves, never as a pattern", async () => {
+    expect(await paths([["page.contains", "%"]])).toEqual(["/sale/100%-off"]);
+    expect(await paths([["page.contains", "100%-"]])).toEqual(["/sale/100%-off"]);
+    expect(await paths([["page.contains", "a_b"]])).toEqual(["/a_b"]);
+    expect(await paths([["page.contains", "_"]])).toEqual(["/a_b"]);
+    expect(await paths([["page.contains", "\\"]])).toEqual(["/back\\slash"]);
+    expect(await paths([["page.contains", "k\\s"]])).toEqual(["/back\\slash"]);
+    expect(await visits([["page.contains", "' OR '1'='1"]])).toBe(0);
+    expect(await visits([["page.notContains", "%"]])).toBe(11);
+    // Is compares the whole value.
+    expect(await visits([["page", "/sale/100%-off"]])).toBe(1);
+    expect(await visits([["page", "/sale/100_-off"]])).toBe(0);
+  });
+
+  test("the list endpoint takes the same operators", async () => {
+    const body = (
+      await request(
+        [
+          ["report", "country"],
+          ["country.not", "DE"],
+        ],
+        "analytics/list",
+      )
+    ).json();
+    expect(body.rows.map((row: { value: string | null }) => row.value)).toEqual(["US", null]);
+  });
+
+  test.each<[[string, string][], string]>([
+    [[["country.contains", "D"]], "contains on a fixed value"],
+    [[["deviceType.notContains", "mob"]], "does not contain on a fixed value"],
+    [[["page.contains", ""]], "an empty part to look for"],
+    [[["page.like", "/"]], "an unknown operator"],
+    [
+      Array.from({ length: 11 }, (_, index): [string, string] => ["page", `/${index}`]),
+      "11 values in one filter",
+    ],
+    [[["page.not", `/${"a".repeat(2048)}`]], "a value over 2,048 characters"],
+    [[["page.contains", "a".repeat(201)]], "a part over 200 characters"],
+    [[["city.notContains", "a\u0000b"]], "a NUL character"],
+  ])("refuses %j (%s)", async (query) => {
+    expect((await request(query)).statusCode).toBe(400);
+    expect((await request([...query, ["report", "pages"]], "analytics/list")).statusCode).toBe(400);
+  });
+
+  test("takes 10 values in one filter, and 2,048 characters in each", async () => {
+    const ten = Array.from({ length: 10 }, (_, index): [string, string] => [
+      "page",
+      index === 0 ? "/pricing" : `/${index}`.padEnd(2048, "a"),
+    ]);
+    expect(await visits(ten)).toBe(2);
   });
 });
 

@@ -171,6 +171,34 @@ describe("a shared link's page", () => {
       .toBe(true);
   });
 
+  test("its filters take every operator and several values, in the link's address", async () => {
+    const api = installFakeApi({ signedIn: false });
+    const history = renderShare(`${SHARED}?country.not=DE&country.not=SG`);
+    await expect
+      .element(page.getByRole("list", { name: "Filters" }))
+      .toHaveTextContent("Country is not Germany, Singapore");
+    await expect
+      .poll(() => api.requests.findLast((path) => path.includes("/analytics?")))
+      .toBe(`/api/share/${FAKE_SHARE_TOKEN}/analytics?period=7d&country.not=DE&country.not=SG`);
+
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByRole("combobox", { name: "Filter by" }).click();
+    await page.getByRole("option", { name: "Page", exact: true }).click();
+    await page.getByRole("combobox", { name: "Operator" }).click();
+    await page.getByRole("option", { name: "does not contain" }).click();
+    await page.getByRole("textbox", { name: "Text to look for" }).fill("/admin");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "Apply" }).click();
+
+    await expect
+      .poll(() => history.location.search)
+      .toBe("?page.notContains=%2Fadmin&country.not=DE&country.not=SG");
+    expect(history.location.pathname).toBe(SHARED);
+    for (const path of api.requests) {
+      expect(path.startsWith(`/api/share/${FAKE_SHARE_TOKEN}`)).toBe(true);
+    }
+  });
+
   test("Show all reads the link's full list", async () => {
     const api = installFakeApi({
       signedIn: false,

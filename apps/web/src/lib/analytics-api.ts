@@ -197,100 +197,188 @@ export type ListReport = "pages" | "customEvents" | Breakdown | EventList;
 export type EventList = "outboundLinks" | "fileDownloads" | "notFoundPages";
 
 /**
- * "page" matches visits that viewed that page; "outbound", "download", and
- * "notFound" visits with that link clicked or that not found page. Other
- * filters match exact property values.
+ * Free text takes every operator. A fixed value (a country, a device type, a
+ * browser or system) takes is and is not only, as the API does.
  */
-export const FILTER_NAMES = [
-  "page",
-  "outbound",
-  "download",
-  "notFound",
-  "entryPage",
-  "exitPage",
-  "source",
-  "utmCampaign",
-  "country",
-  "region",
-  "city",
-  "deviceType",
-  "browser",
-  "os",
-  "release",
-] as const satisfies readonly ("page" | "outbound" | "download" | "notFound" | Breakdown)[];
+export type FilterKind = "text" | "fixed";
 
-export type FilterName = (typeof FILTER_NAMES)[number];
+/**
+ * Every filter of the Web analytics page, with its chip's label, its kind,
+ * and the list whose rows set it and offer its values. Adding a filter is
+ * one line here. "page" matches visits that viewed that page; "outbound",
+ * "download", and "notFound" visits with that link clicked or that not
+ * found page. The others match the visit's own value.
+ */
+export const FILTERS = {
+  page: { label: "Page", kind: "text", list: "pages" },
+  entryPage: { label: "Entry page", kind: "text", list: "entryPage" },
+  exitPage: { label: "Exit page", kind: "text", list: "exitPage" },
+  source: { label: "Source", kind: "text", list: "source" },
+  utmCampaign: { label: "Campaign", kind: "text", list: "utmCampaign" },
+  country: { label: "Country", kind: "fixed", list: "country" },
+  region: { label: "Region", kind: "text", list: "region" },
+  city: { label: "City", kind: "text", list: "city" },
+  deviceType: { label: "Device", kind: "fixed", list: "deviceType" },
+  browser: { label: "Browser", kind: "fixed", list: "browser" },
+  os: { label: "Operating system", kind: "fixed", list: "os" },
+  release: { label: "Release", kind: "text", list: "release" },
+  outbound: { label: "Outbound link", kind: "text", list: "outboundLinks" },
+  download: { label: "File download", kind: "text", list: "fileDownloads" },
+  notFound: { label: "Not found page", kind: "text", list: "notFoundPages" },
+} as const satisfies Record<string, { label: string; kind: FilterKind; list: ListReport }>;
 
-/** Active filters by name. An empty string matches visits where the value is unknown. */
-export type Filters = { [Name in FilterName]?: string | undefined };
+export type FilterName = keyof typeof FILTERS;
 
-export const FILTER_LABELS: Record<FilterName, string> = {
-  page: "Page",
-  outbound: "Outbound link",
-  download: "File download",
-  notFound: "Not found page",
-  entryPage: "Entry page",
-  exitPage: "Exit page",
-  source: "Source",
-  utmCampaign: "Campaign",
-  country: "Country",
-  region: "Region",
-  city: "City",
-  deviceType: "Device",
-  browser: "Browser",
-  os: "Operating system",
-  release: "Release",
+export const isFilterName = (name: string): name is FilterName => Object.hasOwn(FILTERS, name);
+
+export const FILTER_NAMES: readonly FilterName[] = Object.keys(FILTERS).filter(isFilterName);
+
+/** How a filter compares a visit's value with its values. */
+export const OPERATORS = ["is", "isNot", "contains", "notContains"] as const;
+
+export type Operator = (typeof OPERATORS)[number];
+
+export const OPERATOR_LABELS: Record<Operator, string> = {
+  is: "is",
+  isNot: "is not",
+  contains: "contains",
+  notContains: "does not contain",
 };
 
-/** The API refuses longer values; an address with one is treated as unfiltered for it. */
-const MAX_FILTER_LENGTH = 2048;
+/** The address's and the API's parameter for each operator: `country.not=DE`. */
+const OPERATOR_SUFFIXES = {
+  is: "",
+  isNot: ".not",
+  contains: ".contains",
+  notContains: ".notContains",
+} as const satisfies Record<Operator, string>;
+
+/** A filter's parameter in the address and the API's query. */
+export type FilterParameter = `${FilterName}${(typeof OPERATOR_SUFFIXES)[Operator]}`;
+
+export const operatorsOf = (name: FilterName): readonly Operator[] =>
+  FILTERS[name].kind === "text" ? OPERATORS : ["is", "isNot"];
+
+/** Contains and does not contain take typed text; is and is not a list's values. */
+export const isTextOperator = (operator: Operator) =>
+  operator === "contains" || operator === "notContains";
 
 /**
- * One filter's value from the address bar's query. The router may turn
- * "2024" into a number or "true" into a boolean, so those come back as text.
+ * One filter: a visit matches when its value matches any of `values` (is,
+ * contains), or none of them (is not, does not contain). Filters on other
+ * dimensions or operators must all match. With is and is not, "" is the
+ * unknown value.
  */
-function filterValue(value: unknown): string | undefined {
-  const text =
-    typeof value === "string"
-      ? value
-      : typeof value === "number" || typeof value === "boolean"
-        ? String(value)
-        : undefined;
-  // The API refuses NUL (PostgreSQL text cannot hold it) and overlong values.
-  return text !== undefined && text.length <= MAX_FILTER_LENGTH && !text.includes("\u0000")
-    ? text
-    : undefined;
+export interface Filter {
+  name: FilterName;
+  operator: Operator;
+  values: readonly string[];
 }
+
+/** The page's filters, at most one per name and operator, in FILTER_NAMES and OPERATORS order. */
+export type Filters = readonly Filter[];
+
+/** The API's limits: values per filter, and characters per value. */
+export const MAX_FILTER_VALUES = 10;
+export const MAX_FILTER_LENGTH = 2048;
+export const MAX_CONTAINS_LENGTH = 200;
+
+const maxLength = (operator: Operator) =>
+  isTextOperator(operator) ? MAX_CONTAINS_LENGTH : MAX_FILTER_LENGTH;
+
+/** A value the API would take for `operator`. */
+export const isFilterValue = (operator: Operator, value: string) =>
+  value.length <= maxLength(operator) &&
+  !value.includes("\u0000") &&
+  (!isTextOperator(operator) || value.trim() !== "");
 
 /**
- * Include every filter name, with undefined for invalid or absent values.
- * The router merges this over the raw query; omitted names would keep unchecked values.
+ * One value from the address bar's query. The router may turn "2024" into a
+ * number or "true" into a boolean, so those come back as text.
  */
-export function filtersFrom(
-  search: Record<string, unknown>,
-): Record<FilterName, string | undefined> {
-  return {
-    page: filterValue(search.page),
-    outbound: filterValue(search.outbound),
-    download: filterValue(search.download),
-    notFound: filterValue(search.notFound),
-    entryPage: filterValue(search.entryPage),
-    exitPage: filterValue(search.exitPage),
-    source: filterValue(search.source),
-    utmCampaign: filterValue(search.utmCampaign),
-    country: filterValue(search.country),
-    region: filterValue(search.region),
-    city: filterValue(search.city),
-    deviceType: filterValue(search.deviceType),
-    browser: filterValue(search.browser),
-    os: filterValue(search.os),
-    release: filterValue(search.release),
-  };
+export function filterValue(value: unknown): string | undefined {
+  return typeof value === "string"
+    ? value
+    : typeof value === "number" || typeof value === "boolean"
+      ? String(value)
+      : undefined;
 }
 
-export function activeFilters(filters: Filters): [FilterName, string][] {
-  return FILTER_NAMES.flatMap((name) => {
-    const value = filters[name];
-    return value === undefined ? [] : [[name, value] as [FilterName, string]];
+const parameterOf = (name: FilterName, operator: Operator): FilterParameter =>
+  `${name}${OPERATOR_SUFFIXES[operator]}`;
+
+/** Every name and operator the address may hold, in the page's order. */
+const PARAMETERS = FILTER_NAMES.flatMap((name) =>
+  operatorsOf(name).map((operator) => ({ name, operator, parameter: parameterOf(name, operator) })),
+);
+
+/**
+ * The filters an address asks for, in the page's order. Values the API
+ * would refuse are left out, a value sent twice counts once, and values past
+ * the limit are dropped, so a mangled link still shows a page.
+ */
+export function filtersFrom(search: Record<string, unknown>): Filter[] {
+  return PARAMETERS.flatMap(({ name, operator, parameter }) => {
+    const raw = search[parameter];
+    const sent = (Array.isArray(raw) ? raw : [raw]).map(filterValue);
+    const values = [
+      ...new Set(
+        sent.filter(
+          (value): value is string => value !== undefined && isFilterValue(operator, value),
+        ),
+      ),
+    ].slice(0, MAX_FILTER_VALUES);
+    return values.length === 0 ? [] : [{ name, operator, values }];
   });
 }
+
+/**
+ * The address's or the API's parameters for `filters`: one per name and
+ * operator, repeated for each value. With `every`, the absent ones are
+ * there as undefined, since the router merges a route's search over the raw
+ * query and would otherwise keep unchecked values.
+ */
+export function filterParams(
+  filters: Filters,
+  { every = false }: { every?: boolean } = {},
+): { [Parameter in FilterParameter]?: string[] | undefined } {
+  const params: { [Parameter in FilterParameter]?: string[] | undefined } = {};
+  if (every) {
+    for (const { parameter } of PARAMETERS) params[parameter] = undefined;
+  }
+  for (const filter of filters) {
+    params[parameterOf(filter.name, filter.operator)] = [...filter.values];
+  }
+  return params;
+}
+
+/** Appends `filters` to an API request's query. */
+export function appendFilters(query: URLSearchParams, filters: Filters): URLSearchParams {
+  for (const [parameter, values = []] of Object.entries(filterParams(filters))) {
+    for (const value of values) query.append(parameter, value);
+  }
+  return query;
+}
+
+const order = (filter: Filter) =>
+  FILTER_NAMES.indexOf(filter.name) * OPERATORS.length + OPERATORS.indexOf(filter.operator);
+
+/**
+ * `filters` with `filter` in its place: one per name and operator, so it
+ * replaces one with the same name and operator. `replacing` names the
+ * filter being edited, which goes; with no values left, nothing replaces it.
+ */
+export function withFilter(filters: Filters, filter: Filter, replacing?: Filter): Filter[] {
+  const same = (other: Filter, item: Filter) =>
+    other.name === item.name && other.operator === item.operator;
+  const others = filters.filter(
+    (item) => !same(item, filter) && (replacing === undefined || !same(item, replacing)),
+  );
+  return (filter.values.length === 0 ? others : [...others, filter]).toSorted(
+    (a, b) => order(a) - order(b),
+  );
+}
+
+/** `filters` without `filter`. */
+export const withoutFilter = (filters: Filters, filter: Filter): Filter[] =>
+  withFilter(filters, { ...filter, values: [] });

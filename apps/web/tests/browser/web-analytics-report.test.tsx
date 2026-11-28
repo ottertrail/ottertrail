@@ -33,7 +33,9 @@ describe("the web analytics report", () => {
     // One environment: no picker.
     expect(filterBar().getByRole("combobox", { name: "Environment" }).elements()).toEqual([]);
     await expect
-      .element(filterBar().getByText("No filters. Select a name in a table to filter by it."))
+      .element(
+        filterBar().getByText("No filters. Add one, or select a name in a table to filter by it."),
+      )
       .toBeVisible();
     await expect.element(filterBar().getByText("10 to 16 Nov 2026", { exact: true })).toBeVisible();
     await expect.element(filterBar().getByText("Asia/Singapore", { exact: true })).toBeVisible();
@@ -51,7 +53,7 @@ describe("the web analytics report", () => {
     await expect.element(filterBar().getByRole("combobox", { name: "Environment" })).toBeVisible();
     await expect
       .element(filterBar().getByRole("list", { name: "Filters" }))
-      .toHaveTextContent("Country: Germany");
+      .toHaveTextContent("Country is Germany");
     await filterBar().getByRole("link", { name: "Clear filters" }).click();
     await expect.poll(() => currentPath(router)).toBe(ANALYTICS);
   });

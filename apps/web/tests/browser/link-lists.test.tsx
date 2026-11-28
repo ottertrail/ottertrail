@@ -81,7 +81,7 @@ describe("the link and not found lists", () => {
     await expect
       .element(
         page.getByRole("link", {
-          name: "Remove the filter Outbound link: github.com/acme/shop-sdk",
+          name: "Remove the filter Outbound link is github.com/acme/shop-sdk",
         }),
       )
       .toBeVisible();

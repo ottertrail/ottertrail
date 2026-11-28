@@ -47,7 +47,8 @@ import { isRuleKind, type RuleKind } from "@/lib/alerts-api";
 import {
   DEFAULT_ENVIRONMENT,
   environmentFrom,
-  type Filters,
+  filterParams,
+  type FilterParameter,
   filtersFrom,
   isPeriod,
   type Period,
@@ -64,6 +65,7 @@ import {
   isStatusFilter,
   type StatusFilter,
 } from "@/lib/errors-api";
+import { type EventDimension, eventDimensionsFrom } from "@/lib/event-lists-api";
 import { lastProject } from "@/lib/last-project";
 import { lazyPage, withPage } from "@/lib/lazy-page";
 import { isTraceId, logWindowFrom } from "@/lib/logs-api";
@@ -171,6 +173,45 @@ function parseExactJson(text: string): unknown {
     throw new Error("Not JSON as JSON.stringify writes it");
   }
   return value;
+}
+
+const parseEach = parseSearchWith(parseExactJson);
+const stringifyEach = stringifySearchWith(JSON.stringify, parseExactJson);
+
+const isTextList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/**
+ * A parameter sent several times is a list, such as a filter's values
+ * (`country=DE&country=FR`), each item read as one value would be.
+ */
+function parseSearch(text: string): Record<string, unknown> {
+  const search: Record<string, unknown> = { ...parseEach(text) };
+  for (const [key, value] of Object.entries(search)) {
+    if (!Array.isArray(value)) continue;
+    search[key] = value.map((item: unknown) => {
+      if (typeof item !== "string") return item;
+      try {
+        return parseExactJson(item);
+      } catch {
+        return item;
+      }
+    });
+  }
+  return search;
+}
+
+/**
+ * A list of text is written as the parameter repeated, one value each, so a
+ * filter's address stays readable. Other lists and objects stay JSON.
+ */
+function stringifySearch(search: Record<string, unknown>): string {
+  const parts = Object.entries(search).flatMap(([key, value]) =>
+    (isTextList(value) ? value : [value])
+      .map((item) => stringifyEach({ [key]: item }).slice(1))
+      .filter((part) => part !== ""),
+  );
+  return parts.length === 0 ? "" : `?${parts.join("&")}`;
 }
 
 const isClientError = (error: unknown) =>
@@ -374,7 +415,7 @@ const webAnalyticsRoute = createRoute({
       env?: unknown;
       goal?: unknown;
       goalEvent?: unknown;
-    } & Partial<Record<keyof Filters, unknown>> &
+    } & Record<string, unknown> &
       SearchSchemaInput,
   ): {
     period: Period | undefined;
@@ -384,7 +425,7 @@ const webAnalyticsRoute = createRoute({
     // The goal filter; the page checks it (goalChoiceFrom).
     goal: string | undefined;
     goalEvent: string | undefined;
-  } & Filters => {
+  } & { [Parameter in FilterParameter]?: string[] | undefined } => {
     const range = rangeFrom(search);
     const environment = environmentFrom(search.env);
     return {
@@ -394,7 +435,8 @@ const webAnalyticsRoute = createRoute({
       env: environment === DEFAULT_ENVIRONMENT ? undefined : environment,
       goal: selectionFrom(search.goal),
       goalEvent: selectionFrom(search.goalEvent),
-      ...filtersFrom(search),
+      // Each filter as its own parameter, repeated for several values: country=DE&country=FR.
+      ...filterParams(filtersFrom(search), { every: true }),
     };
   },
   component: withPage(AnalyticsPage, function WebAnalyticsRouteComponent() {
@@ -404,7 +446,7 @@ const webAnalyticsRoute = createRoute({
       <AnalyticsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
-        filters={filters}
+        filters={filtersFrom(filters)}
         environment={env ?? DEFAULT_ENVIRONMENT}
         goalSearch={{ goal, goalEvent }}
       />
@@ -1338,10 +1380,12 @@ const productEventRoute = createRoute({
   path: "/events/$name",
   validateSearch: (
     search: ErrorSearchInput & Record<string, unknown>,
-  ): ReturnType<typeof productRangeSearch> & FilterSearch & Filters => ({
+  ): ReturnType<typeof productRangeSearch> &
+    FilterSearch &
+    Record<EventDimension, string | undefined> => ({
     ...productRangeSearch(search),
     // The lists' filters, named as the Analytics page's.
-    ...filtersFrom(search),
+    ...eventDimensionsFrom(search),
     ...filterSearchOf(propertyFiltersFrom(search)),
   }),
   component: withPage(EventPage, function ProductEventRouteComponent() {
@@ -1631,8 +1675,8 @@ export function createAppRouter({
     defaultPendingComponent: PagePending,
     defaultErrorComponent: RouteError,
     defaultNotFoundComponent: RouteNotFound,
-    parseSearch: parseSearchWith(parseExactJson),
-    stringifySearch: stringifySearchWith(JSON.stringify, parseExactJson),
+    parseSearch,
+    stringifySearch,
     Wrap: ({ children }: { children: React.ReactNode }) => (
       // Base UI's own <style> elements stay off: the dashboard's Content Security Policy allows
       // stylesheets only, and globals.css carries the one rule they add (base-ui-disable-scrollbar).

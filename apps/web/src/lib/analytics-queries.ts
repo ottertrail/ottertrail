@@ -1,8 +1,8 @@
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import {
-  activeFilters,
   type Analytics,
+  appendFilters,
   BREAKDOWNS,
   type BreakdownRow,
   type CustomEventRow,
@@ -212,7 +212,7 @@ export const environmentParams = (
 export const analyticsQuery = (
   source: ReportSource,
   range: PageRange,
-  filters: Filters = {},
+  filters: Filters = [],
   environment = DEFAULT_ENVIRONMENT,
   goal?: GoalChoice,
 ) =>
@@ -222,9 +222,9 @@ export const analyticsQuery = (
       const query = new URLSearchParams({
         ...rangeParams(range),
         ...environmentParams(source, environment),
-        ...Object.fromEntries(activeFilters(filters)),
         ...goalParams(goal),
       });
+      appendFilters(query, filters);
       return expectShape(
         await apiRequest(`${source.path}/analytics?${query.toString()}`, { signal }),
         isAnalytics,
@@ -341,13 +341,13 @@ export const listQuery = (
       const query = new URLSearchParams({
         ...rangeParams(range),
         ...environmentParams(source, environment),
-        ...Object.fromEntries(activeFilters(filters)),
         ...goalParams(goal),
         report,
         offset: String(pageParam),
         limit: String(LIST_PAGE_SIZE),
         ...(search === "" ? {} : { search }),
       });
+      appendFilters(query, filters);
       const body = await apiRequest(`${source.path}/analytics/list?${query.toString()}`, {
         signal,
       });

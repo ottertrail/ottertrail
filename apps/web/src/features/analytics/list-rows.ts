@@ -6,10 +6,15 @@ import {
   DEFAULT_ENVIRONMENT,
   type EventValueRow,
   DEFAULT_PERIOD,
-  FILTER_LABELS,
+  type Filter,
+  FILTER_NAMES,
+  FILTERS,
   type FilterName,
+  filterParams,
   type Filters,
+  isTextOperator,
   type ListReport,
+  OPERATOR_LABELS,
   type PageRange,
   type PageRow,
 } from "@/lib/analytics-api";
@@ -37,7 +42,17 @@ export function valueText(name: FilterName, value: string): string {
 }
 
 export const filterText = (name: FilterName, value: string) =>
-  `${FILTER_LABELS[name]}: ${valueText(name, value)}`;
+  `${FILTERS[name].label}: ${valueText(name, value)}`;
+
+/** A value as a filter shows it: as its row does, and typed text as typed. */
+export const filterValueText = ({ name, operator }: Filter, value: string) =>
+  isTextOperator(operator) ? value : valueText(name, value);
+
+/** A filter's chip: "Country is not Germany, France". */
+export const chipText = (filter: Filter) =>
+  `${FILTERS[filter.name].label} ${OPERATOR_LABELS[filter.operator]} ${filter.values
+    .map((value) => filterValueText(filter, value))
+    .join(", ")}`;
 
 /** The chip's and the links' words for a goal: "Goal: Team signup". */
 export const goalText = (name: string) => `Goal: ${name}`;
@@ -62,29 +77,14 @@ export const searchOf = ({ range, filters, environment, goal }: PageSearch) => (
       : { period: range.period }
     : { from: range.from, to: range.to }),
   ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
-  ...filters,
+  ...filterParams(filters),
   ...goalParams(goal),
 });
 
-/** Custom event rows set the goal instead of a filter (eventLink). */
-export const LIST_FILTERS: Record<ListReport, FilterName | undefined> = {
-  pages: "page",
-  customEvents: undefined,
-  source: "source",
-  utmCampaign: "utmCampaign",
-  entryPage: "entryPage",
-  exitPage: "exitPage",
-  country: "country",
-  region: "region",
-  city: "city",
-  deviceType: "deviceType",
-  browser: "browser",
-  os: "os",
-  release: "release",
-  outboundLinks: "outbound",
-  fileDownloads: "download",
-  notFoundPages: "notFound",
-};
+/** The filter a list's rows set (FILTERS). Custom event rows set the goal instead (eventLink). */
+export const LIST_FILTERS: Partial<Record<ListReport, FilterName>> = Object.fromEntries(
+  FILTER_NAMES.map((name) => [FILTERS[name].list, name]),
+);
 
 export type FilterLinkFor = (name: FilterName, value: string) => React.ReactNode;
 

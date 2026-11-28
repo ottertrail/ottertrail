@@ -18,15 +18,11 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAccess } from "@/lib/access";
-import {
-  activeFilters,
-  DEFAULT_ENVIRONMENT,
-  type Filters,
-  type PageRange,
-} from "@/lib/analytics-api";
+import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
 import { canBeGoal } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
 import {
+  activeDimensions,
   type EventDimension,
   type EventDimensionFilters,
   eventDimensionsFrom,
@@ -74,7 +70,7 @@ function DimensionChips({
   name: string;
   search: EventSearch;
 }) {
-  const active = activeFilters(search.dimensions);
+  const active = activeDimensions(search.dimensions);
   if (active.length === 0) return null;
   return (
     <ul className="flex flex-wrap items-center gap-2" aria-label="Filters">
@@ -485,7 +481,7 @@ function Detail({
     return (
       <NoMatch
         name={detail.name}
-        filtered={search.filters.length > 0 || activeFilters(search.dimensions).length > 0}
+        filtered={search.filters.length > 0 || activeDimensions(search.dimensions).length > 0}
       />
     );
   }
@@ -545,7 +541,7 @@ export function EventPage({
   environment?: string;
   filters: PropertyFilter[];
   /** The address's filters, named as the Analytics page's; the lists' are used. */
-  dimensionSearch?: Filters;
+  dimensionSearch?: Record<string, unknown>;
 }) {
   const navigate = useNavigate();
   const access = useAccess();
@@ -557,7 +553,7 @@ export function EventPage({
       range,
       environment,
       filters,
-      Object.fromEntries(activeFilters(dimensions)),
+      Object.fromEntries(activeDimensions(dimensions)),
     ),
   );
   const search: EventSearch = { range, environment, filters, dimensions };
@@ -622,7 +618,7 @@ export function EventPage({
               variant="outline"
               to="/projects/$projectId/web-analytics"
               params={{ projectId }}
-              search={searchOf({ range, environment, filters: {}, goal: { event: name } })}
+              search={searchOf({ range, environment, filters: [], goal: { event: name } })}
             >
               <ChartLineIcon data-icon="inline-start" />
               <span className="max-sm:sr-only">Open in Web analytics</span>

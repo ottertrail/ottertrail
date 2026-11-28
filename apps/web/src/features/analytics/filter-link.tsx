@@ -1,6 +1,6 @@
 import type * as React from "react";
 
-import type { FilterName } from "@/lib/analytics-api";
+import { type FilterName, withFilter } from "@/lib/analytics-api";
 import type { GoalChoice } from "@/lib/analytics-queries";
 
 import { filterText, goalText, type PageSearch, valueText } from "./list-rows";
@@ -11,7 +11,11 @@ export function PageLink(props: PageLinkProps) {
   return useAnalyticsScope().renderLink(props);
 }
 
-/** Adds a filter to the Web analytics page, keeping the others: in the dashboard, or on a shared link. */
+/**
+ * Filters the Web analytics page by "is <value>", in the dashboard or on a
+ * shared link. It replaces an is filter of the same name, so a row narrows
+ * the page rather than adding to it, and keeps the other filters.
+ */
 export function FilterLink({
   search,
   name,
@@ -26,7 +30,10 @@ export function FilterLink({
 }) {
   return (
     <PageLink
-      search={{ ...search, filters: { ...search.filters, [name]: value } }}
+      search={{
+        ...search,
+        filters: withFilter(search.filters, { name, operator: "is", values: [value] }),
+      }}
       aria-label={`Filter by ${filterText(name, value)}`}
       onClick={onClick}
       className={

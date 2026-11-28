@@ -1,10 +1,10 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 
 import {
-  activeFilters,
   DEFAULT_ENVIRONMENT,
   type FilterName,
-  type Filters,
+  filterValue,
+  MAX_FILTER_LENGTH,
   type PageRange,
   rangeParams,
 } from "./analytics-api";
@@ -36,13 +36,44 @@ export const EVENT_DIMENSIONS = [
 
 export type EventDimension = (typeof EVENT_DIMENSIONS)[number];
 
-export type EventDimensionFilters = Pick<Filters, EventDimension>;
+/** One value each: an event's lists filter by is only (docs/product-analytics.md, "Events"). */
+export type EventDimensionFilters = { [Name in EventDimension]?: string | undefined };
 
-/** The address's filters an event's page uses: those of EVENT_DIMENSIONS. */
-export const eventDimensionsFrom = (filters: Filters): EventDimensionFilters =>
-  Object.fromEntries(
-    activeFilters(filters).filter(([name]) => EVENT_DIMENSIONS.some((item) => item === name)),
-  );
+/**
+ * The address's filters an event's page uses: one value of each of
+ * EVENT_DIMENSIONS, named as the Analytics page's. Every name is there,
+ * undefined when absent or unusable, since the router merges this over the
+ * raw query.
+ */
+export function eventDimensionsFrom(
+  search: Record<string, unknown>,
+): Record<EventDimension, string | undefined> {
+  const usable = (name: EventDimension) => {
+    const value = filterValue(search[name]);
+    // The API refuses NUL (PostgreSQL text cannot hold it) and overlong values.
+    return value !== undefined && value.length <= MAX_FILTER_LENGTH && !value.includes("\u0000")
+      ? value
+      : undefined;
+  };
+  return {
+    source: usable("source"),
+    utmCampaign: usable("utmCampaign"),
+    country: usable("country"),
+    region: usable("region"),
+    city: usable("city"),
+    deviceType: usable("deviceType"),
+    browser: usable("browser"),
+    os: usable("os"),
+    release: usable("release"),
+  };
+}
+
+/** The dimensions an event's page filters by, with their values. */
+export const activeDimensions = (filters: EventDimensionFilters): [EventDimension, string][] =>
+  EVENT_DIMENSIONS.flatMap((name) => {
+    const value = filters[name];
+    return value === undefined ? [] : [[name, value] as [EventDimension, string]];
+  });
 
 /**
  * One value: null is unknown (an event without a visit, no location …), a
@@ -88,7 +119,7 @@ export const eventListsQuery = (
       const query = new URLSearchParams({
         ...rangeParams(range),
         ...(environment === DEFAULT_ENVIRONMENT ? {} : { environment }),
-        ...Object.fromEntries(activeFilters(dimensions)),
+        ...Object.fromEntries(activeDimensions(dimensions)),
       });
       for (const filter of filters) {
         query.append(`p.${filter.key}`, filter.value);

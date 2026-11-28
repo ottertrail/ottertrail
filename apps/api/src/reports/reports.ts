@@ -200,7 +200,9 @@ export type VisitsSource =
 
 const filtersKey = (filters: readonly ReportFilter[] = []) =>
   filters
-    .map(({ name, value }) => JSON.stringify([name, value]))
+    .map(({ name, operator, values }) =>
+      JSON.stringify([name, operator, values.toSorted((x, y) => (x ?? "").localeCompare(y ?? ""))]),
+    )
     .toSorted((a, b) => a.localeCompare(b))
     .join(",");
 
@@ -635,14 +637,82 @@ export const FILTER_NAMES = [...EVENT_FILTER_NAMES, ...VISIT_DIMENSION_NAMES] as
 
 export type FilterName = (typeof FILTER_NAMES)[number];
 
+/** How a filter compares a visit's value with its values (docs/web-analytics.md, "Filters"). */
+export const FILTER_OPERATORS = ["is", "isNot", "contains", "notContains"] as const;
+
+export type FilterOperator = (typeof FILTER_OPERATORS)[number];
+
+/**
+ * Free text takes every operator. A fixed value (a country code, a device
+ * type, a browser or system name) takes is and is not only: part of a code
+ * or of a name from a short list rarely means anything.
+ */
+export type FilterKind = "text" | "fixed";
+
+/** Every filter and its kind: adding a filter is one line here. */
+export const FILTER_KINDS = {
+  page: "text",
+  outbound: "text",
+  download: "text",
+  notFound: "text",
+  source: "text",
+  entryPage: "text",
+  exitPage: "text",
+  utmSource: "text",
+  utmMedium: "text",
+  utmCampaign: "text",
+  country: "fixed",
+  region: "text",
+  city: "text",
+  deviceType: "fixed",
+  browser: "fixed",
+  os: "fixed",
+  release: "text",
+} as const satisfies Record<FilterName, FilterKind>;
+
+/** The operators a filter takes. */
+export const operatorsOf = (name: FilterName): readonly FilterOperator[] =>
+  FILTER_KINDS[name] === "text" ? FILTER_OPERATORS : ["is", "isNot"];
+
 export interface ReportFilter {
   name: FilterName;
-  /** Use the displayed breakdown value; null matches unknown dimensions. */
-  value: string | null;
+  operator: FilterOperator;
+  /**
+   * Values as their breakdown rows show them, any of which matches (OR).
+   * With is and is not, null matches an unknown value. Contains reads each
+   * as a literal part, ignoring case.
+   */
+  values: readonly (string | null)[];
 }
 
 export function isFilterName(name: string): name is FilterName {
   return (FILTER_NAMES as readonly string[]).includes(name);
+}
+
+const isNegated = (operator: FilterOperator) => operator === "isNot" || operator === "notContains";
+
+/**
+ * Whether `value` matches any of the filter's values. Never NULL, so NOT
+ * keeps the visits whose value is unknown. Values are parameters, and
+ * contains uses a position function, so no text is read as a pattern.
+ */
+function matchSql(
+  value: string,
+  { operator, values }: ReportFilter,
+  params: QueryParams,
+  { unknown }: { unknown: boolean },
+): string {
+  const known = values.filter((item) => item !== null);
+  const parts =
+    operator === "contains" || operator === "notContains"
+      ? known.map(
+          (part) => `positionCaseInsensitiveUTF8(${value}, ${params.add(part, "String")}) > 0`,
+        )
+      : [
+          ...(known.length === 0 ? [] : [`(${value}) IN ${params.add(known, "Array(String)")}`]),
+          ...(unknown && values.includes(null) ? [`(${value}) IS NULL`] : []),
+        ];
+  return parts.length === 0 ? "0" : `ifNull(${parts.join(" OR ")}, 0)`;
 }
 
 /** allVisits supplies unfiltered visits for the page filter lookup. */
@@ -652,11 +722,14 @@ function filterCondition(
   params: QueryParams,
   allVisits: string,
 ): string {
+  const negated = isNegated(filter.operator);
   if (isEventFilterName(filter.name)) {
-    if (filter.value === null) return "0";
     const { name, value } = EVENT_VALUES[filter.name];
+    // A stored path or link is never unknown, so an empty value matches no event.
+    const match = matchSql(value, filter, params, { unknown: false });
+    if (match === "0") return negated ? "1" : "0";
     // The page's views (or the link's clicks) are few, so they are the joined (in-memory) side.
-    return `(visitor_id, started_at) IN (
+    return `(visitor_id, started_at) ${negated ? "NOT IN" : "IN"} (
       SELECT v.visitor_id, v.started_at
       FROM (${allVisits}) AS v
       INNER JOIN (
@@ -667,17 +740,17 @@ function filterCondition(
           AND occurred_at >= ${params.time(range.from)}
           AND occurred_at < ${params.time(rangeEnd(range))}
           AND name = '${name}'
-          AND ${value} = ${params.add(filter.value, "String")}
+          AND ${match}
       ) AS viewed ON viewed.visitor_id = v.visitor_id
       WHERE viewed.occurred_at >= v.started_at AND viewed.occurred_at <= v.ended_at
     )`;
   }
   // Validate JavaScript callers and untrusted input at runtime.
   if (!isVisitDimension(filter.name)) throw new Error("Unknown filter");
-  const value = dimensionSql(filter.name, range, params);
-  return filter.value === null
-    ? `(${value}) IS NULL`
-    : `(${value}) = ${params.add(filter.value, "String")}`;
+  const match = matchSql(dimensionSql(filter.name, range, params), filter, params, {
+    unknown: true,
+  });
+  return negated ? `NOT ${match}` : match;
 }
 
 /**

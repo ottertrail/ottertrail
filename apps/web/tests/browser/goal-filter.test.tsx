@@ -138,7 +138,7 @@ describe("the goal filter", () => {
     await expect
       .poll(() => lastQuery(api))
       .toEqual({ period: "7d", country: "DE", goalEvent: "signup" });
-    await expect.poll(chips).toEqual(["Goal: signup", "Country: Germany"]);
+    await expect.poll(chips).toEqual(["Goal: signup", "Country is Germany"]);
     const events = page.getByRole("table", { name: "Custom events, most visitors first" });
     await expect.element(events.getByText("Goal", { exact: true })).toBeVisible();
 
@@ -152,13 +152,13 @@ describe("the goal filter", () => {
     installFakeApi();
     const router = renderApp(`${ANALYTICS}?country=DE&goal=${TEAM_SIGNUP?.id}`);
 
-    await expect.poll(chips).toEqual(["Goal: Team signup", "Country: Germany"]);
+    await expect.poll(chips).toEqual(["Goal: Team signup", "Country is Germany"]);
     await page.getByRole("link", { name: "Remove the filter Goal: Team signup" }).click();
     await expect.poll(() => addressQuery(router)).toEqual({ country: "DE" });
     await expect.poll(statLabels).toContain("Bounce rate");
 
     await page.getByRole("link", { name: "Filter by Goal: Team signup" }).click();
-    await expect.poll(chips).toEqual(["Goal: Team signup", "Country: Germany"]);
+    await expect.poll(chips).toEqual(["Goal: Team signup", "Country is Germany"]);
     await page.getByRole("link", { name: "Clear filters" }).click();
     await expect.poll(() => addressQuery(router)).toEqual({});
   });

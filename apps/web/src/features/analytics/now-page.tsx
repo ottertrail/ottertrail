@@ -140,7 +140,7 @@ function PerMinute({ now }: { now: RightNow }) {
 function Lists({ now }: { now: RightNow }) {
   const today: PageSearch = {
     range: { period: "today" },
-    filters: {},
+    filters: [],
     environment: now.environment,
   };
   return (
