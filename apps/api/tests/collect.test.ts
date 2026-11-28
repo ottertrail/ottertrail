@@ -1195,6 +1195,57 @@ describe("POST /api/events", () => {
     });
   });
 
+  describe("links and not found pages", () => {
+    test("keeps a link's origin and path and its host, nothing else", async () => {
+      const project = await createProject();
+      const outbound = pageview({
+        name: "outbound_link",
+        properties: {
+          url: "https://user:secret@Docs.Example.org/guide?token=1#top",
+          text: "Guide",
+        },
+      });
+      const download = pageview({
+        name: "file_download",
+        properties: { url: `https://${SITE}/files/report.pdf?v=2` },
+      });
+      const notFound = pageview({ name: "not_found", properties: { typed: "secret" } });
+      const response = await send(batch(project.public_key, [outbound, download, notFound]));
+      expect(response.json()).toEqual({ received: 3 });
+
+      const stored = await storedEvents(project.id);
+      const byId = (id: string) => stored.find((event) => event.event_id === id);
+      expect(byId(outbound.id)).toMatchObject({
+        name: "outbound_link",
+        path: "/lessons/closures",
+        properties: { url: "https://docs.example.org/guide", host: "docs.example.org" },
+      });
+      expect(byId(download.id)?.properties).toEqual({
+        url: `https://${SITE}/files/report.pdf`,
+        host: SITE,
+      });
+      expect(byId(notFound.id)).toMatchObject({ name: "not_found", path: "/lessons/closures" });
+      expect(byId(notFound.id)?.properties).toEqual({});
+    });
+
+    test.each([
+      ["no url", {}],
+      ["a url that is not http(s)", { url: "mailto:team@example.com" }],
+      ["text that is not a URL", { url: "report.pdf" }],
+      ["a number", { url: 42 }],
+      ["a url over 500 characters", { url: `https://example.org/${"a".repeat(481)}` }],
+    ])("rejects a link event with %s", async (_label, properties) => {
+      const project = await createProject();
+      for (const name of ["outbound_link", "file_download"]) {
+        const response = await send(
+          batch(project.public_key, [pageview(), pageview({ name, properties })]),
+        );
+        expect(response.statusCode).toBe(400);
+      }
+      expect(await storedEvents(project.id)).toHaveLength(0);
+    });
+  });
+
   describe("Web Vitals", () => {
     test("keeps a page load's vitals, and drops impossible ones", async () => {
       const project = await createProject();

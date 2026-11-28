@@ -20,6 +20,26 @@ export const ENGAGEMENT = "engagement";
 export const ERROR = "error";
 /** A page load's Web Vitals, sent once when it is first hidden (speed/speed.ts). Not web analytics. */
 export const VITALS = "vitals";
+/**
+ * The tracker's link and page events (docs/web-analytics.md, "Links and
+ * not found pages"). A click on a link to another site or on a file is an
+ * interaction, as a custom event is; a page marked as not found is not:
+ * the visitor did nothing. Each link event carries the link as
+ * properties.url and properties.host.
+ */
+export const OUTBOUND_LINK = "outbound_link";
+export const FILE_DOWNLOAD = "file_download";
+export const NOT_FOUND = "not_found";
+
+/** Names only the browser tracker sends: a server's event cannot use them (server-events.ts). */
+export const BROWSER_ONLY_EVENTS: readonly string[] = [
+  PAGEVIEW,
+  ENGAGEMENT,
+  VITALS,
+  OUTBOUND_LINK,
+  FILE_DOWNLOAD,
+  NOT_FOUND,
+];
 
 /**
  * SQL true for an event web analytics counts: not an error (only errors
@@ -226,7 +246,7 @@ export function visitsSql(
              max(occurred_at) AS ended_at,
              sumIf(engaged_ms, NOT stale) AS engaged_ms,
              countIf(name = '${PAGEVIEW}') AS pageviews,
-             countIf(name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}')) AS interactions,
+             countIf(name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}', '${NOT_FOUND}')) AS interactions,
              if(pageviews = 0, NULL,
                 argMinIf(path, (occurred_at, event_id), name = '${PAGEVIEW}')) AS entry_path,
              if(pageviews = 0, NULL,

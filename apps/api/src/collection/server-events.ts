@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { IngestActivity } from "../activity/activity.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
-import { ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
+import { BROWSER_ONLY_EVENTS } from "../visits/visits.ts";
 import { INSERT_WAIT_SECONDS, projectTooBusy, tooBusy } from "./busy.ts";
 import { ENVIRONMENT_PATTERN, environmentOf, RELEASE_PATTERN } from "./environment.ts";
 import { type NewEvent, storeEvents } from "./event-store.ts";
@@ -220,7 +220,7 @@ export function serverEventsRoute(
         const accepted: NewEvent[] = [];
         let tooOld = 0;
         for (const [index, event] of request.body.events.entries()) {
-          if (event.name === PAGEVIEW || event.name === ENGAGEMENT || event.name === VITALS) {
+          if (BROWSER_ONLY_EVENTS.includes(event.name)) {
             return invalid(
               `events[${index}].name: "${event.name}" is sent by the browser tracker only.`,
             );

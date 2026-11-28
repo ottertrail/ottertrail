@@ -14,7 +14,14 @@ import { fingerprint } from "../errors/fingerprint.ts";
 import { isBlockedAddress } from "../projects/blocked-addresses.ts";
 import { readInstanceSettings } from "../settings/settings.ts";
 import { VisitorIds } from "../visitors/visitor-ids.ts";
-import { ENGAGEMENT, ERROR, VITALS } from "../visits/visits.ts";
+import {
+  ENGAGEMENT,
+  ERROR,
+  FILE_DOWNLOAD,
+  NOT_FOUND,
+  OUTBOUND_LINK,
+  VITALS,
+} from "../visits/visits.ts";
 import {
   DEFAULT_MAX_EVENTS_IN_FLIGHT,
   DEFAULT_MAX_EVENTS_IN_FLIGHT_PER_PROJECT,
@@ -28,6 +35,7 @@ import { isSignedUserId, USER_ID_PATTERN, USER_SIGNATURE_PATTERN } from "./ident
 import { InFlight } from "./in-flight.ts";
 import { parseTextPlainAsJson } from "./json-body.ts";
 import { LastEventRecorder } from "./last-event.ts";
+import { linkProperties, MAX_LINK_LENGTH } from "./links.ts";
 import { locationFromHeaders } from "./location-headers.ts";
 import {
   cleanReferrer,
@@ -624,6 +632,18 @@ export const collectionRoutes: FastifyPluginCallback<CollectionOptions> = (app, 
           if (event.name === VITALS && event.properties !== undefined) {
             keepValidVitals(event.properties);
           }
+          // Reserved too: a click on a link to another site or on a file, and a
+          // page the site marked as not found. Nothing else about them is kept.
+          if (event.name === OUTBOUND_LINK || event.name === FILE_DOWNLOAD) {
+            const link = linkProperties(event.properties?.url);
+            if (link === null) {
+              return invalid(
+                `events[${index}] is a ${event.name} event: properties.url must be an http(s) URL of at most ${MAX_LINK_LENGTH} characters.`,
+              );
+            }
+            event.properties = link;
+          }
+          if (event.name === NOT_FOUND) delete event.properties;
 
           // Cached trackers may send "error" as a custom event without details. Keep those
           // events so they do not invalidate the whole batch.

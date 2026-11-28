@@ -1,12 +1,12 @@
 import type { QueryParams } from "../clickhouse/query.ts";
-import { ENGAGEMENT, ERROR, PAGEVIEW, VITALS } from "../visits/visits.ts";
+import { ENGAGEMENT, ERROR, NOT_FOUND, PAGEVIEW, VITALS } from "../visits/visits.ts";
 import { PRODUCT_EVENT, type PropertyFilter, propertyText } from "./events.ts";
 
 /**
  * Tracker events cannot match product-event steps. Page steps represent
  * pageviews; errors have a separate page.
  */
-export const TRACKER_EVENTS: readonly string[] = [PAGEVIEW, ENGAGEMENT, ERROR, VITALS];
+export const TRACKER_EVENTS: readonly string[] = [PAGEVIEW, ENGAGEMENT, ERROR, VITALS, NOT_FOUND];
 
 /** How a step's filter compares; left out for equals. */
 export const FILTER_OPERATORS = ["notEquals", "contains"] as const;

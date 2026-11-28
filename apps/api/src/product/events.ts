@@ -8,7 +8,7 @@ import {
   type VisitSourceName,
   withVisitSourceSql,
 } from "../visits/visit-source.ts";
-import { analyticsEvent, ENGAGEMENT, PAGEVIEW, VITALS } from "../visits/visits.ts";
+import { analyticsEvent, ENGAGEMENT, NOT_FOUND, PAGEVIEW, VITALS } from "../visits/visits.ts";
 
 /** Site-defined events and properties (docs/product-analytics.md, "Definitions"). */
 
@@ -41,8 +41,12 @@ export const EVENT_NAMES = 100;
 export const propertyText = (key: string) =>
   `if(JSONType(properties, ${key}) = 'String', JSONExtractString(properties, ${key}), JSONExtractRaw(properties, ${key}))`;
 
-/** Exclude tracker pageviews, engagement, errors, and Web Vitals. */
-export const PRODUCT_EVENT = `name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}') AND ${analyticsEvent()}`;
+/**
+ * Exclude tracker pageviews, engagement, errors, Web Vitals, and not found
+ * pages. A click on an outbound link or a file is something the visitor
+ * did, so it counts.
+ */
+export const PRODUCT_EVENT = `name NOT IN ('${PAGEVIEW}', '${ENGAGEMENT}', '${NOT_FOUND}') AND ${analyticsEvent()}`;
 
 /** `from` can start earlier than the range: at the period before's start, to compare. */
 function scope(params: QueryParams, range: ProductRange, from: Date = range.from): string {

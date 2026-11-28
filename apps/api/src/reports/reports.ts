@@ -8,6 +8,9 @@ import { COLUMN_DIMENSIONS, visitSourceSql } from "../visits/visit-source.ts";
 import {
   ENGAGEMENT,
   analyticsEvent,
+  FILE_DOWNLOAD,
+  NOT_FOUND,
+  OUTBOUND_LINK,
   PAGEVIEW,
   type VisitsQueryOptions,
   visitsSql,
@@ -427,14 +430,97 @@ function pageviewsSql(
   search: string | undefined,
   goal: GoalFilter | undefined,
 ): string {
-  const views = `SELECT * FROM (${activity(range, visits, params)})
-    WHERE name = '${PAGEVIEW}' AND ${nameContains("path", search, params)}`;
-  if (goal === undefined) return views;
+  return listedEventsSql(range, visits, params, EVENT_VALUES.page, search, goal);
+}
+
+/**
+ * The range's events of one name, each with `value` (its path, or its
+ * link) and its visitor; with a goal, also `converted`, as for pageviews.
+ */
+function listedEventsSql(
+  range: ReportRange,
+  visits: string,
+  params: QueryParams,
+  { name, value }: { name: string; value: string },
+  search: string | undefined,
+  goal: GoalFilter | undefined,
+): string {
+  const listed = `SELECT ${value} AS value, visitor_id, occurred_at
+    FROM (${activity(range, visits, params)})
+    WHERE name = '${name}' AND ${nameContains(value, search, params)}`;
+  if (goal === undefined) return listed;
   return `
-    SELECT a.path AS path, a.visitor_id AS visitor_id, reached.ended_at >= a.occurred_at AS converted
-    FROM (${views}) AS a
+    SELECT a.value AS value, a.visitor_id AS visitor_id, reached.ended_at >= a.occurred_at AS converted
+    FROM (${listed}) AS a
     ASOF LEFT JOIN (${reachedVisits(range, goal, visits, params)}) AS reached
       ON a.visitor_id = reached.visitor_id AND a.occurred_at >= reached.started_at`;
+}
+
+/** The link an outbound_link or file_download event carries (collection/links.ts). */
+const LINK_URL = "JSONExtractString(properties, 'url')";
+
+/**
+ * Events that a list counts and a filter matches by one value: the
+ * filter and its list read the same expression, so a row's filter keeps
+ * exactly the visits that row counted. Constants only: never input.
+ */
+const EVENT_VALUES = {
+  page: { name: PAGEVIEW, value: "path" },
+  outbound: { name: OUTBOUND_LINK, value: LINK_URL },
+  download: { name: FILE_DOWNLOAD, value: LINK_URL },
+  notFound: { name: NOT_FOUND, value: "path" },
+} as const;
+
+/** The lists of the tracker's link and page events (docs/web-analytics.md, "Links and not found pages"). */
+export const EVENT_LISTS = {
+  outboundLinks: "outbound",
+  fileDownloads: "download",
+  notFoundPages: "notFound",
+} as const satisfies Record<string, keyof typeof EVENT_VALUES>;
+
+export type EventList = keyof typeof EVENT_LISTS;
+
+export interface EventValueRow {
+  /** The link's origin and path, or the not found page's path. */
+  value: string;
+  visitors: number;
+  events: number;
+  /** With a goal: the row's visitors who did it in a visit that reached the goal. */
+  converted?: number;
+}
+
+/** One list of EVENT_LISTS, most visitors first; with a goal, most converted first. */
+export async function eventValues(
+  reader: Reader,
+  range: ReportRange,
+  list: EventList,
+  limit = DEFAULT_LIMIT,
+  visitsSource?: VisitsSource,
+  { offset, search }: ListOptions = {},
+  goal?: GoalFilter,
+): Promise<EventValueRow[]> {
+  const counted = EVENT_VALUES[EVENT_LISTS[list]];
+  // Validate JavaScript callers and untrusted input at runtime.
+  if ((counted as unknown) === undefined) throw new Error("Unknown event list");
+  const params = new QueryParams();
+  const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
+  const withGoal = goal !== undefined;
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    `SELECT value, count() AS events, uniqExact(visitor_id) AS visitors
+            ${withGoal ? ", uniqExactIf(visitor_id, converted) AS converted" : ""}
+     FROM (${listedEventsSql(range, visits, params, counted, search, goal)})
+     GROUP BY value
+     ORDER BY ${withGoal ? "converted DESC," : ""} visitors DESC, events DESC, value
+     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
+    params,
+  );
+  return rows.map((row) => ({
+    value: String(row.value),
+    visitors: count(row.visitors),
+    events: count(row.events),
+    ...(withGoal ? { converted: count(row.converted) } : {}),
+  }));
 }
 
 export async function topPages(
@@ -456,7 +542,7 @@ export async function topPages(
             ${withGoal ? "views.converted AS converted," : ""}
             engagement.avg_engaged_ms AS avg_engaged_ms
      FROM (
-       SELECT path, count() AS pageviews, uniqExact(visitor_id) AS visitors
+       SELECT value AS path, count() AS pageviews, uniqExact(visitor_id) AS visitors
               ${withGoal ? ", uniqExactIf(visitor_id, converted) AS converted" : ""}
        FROM (${pageviewsSql(range, visits, params, search, goal)})
        GROUP BY path
@@ -537,7 +623,15 @@ function dimensionSql(dimension: VisitDimension, range: ReportRange, params: Que
   return visitSourceSql(range.ownHostnames, params);
 }
 
-export const FILTER_NAMES = ["page", ...VISIT_DIMENSION_NAMES] as const;
+/** Filters by an event of the visit (EVENT_VALUES): a page viewed, a link clicked, a not found page. */
+const EVENT_FILTER_NAMES = ["page", "outbound", "download", "notFound"] as const;
+
+type EventFilterName = (typeof EVENT_FILTER_NAMES)[number];
+
+const isEventFilterName = (name: string): name is EventFilterName =>
+  (EVENT_FILTER_NAMES as readonly string[]).includes(name);
+
+export const FILTER_NAMES = [...EVENT_FILTER_NAMES, ...VISIT_DIMENSION_NAMES] as const;
 
 export type FilterName = (typeof FILTER_NAMES)[number];
 
@@ -558,9 +652,10 @@ function filterCondition(
   params: QueryParams,
   allVisits: string,
 ): string {
-  if (filter.name === "page") {
+  if (isEventFilterName(filter.name)) {
     if (filter.value === null) return "0";
-    // The page's views are few, so they are the joined (in-memory) side.
+    const { name, value } = EVENT_VALUES[filter.name];
+    // The page's views (or the link's clicks) are few, so they are the joined (in-memory) side.
     return `(visitor_id, started_at) IN (
       SELECT v.visitor_id, v.started_at
       FROM (${allVisits}) AS v
@@ -571,8 +666,8 @@ function filterCondition(
           AND environment = ${params.add(range.environment, "String")}
           AND occurred_at >= ${params.time(range.from)}
           AND occurred_at < ${params.time(rangeEnd(range))}
-          AND name = '${PAGEVIEW}'
-          AND path = ${params.add(filter.value, "String")}
+          AND name = '${name}'
+          AND ${value} = ${params.add(filter.value, "String")}
       ) AS viewed ON viewed.visitor_id = v.visitor_id
       WHERE viewed.occurred_at >= v.started_at AND viewed.occurred_at <= v.ended_at
     )`;
@@ -677,7 +772,10 @@ export interface CustomEventRow {
   visitors: number;
 }
 
-/** Custom events (everything but pageviews and engagement reports), most visitors first. */
+/**
+ * Custom events (everything but pageviews, engagement reports, and the
+ * events of EVENT_LISTS, which have lists of their own), most visitors first.
+ */
 export async function customEvents(
   reader: Reader,
   range: ReportRange,
@@ -691,7 +789,8 @@ export async function customEvents(
     reader,
     `SELECT name, count() AS events, uniqExact(visitor_id) AS visitors
      FROM (${activity(range, visits, params)})
-     WHERE name != '${PAGEVIEW}' AND ${nameContains("name", search, params)}
+     WHERE name NOT IN ('${PAGEVIEW}', '${OUTBOUND_LINK}', '${FILE_DOWNLOAD}', '${NOT_FOUND}')
+       AND ${nameContains("name", search, params)}
      GROUP BY name
      ORDER BY visitors DESC, events DESC, name
      LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,

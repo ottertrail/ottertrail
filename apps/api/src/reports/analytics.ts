@@ -16,6 +16,10 @@ import {
   customEvents,
   type DayPoint,
   DEFAULT_LIMIT,
+  EVENT_LISTS,
+  type EventList,
+  type EventValueRow,
+  eventValues,
   filterVisits,
   type GoalCount,
   goalCounts,
@@ -52,7 +56,14 @@ export const ANALYTICS_BREAKDOWNS = [
 export type AnalyticsBreakdown = (typeof ANALYTICS_BREAKDOWNS)[number];
 
 /** Lists support full pagination. */
-export const LIST_REPORTS = ["pages", "customEvents", ...ANALYTICS_BREAKDOWNS] as const;
+export const LIST_REPORTS = [
+  "pages",
+  "customEvents",
+  ...ANALYTICS_BREAKDOWNS,
+  "outboundLinks",
+  "fileDownloads",
+  "notFoundPages",
+] as const;
 
 export type ListReport = (typeof LIST_REPORTS)[number];
 
@@ -78,6 +89,12 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  /** Clicks on links to other sites, by link (docs/web-analytics.md, "Links and not found pages"). */
+  outboundLinks: EventValueRow[];
+  /** Clicks on files, by file. */
+  fileDownloads: EventValueRow[];
+  /** Views of pages the site marked as not found, by path. */
+  notFoundPages: EventValueRow[];
   /** The project's saved goals, counted in the same visits (goals/goals.ts). */
   goals: GoalResult[];
   /** The goal the page is filtered by, with its counts; null without one. */
@@ -328,6 +345,9 @@ export async function projectAnalytics(
       pages: await topPages(reader, range, limit, visits, {}, reached),
       breakdowns,
       customEvents: await customEvents(reader, range, limit, visits),
+      outboundLinks: await eventValues(reader, range, "outboundLinks", limit, visits, {}, reached),
+      fileDownloads: await eventValues(reader, range, "fileDownloads", limit, visits, {}, reached),
+      notFoundPages: await eventValues(reader, range, "notFoundPages", limit, visits, {}, reached),
       goals: await goalResults(reader, range, saved, visits, currentSummary.visitors),
       goal:
         goal === undefined
@@ -356,6 +376,8 @@ async function pageGoalResult(
   };
 }
 
+const isEventList = (report: ListReport): report is EventList => Object.hasOwn(EVENT_LISTS, report);
+
 /**
  * Read one extra row to detect whether another page exists. With a goal,
  * the visits are worked out once in a session, as for the whole page.
@@ -378,7 +400,10 @@ export async function projectList(
     goal?: PageGoal | undefined;
     reader?: Reader;
   },
-): Promise<{ rows: PageRow[] | BreakdownRow[] | CustomEventRow[]; hasMore: boolean }> {
+): Promise<{
+  rows: PageRow[] | BreakdownRow[] | CustomEventRow[] | EventValueRow[];
+  hasMore: boolean;
+}> {
   const {
     projectId,
     environment = DEFAULT_ENVIRONMENT,
@@ -404,12 +429,14 @@ export async function projectList(
     reader: Reader,
     visits: VisitsSource,
     reached: GoalFilter | undefined,
-  ): Promise<PageRow[] | BreakdownRow[] | CustomEventRow[]> =>
+  ): Promise<PageRow[] | BreakdownRow[] | CustomEventRow[] | EventValueRow[]> =>
     report === "pages"
       ? topPages(reader, range, limit + 1, visits, page, reached)
       : report === "customEvents"
         ? customEvents(reader, range, limit + 1, visits, page)
-        : breakdown(reader, range, report, limit + 1, visits, page, reached);
+        : isEventList(report)
+          ? eventValues(reader, range, report, limit + 1, visits, page, reached)
+          : breakdown(reader, range, report, limit + 1, visits, page, reached);
   const rows =
     goal === undefined || report === "customEvents"
       ? await list(base, undefined, undefined)
