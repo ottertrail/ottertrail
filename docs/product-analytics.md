@@ -1,6 +1,6 @@
 # Product analytics
 
-What people do in an app, beyond which pages they open: the events a site sends, filtered by their properties, an ordered funnel, and a retention report. Part of stage 2 ([roadmap](roadmap.md)).
+What people do in an app, beyond which pages they open: the events a site sends, filtered by their properties, an ordered funnel, a retention report, and active users. Part of stage 2 ([roadmap](roadmap.md)).
 
 | Part                                         | Status |
 | -------------------------------------------- | ------ |
@@ -12,6 +12,7 @@ What people do in an app, beyond which pages they open: the events a site sends,
 | Saved funnels                                | Done   |
 | A funnel's breakdown by one dimension        | Done   |
 | Who dropped off, for signed-in users         | Done   |
+| Active users (DAU, WAU, MAU), with lifecycle | Done   |
 
 ## Definitions
 
@@ -35,6 +36,8 @@ The spec asks for these before any report: each report below counts by them.
 **Funnel:** two to eight ordered steps ([steps](#steps)). Someone reaches step _k_ if they did steps 1 to _k_ in that order, other events in between allowed, all within the conversion window that starts at their step 1; a step 1 in the report's range starts a funnel. Counted by visitors, the window can reach at most to the end of that visitor's day; counted by users, up to 30 days.
 
 **Retention:** signed-in users only, since visitor IDs change daily. A user's cohort is the week of their first event in the environment, over all the time the project keeps. They are retained in week _n_ if they did anything themselves (any event but time on page and Web Vitals) in the _n_-th week after it. Week 0 is everyone, 100%; the current week is marked as not over.
+
+**Active users:** signed-in users only, for the same reason. A user is active on a day when they sent any event with their user ID that day, from the browser or a server, by the same rule as Retention's return: any event but time on page and Web Vitals. So the two tabs agree on who did something.
 
 ## Steps
 
@@ -157,6 +160,36 @@ When no cohort shows, the answer says whether the project has ever identified a 
 
 A user's first week is over all the time the project keeps, so a cohort leaves out users seen before it, even long ago: the query reads every signed-in event of the environment up to the last cohort's last shown week, after which nothing can change the table. A user's cohort can move later when retention deletes their first events.
 
+## Active users
+
+Code: `apps/api/src/product/active-users.ts`. Per day of the period, in the instance's timezone:
+
+- **DAU:** the users active that day.
+- **WAU:** the users active in the 7 days ending that day, that day included.
+- **MAU:** the users active in the 28 days ending that day, that day included. 28 days, not a calendar month, so every MAU spans four of each weekday and two days compare without a weekday's swing.
+- **Stickiness:** DAU ÷ MAU that day. The period's figure is the average of its days', over the days with any monthly user.
+- **New:** active that day and first seen that day (`user_first_seen`, the earliest event of the user in the environment, over all the time the project keeps).
+- **Returning:** active that day, first seen before, and also active in the 28 days before that day (not counting it).
+- **Resurrected:** active that day, first seen before, but not in those 28 days.
+
+New, returning, and resurrected split each day's active users, so they add up to the DAU. Returning looks 28 days back, one more than MAU, so a user last active exactly 28 days before counts as returning, and one last active 29 days before as resurrected. That is why the query reads 28 days before the period, not 27. First-seen comes from the table, not the 28 days read: a user seen long ago, then not for 28 days, is resurrected, not new. If a user's first-seen time is missing, such as while it is rebuilt after a delete, their earliest day in the days read stands in.
+
+**Weeks:** a period longer than 60 days (`TREND_DAILY_DAYS`, as the funnel's trend) shows weeks from Monday, the first starting before the period when it does not start on a Monday. A week's point has its days in the period: their average DAU, WAU and MAU on its last day in the period, the average of their stickiness, and each user active in the week once, as new (first seen in the week), returning (also active in the 28 days before the week's first day in the period), or resurrected. So a week's three counts add up to the users active that week, not to the sum of its DAUs.
+
+**The summary:** users active on any day of the period, the average of the days' DAU, the last day's WAU and MAU, and stickiness. The period before is chosen as everywhere (`previousDays`): the same number of days just before, and while the period runs, only up to the same time of day. Its figures come from a second run of the same query over that range, its last day cut at that time, so a partial day compares with a partial day.
+
+**The query:** one pass, through the dashboard's query limit (`DASHBOARD_SETTINGS`, `DashboardQueryLimiter`), `project_id` first, all values bound. It reads the environment's signed-in events from 28 days before the period to its end, without `FINAL` (a retried event repeats a day the user was already active, which changes nothing), and groups them by user into the days they were active, as offsets from the first day read. It joins each user's first-seen day (`user_first_seen`, one row per user). For each user it lists the period's days inside one of their 28-day windows, flags each as DAU, WAU, or MAU only, and adds a row per day or week they were active, with its lifecycle, and one row if they were active in the period; then it counts those rows. Its memory grows with the users and their active days, not the events. When no one was active in either period, the answer says whether the project ever identified a user (`identifiesUsers`, as Retention's).
+
+Measured on 28 November 2026 in the development VM on the seed's Demo shop (46,002 events, 10,421 signed-in, 218 users, from 20 September to 22 November): Last 30 days and Last 90 days each read 46,220 rows (the project's events, which the 30 days and the 28 before already cover, and its 218 first-seen rows), 1.7 MB and about 5.8 MB of memory, in 17 to 51 ms. A project too large for the dashboard's limits (300 MB and 15 seconds a query) gets an error, not a slow instance. Not measured on a large project: the development machine is too small for the benchmark in [storage-benchmark.md](storage-benchmark.md).
+
+```text
+GET /api/projects/:id/active-users?period=30d&environment=production
+```
+
+The answer has the range (`timeZone`, `environment`, `firstDay`, `lastDay`), `environments`, `unit` (`day` or `week`), `summary: { users, averageDaily, weekly, monthly, stickiness }`, `points: [{ day, start, dau, wau, mau, stickiness, new, returning, resurrected }]` (`day` is the day or the week's Monday, `start` when it starts, for the bars; `stickiness` is null when no one was active in the 28 days), `previous: { firstDay, lastDay, until, users, averageDaily, weekly, monthly, stickiness }`, and `identifiesUsers`. It needs the `product_analytics` area, as the other reports.
+
+Not done: anonymous visitors, which the Visitors per day chart on Web analytics already counts for a day; lists of the users behind a count (the Users page has them); a chosen event instead of any event; cohorts or paths.
+
 ```text
 GET /api/projects/:id/events?period=7d&environment=production
 GET /api/projects/:id/events/:name?period=7d&p.plan=team&p.seats=5
@@ -167,6 +200,7 @@ GET /api/projects/:id/funnel/people?(the funnel's parameters, count=users)&step=
 GET /api/projects/:id/funnel/trend?(the funnel's parameters)
 GET /api/projects/:id/funnel/times?(the funnel's parameters)
 GET /api/projects/:id/retention?period=90d&environment=production
+GET /api/projects/:id/active-users?period=30d&environment=production
 
 GET    /api/projects/:id/funnels
 GET    /api/projects/:id/funnels/results?period=7d&environment=production
