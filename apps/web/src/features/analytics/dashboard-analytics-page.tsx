@@ -24,6 +24,7 @@ import { AnalyticsView } from "./analytics-page";
 import { type OtherPageSearch, searchOf } from "./list-rows";
 import { NowIndicator } from "./now-indicator";
 import { type AnalyticsScope, AnalyticsScopeContext, type PageLinkProps } from "./scope";
+import { SegmentsMenu } from "./segments-menu";
 
 const actionClass =
   "flex size-6 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-accent hover:text-ink max-sm:size-8";
@@ -118,7 +119,7 @@ export function DashboardAnalyticsScope({
   const project = useQuery(projectQuery(projectId));
   const canOpenEvents = access.canUse("product_analytics");
   const canManageGoals = access.canUse("product_analytics", "manage");
-  // Installation instructions require project management access.
+  // Installation instructions and project segments require project management access.
   const canInstall = access.can("projects");
   const lastEventAt = project.data?.lastEventAt;
   const scope = React.useMemo(
@@ -154,6 +155,9 @@ export function DashboardAnalyticsScope({
         renderEventLink: canOpenEvents
           ? (search, name) => <EventPageLink projectId={projectId} search={search} name={name} />
           : null,
+        renderSegments: (search) => (
+          <SegmentsMenu projectId={projectId} search={search} canManageProject={canInstall} />
+        ),
       },
     }),
     [projectId, navigate, canOpenEvents, canManageGoals, canInstall, lastEventAt],

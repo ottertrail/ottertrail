@@ -44,6 +44,8 @@ export interface DashboardExtras {
   renderHeatmapLink: (search: OtherPageSearch, path: string) => React.ReactNode;
   /** A custom event's own page, at the end of its row; null without product analytics. */
   renderEventLink: ((search: OtherPageSearch, name: string) => React.ReactNode) | null;
+  /** The filter bar's Segments menu (segments-menu.tsx). */
+  renderSegments: (search: PageSearch) => React.ReactNode;
 }
 
 export interface AnalyticsScope {

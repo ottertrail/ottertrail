@@ -640,6 +640,21 @@ export interface ShareLinksTable {
   last_opened_at: ColumnType<Date | null, never, Date>;
 }
 
+/** A saved segment: named Web analytics filters (segments/segments.ts). */
+export interface SegmentsTable {
+  id: DatabaseDefault<string>;
+  project_id: ColumnType<string, string, never>;
+  name: string;
+  /** The filters as the report routes take them; written as JSON text. */
+  filters: ColumnType<unknown, string, string>;
+  visibility: ColumnType<"personal" | "project", "personal" | "project", never>;
+  /** The person a personal segment belongs to; null for a project segment. */
+  owner_id: ColumnType<string | null, string | null, never>;
+  created_by: ColumnType<string | null, string | null, never>;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 /** A saved heatmap view: one per project, page, and device class (heatmaps/snapshots.ts). */
 export interface HeatmapSnapshotsTable {
   project_id: string;
@@ -869,6 +884,7 @@ export interface Database {
   heatmap_overlay_tokens: HeatmapOverlayTokensTable;
   heatmap_snapshots: HeatmapSnapshotsTable;
   share_links: ShareLinksTable;
+  segments: SegmentsTable;
   ingest_activity: IngestActivityTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;

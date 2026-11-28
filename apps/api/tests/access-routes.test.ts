@@ -165,6 +165,14 @@ const EXPECTED: Record<string, string> = {
   // An overlay session token in place of the cookie, checked by the same rules.
   "GET /api/heatmap-overlay/:projectId/heatmap": "overlay:web_analytics:view",
   "POST /api/heatmap-overlay/:projectId/snapshot": "overlay:project:permission:projects",
+  // Personal segments are their owner's; project segments show to everyone, like saved views.
+  "GET /api/projects/:id/segments": "web_analytics:view",
+  "POST /api/projects/:id/segments/personal": "web_analytics:view",
+  "PUT /api/projects/:id/segments/personal/:segmentId": "web_analytics:view",
+  "DELETE /api/projects/:id/segments/personal/:segmentId": "web_analytics:view",
+  "POST /api/projects/:id/segments/project": "project:permission:projects",
+  "PUT /api/projects/:id/segments/project/:segmentId": "project:permission:projects",
+  "DELETE /api/projects/:id/segments/project/:segmentId": "project:permission:projects",
 
   "GET /api/projects/:id/events": "product_analytics:view",
   "GET /api/projects/:id/events/:name": "product_analytics:view",

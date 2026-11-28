@@ -1326,6 +1326,7 @@ export function AnalyticsView({
         }
         filters={
           <>
+            {scope.dashboard?.renderSegments(search)}
             <AddFilter search={search} />
             <GoalMenu
               analytics={data}

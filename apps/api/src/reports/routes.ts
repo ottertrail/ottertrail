@@ -211,7 +211,7 @@ export const OPERATOR_SUFFIXES = {
 type FilterParameter = `${FilterName}${(typeof OPERATOR_SUFFIXES)[FilterOperator]}`;
 
 /** Each filter's values, one parameter per filter and operator, repeated for several values. */
-type FilterQuery = Partial<Record<FilterParameter, string[]>>;
+export type FilterQuery = Partial<Record<FilterParameter, string[]>>;
 
 const isContains = (operator: FilterOperator) =>
   operator === "contains" || operator === "notContains";
@@ -321,6 +321,50 @@ function requestFilters(query: FilterQuery): ReportFilter[] {
     );
     return [{ name, operator, values }];
   });
+}
+
+/**
+ * The longest a saved set of filters may be as query text. Half of Node's
+ * 16 KB header limit, so the page's request with it, its address, and its
+ * cookie still fit.
+ */
+export const MAX_FILTER_QUERY_LENGTH = 8192;
+
+/** A value the route's schema takes for `operator`; lengths in code points, as the schema counts. */
+function isFilterText(operator: FilterOperator, value: unknown): value is string {
+  if (typeof value !== "string" || value.includes("\u0000")) return false;
+  const length = value.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "_").length;
+  return isContains(operator)
+    ? length >= 1 && length <= MAX_CONTAINS_LENGTH
+    : length <= MAX_FILTER_LENGTH;
+}
+
+/**
+ * Filters held as data, such as a saved segment's: the query's parameters
+ * as an object, `{"country.not":["DE"]}`, checked by the rules the routes
+ * apply to an address. Null when the address would be refused, when there
+ * is no filter, or when the query text is over MAX_FILTER_QUERY_LENGTH. A
+ * value given twice counts once.
+ */
+export function filterQueryOf(value: unknown): FilterQuery | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const sent = new Map<string, unknown>(Object.entries(value));
+  if (sent.size === 0) return null;
+  const query: FilterQuery = {};
+  const text = new URLSearchParams();
+  for (const { parameter, operator } of FILTER_PARAMETERS) {
+    if (!sent.has(parameter)) continue;
+    const values = sent.get(parameter);
+    sent.delete(parameter);
+    if (!Array.isArray(values) || values.length === 0 || values.length > MAX_FILTER_VALUES) {
+      return null;
+    }
+    if (!values.every((item) => isFilterText(operator, item))) return null;
+    query[parameter] = [...new Set(values)];
+    for (const item of query[parameter]) text.append(parameter, item);
+  }
+  if (sent.size > 0 || text.toString().length > MAX_FILTER_QUERY_LENGTH) return null;
+  return query;
 }
 
 /** The goal filter: a saved goal by its ID, or a custom event by its name. */

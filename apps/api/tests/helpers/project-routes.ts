@@ -23,6 +23,11 @@ const SOME_FUNNEL = {
   window: 3600,
   updatedAt: "2026-11-17T12:00:00.000Z",
 };
+const SOME_SEGMENT = {
+  name: "Some segment",
+  filters: { country: ["DE"] },
+  updatedAt: "2026-11-28T12:00:00.000Z",
+};
 const FUNNEL_STEPS = encodeURIComponent(
   JSON.stringify([
     { type: "page", path: "/" },
@@ -134,6 +139,17 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("POST", "/funnels", "/funnels", SOME_FUNNEL),
   request("PUT", "/funnels/:funnelId", `/funnels/${SOME_ID}`, SOME_FUNNEL),
   request("DELETE", "/funnels/:funnelId", `/funnels/${SOME_ID}`),
+  request("GET", "/segments", "/segments"),
+  ...(["personal", "project"] as const).flatMap((visibility) => [
+    request("POST", `/segments/${visibility}`, `/segments/${visibility}`, SOME_SEGMENT),
+    request(
+      "PUT",
+      `/segments/${visibility}/:segmentId`,
+      `/segments/${visibility}/${SOME_ID}`,
+      SOME_SEGMENT,
+    ),
+    request("DELETE", `/segments/${visibility}/:segmentId`, `/segments/${visibility}/${SOME_ID}`),
+  ]),
   request("GET", "/errors", "/errors?period=7d"),
   request("GET", "/errors/:fingerprint", `/errors/${FINGERPRINT}?period=7d`),
   request("PATCH", "/errors/:fingerprint", `/errors/${FINGERPRINT}`, { status: "resolved" }),

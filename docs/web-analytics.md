@@ -1049,6 +1049,31 @@ Code: `FILTER_KINDS` and `filterCondition` in `apps/api/src/reports/reports.ts`,
 
 Filter values are compared, never parsed or run: each name maps to a fixed expression and each value is a query parameter. `project_id` stays the first condition of every query.
 
+### Segments
+
+Decided on 28 November 2026: a segment is a named set of filters, saved so that it can be applied again in one click. It holds the filters only: the period, the comparison, the environment, and the goal stay the page's. Code: `apps/api/src/segments/`, the filters' check `filterQueryOf` in `reports/routes.ts`; the dashboard's side is in [dashboard](dashboard.md#segments).
+
+- **Personal or project.** A personal segment is its owner's alone: no one else lists, changes, or deletes it. A project segment shows to everyone who reads the project's Web analytics.
+- **Who changes them** ([access](access.md#each-routes-need)): anyone with `web_analytics` view lists the project's segments and their own, and saves, renames, updates, and deletes their own. Project segments need the `projects` permission, the owner or an admin. Saved goals and funnels need Product analytics at manage, but Web analytics has no manage level, so this follows heatmaps' [saved views](#saved-views), the other thing in Web analytics saved for everyone.
+- **Stored** in PostgreSQL (`segments`, migration 0034), one row per segment with its `project_id`: the name, the filters as JSON, `visibility`, `owner_id` (personal only), `created_by`, and the times. The filters are an object in the form of the report routes' query, one key per filter and operator with its values: `{"country.not":["DE"],"page.contains":["/blog"]}`. An empty value of is and is not is the unknown value, as in the address.
+- **Checked as the address is**, on save and again on every read, by the same rules: a filter and operator the routes take (no `country.contains`), 1 to 10 values, 2,048 characters for is and is not, 1 to 200 for contains, no NUL. As query text they are at most 8,192 characters, half of Node's 16 KB header limit, so the page's request with them, its cookie included, fits. A value given twice counts once. On save, anything else is 400 `invalid_filters`. On read, a stored segment the routes would refuse now, such as after a filter is removed, is answered with `filters: null`; the dashboard shows it as invalid and never applies part of it. Saving valid filters over it repairs it.
+- **Limits:** 50 project segments per project, and 50 personal segments per person per project (409 `too_many_segments`); names of 1 to 100 characters without control characters, unique ignoring case among a project's segments and among one person's (409 `segment_name_taken`). A personal segment may share a project segment's name. Saves lock the project's row, so concurrent saves cannot pass a limit.
+- **Lost edits:** a change sends the `updatedAt` it read, and is refused with 409 `segment_changed` when another change came first, as for saved funnels.
+- **Deleting:** a project's segments go with it (foreign key). Removing a user deletes their personal segments; project segments they made stay, with `created_by` set to null. A member who loses a project keeps their segments there, unseen, since every route checks access first.
+- **Shared links** have no segments: the shared routes do not list them, and a link's page draws no menu.
+
+```text
+GET    /api/projects/:id/segments                               the project's segments and your own, by name
+POST   /api/projects/:id/segments/personal                      { name, filters }
+PUT    /api/projects/:id/segments/personal/:segmentId           { name, filters, updatedAt }
+DELETE /api/projects/:id/segments/personal/:segmentId
+POST   /api/projects/:id/segments/project                       the same, for project segments
+PUT    /api/projects/:id/segments/project/:segmentId
+DELETE /api/projects/:id/segments/project/:segmentId
+```
+
+Each segment is answered as `{ id, name, visibility, filters, createdAt, updatedAt }`. A personal route never reaches another person's segment or a project one, and answers 404 `segment_not_found` for both, as for an unknown ID. Changes need the dashboard's origin. `apps/api/tests/segments.test.ts` covers saving, listing, renaming, updating, and deleting, every refused filter and the limits at their edges, names, the per-project and per-person counts, invalid stored filters, access by role and level, project isolation, and removing a user or a project.
+
 ### The goal filter
 
 A goal, a saved goal or a custom event by name, does not narrow the visits, as a filter does: it adds how many of them reached it. Code: `apps/api/src/reports/reports.ts` (`goalVisitsSql`, `GoalFilter`), `analytics.ts`; the dashboard: [dashboard](dashboard.md#the-goal-filter). A custom event as a goal is the event by its name, as a goal step without a filter is. Matching is the goals' and funnels' own (`stepSql` in `product/steps.ts`), so a goal matches the same events here as in the Goals table and in funnels: a path pattern such as `/docs/*`, and a property filter that equals, does not equal, or contains.

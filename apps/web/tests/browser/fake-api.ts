@@ -87,6 +87,7 @@ import type {
   ReplayTimeline,
   TimelineItem,
 } from "../../src/lib/replays-api.ts";
+import type { Segment } from "../../src/lib/segments-api.ts";
 import type {
   ServiceChart,
   ServiceList,
@@ -410,6 +411,12 @@ export interface FakeApi {
    */
   shareLinks: ShareLink[];
   /**
+   * The project's saved segments and the signed-in user's own, in the
+   * order saved: the segment routes list them by name, and save, change,
+   * and delete them. Project ones need the owner or an admin. Empty by default.
+   */
+  segments: Segment[];
+  /**
    * The tokens that open a shared link's page (/api/share/:token…), with
    * what the page shows around the reports; any other token answers 404, as
    * a revoked one does. The reports are `analytics`, `list`, and `now`.
@@ -436,6 +443,108 @@ export function fakeShareLink(overrides: Partial<ShareLink> = {}): ShareLink {
     lastOpenedAt: "2026-11-16T08:30:00.000Z",
     ...overrides,
   };
+}
+
+/** A saved segment as the segment routes answer it. */
+export function fakeSegment(overrides: Partial<Segment> = {}): Segment {
+  return {
+    id: "5e5e5e5e-0000-4000-8000-000000000001",
+    name: "German visitors",
+    visibility: "project",
+    filters: { country: ["DE"] },
+    createdAt: "2026-11-12T09:00:00.000Z",
+    updatedAt: "2026-11-12T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const segmentRefusal = (status: number, error: string, message: string) =>
+  json({ error, message }, status);
+
+const segmentNotFound = () =>
+  segmentRefusal(404, "segment_not_found", "There is no such segment of yours to change.");
+
+/** The segment routes, as the API answers them (apps/api/src/segments/routes.ts). */
+function answerSegments(api: FakeApi, url: URL, init: RequestInit | undefined): Response | null {
+  const path = url.pathname;
+  if (/^\/api\/projects\/[^/]+\/segments$/.test(path)) {
+    return json({
+      segments: api.segments.toSorted((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+      ),
+    });
+  }
+  const route = /^\/api\/projects\/[^/]+\/segments\/(personal|project)(?:\/([^/]+))?$/.exec(path);
+  if (route === null) return null;
+  const visibility = route[1] === "project" ? "project" : "personal";
+  const segmentId = route[2] === undefined ? undefined : decodeURIComponent(route[2]);
+  if (visibility === "project" && api.access.role === "member") {
+    return segmentRefusal(403, "forbidden", "You do not have access to this.");
+  }
+  const found = api.segments.find(
+    (item) => item.id === segmentId && item.visibility === visibility,
+  );
+  if (init?.method === "DELETE") {
+    if (found === undefined) return segmentNotFound();
+    api.segments = api.segments.filter((item) => item !== found);
+    return new Response(null, { status: 204 });
+  }
+  const body = fieldsOf(JSON.parse(typeof init?.body === "string" ? init.body : "null"));
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const filters = Object.fromEntries(
+    Object.entries(fieldsOf(body.filters)).map(([key, values]) => [
+      key,
+      Array.isArray(values) ? values.map(String) : [],
+    ]),
+  );
+  if (!GOAL_NAME.test(name)) {
+    return segmentRefusal(
+      400,
+      "invalid_name",
+      "A segment's name has 1 to 100 characters, and no control characters.",
+    );
+  }
+  if (
+    api.segments.some(
+      (item) =>
+        item.visibility === visibility &&
+        item.id !== segmentId &&
+        item.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    return segmentRefusal(
+      409,
+      "segment_name_taken",
+      visibility === "project"
+        ? "The project already has a segment with this name."
+        : "You already have a segment with this name.",
+    );
+  }
+  if (init?.method === "PUT") {
+    if (found === undefined) return segmentNotFound();
+    if (body.updatedAt !== found.updatedAt) {
+      return segmentRefusal(
+        409,
+        "segment_changed",
+        "The segment changed after it was read, such as in another tab. Read it again before changing it.",
+      );
+    }
+    const updatedAt = new Date(Math.max(Date.now(), Date.parse(found.updatedAt) + 1)).toISOString();
+    const segment: Segment = { ...found, name, filters, updatedAt };
+    api.segments = api.segments.map((item) => (item === found ? segment : item));
+    return json({ segment });
+  }
+  const now = new Date().toISOString();
+  const segment: Segment = {
+    id: crypto.randomUUID(),
+    name,
+    visibility,
+    filters,
+    createdAt: now,
+    updatedAt: now,
+  };
+  api.segments = [...api.segments, segment];
+  return json({ segment }, 201);
 }
 
 const NO_SHARED_LINK = {
@@ -5274,6 +5383,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
     return removeGoal(api, decodeURIComponent(goalPath[1]));
   }
+  const segmentAnswer = answerSegments(api, url, init);
+  if (segmentAnswer !== null) return segmentAnswer;
   const shareAnswer = await answerShareLinks(api, url, init);
   if (shareAnswer !== null) return shareAnswer;
   if (/^\/api\/projects\/[^/]+\/ingest-activity$/.test(path)) {
@@ -5745,6 +5856,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     widget: fakeWidget,
     account: fakeAccount(),
     shareLinks: [fakeShareLink()],
+    segments: [],
     sharedPages: {
       [FAKE_SHARE_TOKEN]: {
         project: { name: PROJECT.name, iconUrl: null },

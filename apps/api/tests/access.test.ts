@@ -188,6 +188,7 @@ describe("members, admins, and the one access check", () => {
       "DELETE /api/projects/:id/avatar",
       "DELETE /api/projects/:id/heatmaps/snapshots/:device",
       "DELETE /api/projects/:id/replays",
+      "DELETE /api/projects/:id/segments/project/:segmentId",
       "DELETE /api/projects/:id/share-links/:linkId",
       "DELETE /api/projects/:id/users/:userId",
       "GET /api/projects/:id/ingest-activity",
@@ -195,10 +196,12 @@ describe("members, admins, and the one access check", () => {
       "PATCH /api/projects/:id",
       "POST /api/projects/:id/public-key",
       "POST /api/projects/:id/secret-key",
+      "POST /api/projects/:id/segments/project",
       "POST /api/projects/:id/share-links",
       "POST /api/projects/:id/spam-visits/delete",
       "POST /api/projects/:id/spam-visits/preview",
       "PUT /api/projects/:id/avatar",
+      "PUT /api/projects/:id/segments/project/:segmentId",
     ]);
     expect(await answers(cookie, site.id, settings)).toEqual(
       settings.map(({ method, route }) => ({

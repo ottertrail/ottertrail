@@ -54,6 +54,7 @@ import { replayCollectionRoutes } from "./replays/routes.ts";
 import { nowRoutes } from "./reports/now-routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
+import { segmentRoutes } from "./segments/routes.ts";
 import { ServerLogBuffer } from "./server-log/buffer.ts";
 import { serverLogDestination } from "./server-log/destination.ts";
 import { redactUrl } from "./server-log/redact.ts";
@@ -581,6 +582,12 @@ export function buildApp({
       trustedOrigins: dashboard.trustedOrigins,
     });
     app.register(savedFunnelRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+    });
+    app.register(segmentRoutes, {
       prefix: "/api",
       db,
       auth: dashboard.auth,
