@@ -55,6 +55,8 @@ const MAX_OFFSET = 100_000;
 export interface ListOptions {
   offset?: number | undefined;
   search?: string | undefined;
+  /** Exit pages only: add each row's exit rate, which reads the range's pageviews again. */
+  exitRate?: boolean | undefined;
 }
 
 /** Match literal substrings, case-insensitive; missing search matches all. */
@@ -810,7 +812,7 @@ export interface BreakdownRow {
   /**
    * Exit pages only: the row's visits (its exits) divided by the page's
    * pageviews in the same visits, as Top pages counts them; null for the
-   * visits without a pageview.
+   * visits without a pageview. Only with ListOptions.exitRate (the list route).
    */
   exitRate?: number | null;
 }
@@ -841,7 +843,7 @@ export async function breakdown(
   dimension: VisitDimension,
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
-  { offset, search }: ListOptions = {},
+  { offset, search, exitRate = false }: ListOptions = {},
   goal?: GoalFilter,
 ): Promise<BreakdownRow[]> {
   // Validate JavaScript callers and untrusted input at runtime.
@@ -868,7 +870,7 @@ export async function breakdown(
      GROUP BY value
      ORDER BY ${order}
      LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`;
-  const exits = dimension === "exitPage";
+  const exits = exitRate && dimension === "exitPage";
   const rows = await queryRows<Record<string, unknown>>(
     reader,
     exits

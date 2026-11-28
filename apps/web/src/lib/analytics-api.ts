@@ -116,17 +116,10 @@ export interface EventValueRow {
   converted?: number;
 }
 
+/** The lists the page's answer holds: those its cards show first. */
 export const BREAKDOWNS = [
   "source",
-  "sourceKind",
-  "referrer",
-  "channel",
-  "utmSource",
-  "utmMedium",
   "utmCampaign",
-  "utmTerm",
-  "utmContent",
-  "hostname",
   "entryPage",
   "exitPage",
   "country",
@@ -134,12 +127,29 @@ export const BREAKDOWNS = [
   "city",
   "deviceType",
   "browser",
-  "browserVersion",
   "os",
   "release",
 ] as const;
 
 export type Breakdown = (typeof BREAKDOWNS)[number];
+
+/**
+ * Lists behind a tab, or shown only under a filter: each is read from the
+ * list route when its tab shows (analytics-queries.ts, listPreviewQuery).
+ */
+export const TAB_BREAKDOWNS = [
+  "sourceKind",
+  "referrer",
+  "channel",
+  "utmSource",
+  "utmMedium",
+  "utmTerm",
+  "utmContent",
+  "hostname",
+  "browserVersion",
+] as const;
+
+export type TabBreakdown = (typeof TAB_BREAKDOWNS)[number];
 
 /** The period before, for comparison: as many days, up to the same time of day when still running. */
 export interface PreviousPeriod {
@@ -202,7 +212,7 @@ export interface PageGoalResult {
 }
 
 /** Every list of the analytics page; each can be read in full (analytics-queries.ts). */
-export type ListReport = "pages" | "customEvents" | Breakdown | EventList;
+export type ListReport = "pages" | "customEvents" | Breakdown | TabBreakdown | EventList;
 
 /** The lists of the tracker's link and not found events. */
 export type EventList = "outboundLinks" | "fileDownloads" | "notFoundPages";

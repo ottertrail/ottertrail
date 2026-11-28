@@ -46,6 +46,8 @@ import {
   type GoalChoice,
   goalChoiceFrom,
   LIST_PREVIEW_ROWS,
+  listPreviewQuery,
+  type ListRow,
   sameGoal,
 } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
@@ -134,6 +136,11 @@ interface ListTab {
   empty: string;
   report: ListReport;
   rows: RankedRow[];
+  /**
+   * A list the page's answer does not hold: read from the list route when
+   * its tab shows, its rows made with this (rows is then unused).
+   */
+  lazy?: (rows: ListRow[]) => RankedRow[];
 }
 
 /**
@@ -173,6 +180,47 @@ const EVENT_SECTIONS = [
   empty: string;
 }[];
 
+/** A tab whose list loads when it shows (listPreviewQuery). */
+const lazyTab = (tab: ListTab, toRows: (rows: ListRow[]) => RankedRow[]): ListTab => ({
+  ...tab,
+  rows: [],
+  lazy: toRows,
+});
+
+/** While a tab's list loads, or why it did not: as the page's first load shows them. */
+function TabListState({
+  query,
+  empty,
+}: {
+  query: { isPending: boolean; isError: boolean; error: Error | null; refetch: () => unknown };
+  empty: string;
+}) {
+  if (query.isPending) {
+    return (
+      <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">
+        <Skeleton className="h-6 w-full" />
+        <Skeleton className="h-6 w-full" />
+        <Skeleton className="h-6 w-full" />
+      </div>
+    );
+  }
+  if (query.isError) {
+    return (
+      <Alert variant="destructive" className="text-left">
+        <OctagonAlertIcon />
+        <AlertTitle>The list could not load</AlertTitle>
+        <AlertDescription>{query.error?.message}</AlertDescription>
+        <AlertAction>
+          <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+        </AlertAction>
+      </Alert>
+    );
+  }
+  return empty;
+}
+
 function visitsTab(
   value: string,
   label: string,
@@ -211,7 +259,21 @@ function BreakdownSection({
   const [shownValue, setShownValue] = React.useState(first?.value ?? "");
   const [showing, setShowing] = React.useState<ListTab | undefined>();
   const tab = tabs.find((item) => item.value === shownValue) ?? first;
+  const { source } = useAnalyticsScope();
+  // Only the shown tab's list loads, and only when the page's answer lacks it.
+  const preview = useQuery({
+    ...listPreviewQuery(
+      source,
+      search.range,
+      search.filters,
+      search.environment,
+      tab?.report ?? "pages",
+      search.goal,
+    ),
+    enabled: tab?.lazy !== undefined,
+  });
   if (tab === undefined) return null;
+  const shownRows = tab.lazy === undefined ? tab.rows : tab.lazy(preview.data ?? []);
   return (
     <>
       <BreakdownTable
@@ -229,7 +291,7 @@ function BreakdownSection({
               ]
         }
         barFigure={goal ? 1 : 0}
-        rows={tab.rows.map((row) => ({
+        rows={shownRows.map((row) => ({
           key: row.key,
           label: row.label,
           title: row.title,
@@ -253,7 +315,7 @@ function BreakdownSection({
             : undefined
         }
         showAll={
-          tab.rows.length >= LIST_PREVIEW_ROWS ? (
+          shownRows.length >= LIST_PREVIEW_ROWS ? (
             <Button
               variant="ghost"
               size="sm"
@@ -265,7 +327,9 @@ function BreakdownSection({
             </Button>
           ) : undefined
         }
-        empty={tab.empty}
+        empty={
+          tab.lazy === undefined ? tab.empty : <TabListState query={preview} empty={tab.empty} />
+        }
         description={tab.description}
         layout="stack"
       />
@@ -541,7 +605,7 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
   // The answer's goal, not the address's: while a new one loads, the old numbers stay.
   const goal = analytics.goal;
   // Links into the dashboard's other pages: never on a shared link.
-  const { dashboard } = useAnalyticsScope();
+  const { dashboard, source: reportSource } = useAnalyticsScope();
   const link: FilterLinkFor = (name, value) => (
     <FilterLink search={search} name={name} value={value} />
   );
@@ -549,6 +613,11 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
     <GoalLink search={search} goal={{ event: name }} name={name} />
   );
   const rows = (report: Breakdown) => rankedRows(report, fromBreakdown(breakdowns[report]), link);
+  /** A visits tab whose list loads when it shows. */
+  const lazyVisits = (value: string, label: string, nameHeading: string, report: ListReport) =>
+    lazyTab(visitsTab(value, label, nameHeading, report, []), (list) =>
+      rankedRows(report, list, link),
+    );
   // A row without a path ("Unknown") has no page to show.
   const withHeatmaps = (list: RankedRow[]) =>
     dashboard === null
@@ -582,10 +651,22 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
     };
   });
   const card = { search, goal: goal !== null };
-  const channels = visitsTab("channel", "Channels", "Channel", "channel", rows("channel"));
+  const channels = lazyVisits("channel", "Channels", "Channel", "channel");
   // Filtered by one source, the card drills into it: how its visits got it, and from where.
   const source = onlyValue(search.filters, "source");
-  const tagged = breakdowns.sourceKind.some((row) => row.value === "tag");
+  // The How tab's own list, from the cache once it has loaded: Medium and Campaign need a tag.
+  const kinds = useQuery({
+    ...listPreviewQuery(
+      reportSource,
+      search.range,
+      search.filters,
+      search.environment,
+      "sourceKind",
+      search.goal,
+    ),
+    enabled: source !== undefined,
+  });
+  const tagged = kinds.data?.some((row) => row.name === "tag") ?? false;
   const sourceTabs: ListTab[] =
     source === undefined
       ? [
@@ -598,16 +679,16 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
         ]
       : [
           {
-            ...visitsTab("how", "How", "How it came", "sourceKind", rows("sourceKind")),
+            ...lazyVisits("how", "How", "How it came", "sourceKind"),
             description:
               source === DIRECT
                 ? "Direct / none: visits with no utm_source or ref tag and no referrer from another site."
                 : `${valueText("source", source)}: how its visits got this source, and their referrers.`,
           },
-          visitsTab("referrers", "Referrers", "Referrer", "referrer", rows("referrer")),
+          lazyVisits("referrers", "Referrers", "Referrer", "referrer"),
           ...(tagged
             ? [
-                visitsTab("medium", "Medium", "UTM medium", "utmMedium", rows("utmMedium")),
+                lazyVisits("medium", "Medium", "UTM medium", "utmMedium"),
                 visitsTab("campaign", "Campaign", "Campaign", "utmCampaign", rows("utmCampaign")),
               ]
             : []),
@@ -618,13 +699,7 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
   const browsers =
     browser === undefined || browser === ""
       ? visitsTab("browser", "Browsers", "Browser", "browser", rows("browser"))
-      : visitsTab(
-          "browser",
-          "Browsers",
-          `${browser} version`,
-          "browserVersion",
-          rows("browserVersion"),
-        );
+      : lazyVisits("browser", "Browsers", `${browser} version`, "browserVersion");
   return (
     <>
       {goal === null ? (
@@ -652,11 +727,16 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
                 rows: withHeatmaps(rankedRows("pages", fromPages(analytics.pages), link)),
               },
               visitsTab("entry", "Entry", "Path", "entryPage", withHeatmaps(rows("entryPage"))),
-              {
-                ...visitsTab("exit", "Exit", "Path", "exitPage", withHeatmaps(rows("exitPage"))),
-                secondaryHeading: "Exits",
-                rateHeading: "Exit rate",
-              },
+              // The list route adds each page's exit rate, which the page's answer leaves out.
+              lazyTab(
+                {
+                  ...visitsTab("exit", "Exit", "Path", "exitPage", []),
+                  secondaryHeading: "Exits",
+                  rateHeading: "Exit rate",
+                },
+                (list) => withHeatmaps(rankedRows("exitPage", list, link)),
+              ),
+              lazyVisits("hostname", "Hostnames", "Hostname", "hostname"),
             ]}
           />
           <BreakdownSection {...card} title="Sources" tabs={sourceTabs} />
@@ -666,10 +746,10 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
             tabs={[
               // Each UTM tag alone; Sources mixes utm_source with referrer hosts.
               visitsTab("campaign", "Campaign", "Campaign", "utmCampaign", rows("utmCampaign")),
-              visitsTab("utm-source", "Source", "UTM source", "utmSource", rows("utmSource")),
-              visitsTab("medium", "Medium", "UTM medium", "utmMedium", rows("utmMedium")),
-              visitsTab("term", "Term", "Term", "utmTerm", rows("utmTerm")),
-              visitsTab("content", "Content", "Content", "utmContent", rows("utmContent")),
+              lazyVisits("utm-source", "Source", "UTM source", "utmSource"),
+              lazyVisits("medium", "Medium", "UTM medium", "utmMedium"),
+              lazyVisits("term", "Term", "Term", "utmTerm"),
+              lazyVisits("content", "Content", "Content", "utmContent"),
             ]}
           />
           <BreakdownSection
@@ -689,11 +769,6 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
               browsers,
               visitsTab("os", "Systems", "Operating system", "os", rows("os")),
             ]}
-          />
-          <BreakdownSection
-            {...card}
-            title="Hostnames"
-            tabs={[visitsTab("hostname", "Hostnames", "Hostname", "hostname", rows("hostname"))]}
           />
           <BreakdownSection
             {...card}

@@ -493,7 +493,7 @@ async function answerShareLinks(
     return result instanceof Response ? result : json(result);
   }
   if (report === "/analytics/list") {
-    const result = api.list(url.searchParams);
+    const result: unknown = await api.list(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   const result = await api.analytics(
@@ -2614,6 +2614,11 @@ export function fakeList(query: URLSearchParams) {
   const search = (query.get("search") ?? "").toLowerCase();
   const offset = Number(query.get("offset") ?? 0);
   const limit = Number(query.get("limit") ?? 50);
+  // A card's first rows of a tab's list: data that looks real, not name-1 … name-10.
+  const preview = TAB_LISTS[report];
+  if (preview !== undefined && limit === 10 && offset === 0 && search === "") {
+    return { rows: preview, hasMore: false };
+  }
   const names = Array.from({ length: 120 }, (_, i) =>
     report === "pages"
       ? `/page-${i + 1}`
@@ -2885,6 +2890,32 @@ const row = (value: string | null, visitors: number, visits: number): BreakdownR
   bounceRate: 0.4,
 });
 
+/**
+ * The first rows of the lists a tab loads from the list route (the page's
+ * answer leaves them out), as fakeList answers a card's preview of them.
+ */
+export const TAB_LISTS: Record<string, BreakdownRow[]> = {
+  sourceKind: [row("none", 300, 320), row("referrer", 395, 432), row("tag", 70, 72)],
+  referrer: [
+    row(null, 330, 352),
+    row("https://www.google.com/", 145, 150),
+    row("https://news.ycombinator.com/item", 40, 42),
+  ],
+  channel: [
+    row("Direct", 300, 320),
+    row("Organic search", 180, 190),
+    row("Email", 70, 72),
+    row("AI assistants", 25, 26),
+  ],
+  utmSource: [row(null, 620, 680), row("newsletter", 70, 72), row("google", 45, 44)],
+  utmMedium: [row(null, 620, 680), row("email", 70, 72), row("cpc", 45, 44)],
+  utmTerm: [row(null, 740, 800), row("web analytics", 25, 24)],
+  utmContent: [row(null, 720, 780), row("header-link", 45, 44)],
+  hostname: [row("shop.example", 600, 650), row("docs.shop.example", 120, 128), row(null, 45, 46)],
+  exitPage: [{ ...row("/signup", 150, 160), exitRate: 0.42 }],
+  browserVersion: [row("Firefox 133", 100, 108), row("Firefox 132", 30, 32)],
+};
+
 /** Two saved goals with a week's counts: a page, and an event with a property filter. */
 export function fakeGoals(): GoalResult[] {
   return [
@@ -2995,36 +3026,14 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
     ],
     breakdowns: {
       source: [row("Direct / none", 300, 320), row("google.com", 145, 150)],
-      sourceKind: [row("none", 300, 320), row("referrer", 395, 432), row("tag", 70, 72)],
-      referrer: [
-        row(null, 330, 352),
-        row("https://www.google.com/", 145, 150),
-        row("https://news.ycombinator.com/item", 40, 42),
-      ],
-      channel: [
-        row("Direct", 300, 320),
-        row("Organic search", 180, 190),
-        row("Email", 70, 72),
-        row("AI assistants", 25, 26),
-      ],
-      utmSource: [row(null, 620, 680), row("newsletter", 70, 72), row("google", 45, 44)],
-      utmMedium: [row(null, 620, 680), row("email", 70, 72), row("cpc", 45, 44)],
       utmCampaign: [row(null, 700, 760), row("launch", 65, 64)],
-      utmTerm: [row(null, 740, 800), row("web analytics", 25, 24)],
-      utmContent: [row(null, 720, 780), row("header-link", 45, 44)],
-      hostname: [
-        row("shop.example", 600, 650),
-        row("docs.shop.example", 120, 128),
-        row(null, 45, 46),
-      ],
       entryPage: [row("/pricing", 210, 220), row("/", 190, 200)],
-      exitPage: [{ ...row("/signup", 150, 160), exitRate: 0.42 }],
+      exitPage: [row("/signup", 150, 160)],
       country: [row("DE", 155, 160), row("SG", 90, 95), row(null, 125, 130)],
       region: [row("Bavaria", 80, 85)],
       city: [row("Munich", 60, 62)],
       deviceType: [row("desktop", 269, 290), row("mobile", 242, 250)],
       browser: [row("Firefox", 130, 140)],
-      browserVersion: [row("Firefox 133", 100, 108), row("Firefox 132", 30, 32)],
       os: [row("macOS", 200, 210)],
       release: [row("1.4.2", 500, 540), row(null, 265, 284)],
     },
@@ -3195,15 +3204,7 @@ export function emptyAnalytics(): Analytics {
     pages: [],
     breakdowns: {
       source: [],
-      sourceKind: [],
-      referrer: [],
-      channel: [],
-      utmSource: [],
-      utmMedium: [],
       utmCampaign: [],
-      utmTerm: [],
-      utmContent: [],
-      hostname: [],
       entryPage: [],
       exitPage: [],
       country: [],
@@ -3211,7 +3212,6 @@ export function emptyAnalytics(): Analytics {
       city: [],
       deviceType: [],
       browser: [],
-      browserVersion: [],
       os: [],
       release: [],
     },
@@ -5475,7 +5475,7 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     return result instanceof Response ? result : json(result);
   }
   if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
-    const result = api.list(url.searchParams);
+    const result: unknown = await api.list(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   const analytics = /^\/api\/projects\/([^/]+)\/analytics$/.exec(path);

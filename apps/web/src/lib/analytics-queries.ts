@@ -320,6 +320,54 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
     : null;
 }
 
+/**
+ * A list's first LIST_PREVIEW_ROWS rows, as a card shows them, for a list
+ * the page's answer does not hold: a tab's, read when the tab shows. The
+ * cache keeps it per range, filters, environment, and goal, so switching
+ * back to the tab shows it at once.
+ */
+export const listPreviewQuery = (
+  source: ReportSource,
+  range: PageRange,
+  filters: Filters,
+  environment: string,
+  report: ListReport,
+  goal?: GoalChoice,
+) =>
+  queryOptions({
+    queryKey: [
+      "analytics-list-preview",
+      source.key,
+      range,
+      filters,
+      environment,
+      report,
+      goalParams(goal),
+    ],
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams({
+        ...rangeParams(range),
+        ...environmentParams(source, environment),
+        ...goalParams(goal),
+        report,
+        limit: String(LIST_PREVIEW_ROWS),
+      });
+      appendFilters(query, filters);
+      const body = await apiRequest(`${source.path}/analytics/list?${query.toString()}`, {
+        signal,
+      });
+      const page = listPage(report, body);
+      if (page === null) {
+        throw new ApiError(0, "The API sent an unexpected response.");
+      }
+      return page.rows;
+    },
+    // While another period or filter loads, keep this list's rows; never another tab's.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[5] === report ? previous : undefined,
+    refetchInterval: REFRESH_MS,
+  });
+
 /** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period, environment, filters, and goal. */
 export const listQuery = (
   source: ReportSource,

@@ -63,7 +63,7 @@ describe("the web analytics report", () => {
     renderApp(ANALYTICS);
 
     for (const [title, views] of [
-      ["Pages", ["Top pages", "Entry", "Exit"]],
+      ["Pages", ["Top pages", "Entry", "Exit", "Hostnames"]],
       ["Sources", ["Sources", "Channels"]],
       ["Campaigns", ["Campaign", "Source", "Medium", "Term", "Content"]],
       ["Locations", ["Countries", "Regions", "Cities"]],
@@ -77,8 +77,8 @@ describe("the web analytics report", () => {
         views.map((_, index) => (index === 0 ? "true" : "false")),
       );
     }
-    // Hostnames, releases, and custom events have one list each: no toggle.
-    for (const title of ["Hostnames", "Releases", "Custom events"]) {
+    // Releases and custom events have one list each: no toggle.
+    for (const title of ["Releases", "Custom events"]) {
       await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
       expect(
         page.getByRole("group", { name: `Which ${title.toLowerCase()} to list` }).elements(),

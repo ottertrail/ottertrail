@@ -118,12 +118,60 @@ afterAll(async () => {
   await dashboard?.close();
 });
 
+/** The lists a tab loads from the list route; the page's answer leaves them out. */
+const TAB_REPORTS = [
+  "sourceKind",
+  "referrer",
+  "channel",
+  "utmSource",
+  "utmMedium",
+  "utmTerm",
+  "utmContent",
+  "hostname",
+  "browserVersion",
+  "exitPage",
+];
+
+type Read = (path: string) => ReturnType<typeof get>;
+
+/** The page's lists, and each tab's first 10 rows from the list route, as the dashboard reads them. */
+async function allLists(query: string, read: Read = (path) => get(path)) {
+  const { breakdowns } = (await read(`/analytics?${query}`)).json();
+  for (const report of TAB_REPORTS) {
+    breakdowns[report] = (
+      await read(`/analytics/list?report=${report}&limit=10&${query}`)
+    ).json().rows;
+  }
+  return breakdowns;
+}
+
 const rows = (list: { value: string | null; visitors: number; visits: number }[]) =>
   list.map(({ value, visitors, visits }) => [value, visitors, visits]);
 
+describe("the page's answer", () => {
+  test("holds the lists the cards show first, and none of a tab's", async () => {
+    const { breakdowns } = (await get("/analytics?period=today")).json();
+    expect(Object.keys(breakdowns).toSorted()).toEqual(
+      [
+        "source",
+        "utmCampaign",
+        "entryPage",
+        "exitPage",
+        "country",
+        "region",
+        "city",
+        "deviceType",
+        "browser",
+        "os",
+        "release",
+      ].toSorted(),
+    );
+  });
+});
+
 describe("the lists", () => {
   test("Channels group the visits by kind of source", async () => {
-    const { breakdowns } = (await get("/analytics?period=today")).json();
+    const breakdowns = await allLists("period=today");
     expect(rows(breakdowns.channel)).toEqual([
       ["AI assistants", 1, 1],
       ["Direct", 1, 1],
@@ -133,7 +181,7 @@ describe("the lists", () => {
   });
 
   test("Hostnames name the site each visit began on, Unknown for old rows last", async () => {
-    const { breakdowns } = (await get("/analytics?period=today")).json();
+    const breakdowns = await allLists("period=today");
     expect(rows(breakdowns.hostname)).toEqual([
       ["shop.example", 2, 2],
       ["docs.shop.example", 1, 1],
@@ -142,7 +190,7 @@ describe("the lists", () => {
   });
 
   test("terms and content are listed as campaigns are, none a value of its own", async () => {
-    const { breakdowns } = (await get("/analytics?period=today")).json();
+    const breakdowns = await allLists("period=today");
     expect(rows(breakdowns.utmTerm)).toEqual([
       [null, 3, 3],
       ["analytics", 1, 1],
@@ -154,7 +202,7 @@ describe("the lists", () => {
   });
 
   test("browser versions name their browser", async () => {
-    const { breakdowns } = (await get("/analytics?period=today")).json();
+    const breakdowns = await allLists("period=today");
     expect(rows(breakdowns.browserVersion)).toEqual([
       ["Chrome 142", 2, 2],
       ["Chrome 141", 1, 1],
@@ -195,7 +243,7 @@ describe("a row's filter", () => {
   test("of every channel row adds up to all visits", async () => {
     const all = (await get("/analytics?period=today")).json();
     let sum = 0;
-    for (const row of all.breakdowns.channel as { value: string }[]) {
+    for (const row of (await allLists("period=today")).channel as { value: string }[]) {
       const body = (
         await get(`/analytics?period=today&channel=${encodeURIComponent(row.value)}`)
       ).json();
@@ -207,7 +255,8 @@ describe("a row's filter", () => {
 
 describe("the exit rate", () => {
   test("is a page's exits divided by its pageviews", async () => {
-    const { breakdowns, pages } = (await get("/analytics?period=today")).json();
+    const { pages } = (await get("/analytics?period=today")).json();
+    const breakdowns = await allLists("period=today");
     expect(
       breakdowns.exitPage.map((row: { value: string; visits: number; exitRate: number }) => [
         row.value,
@@ -225,24 +274,25 @@ describe("the exit rate", () => {
   });
 
   test("counts in the filtered visits, and in the full list", async () => {
-    const filtered = (await get("/analytics?period=today&channel=Direct")).json();
-    expect(filtered.breakdowns.exitPage).toMatchObject([{ value: "/", visits: 1, exitRate: 1 }]);
+    const filtered = await allLists("period=today&channel=Direct");
+    expect(filtered.exitPage).toMatchObject([{ value: "/", visits: 1, exitRate: 1 }]);
     const list = (await get("/analytics/list?report=exitPage&period=today&search=pricing")).json();
     expect(list.rows).toMatchObject([{ value: "/pricing", exitRate: 2 / 3 }]);
   });
 
-  test("is only on the exit pages", async () => {
+  test("is only on the exit pages, and only from the list route", async () => {
     const { breakdowns } = (await get("/analytics?period=today")).json();
     expect(breakdowns.entryPage[0]).not.toHaveProperty("exitRate");
+    expect(breakdowns.exitPage[0]).not.toHaveProperty("exitRate");
   });
 });
 
 describe("a shared link", () => {
   test("shows the new lists, their full lists, and their filters", async () => {
-    const answer = (await share("/analytics?period=today")).json();
-    expect(rows(answer.breakdowns.channel)).toHaveLength(4);
-    expect(rows(answer.breakdowns.hostname)[0]).toEqual(["shop.example", 2, 2]);
-    expect(answer.breakdowns.exitPage[0]).toMatchObject({ value: "/pricing", exitRate: 2 / 3 });
+    const answer = await allLists("period=today", share);
+    expect(rows(answer.channel)).toHaveLength(4);
+    expect(rows(answer.hostname)[0]).toEqual(["shop.example", 2, 2]);
+    expect(answer.exitPage[0]).toMatchObject({ value: "/pricing", exitRate: 2 / 3 });
 
     const list = (await share("/analytics/list?report=browserVersion&period=today")).json();
     expect(list.rows.map((row: { value: string }) => row.value)).toEqual([
@@ -258,7 +308,7 @@ describe("a shared link", () => {
 
 describe("the UTM lists", () => {
   test("list each tag alone, no tag a value of its own", async () => {
-    const { breakdowns } = (await get("/analytics?period=today", sourcesProject)).json();
+    const breakdowns = await allLists("period=today", (path) => get(path, sourcesProject));
     expect(rows(breakdowns.utmSource)).toEqual([
       [null, 5, 5],
       ["chatgpt.com", 1, 1],
@@ -292,10 +342,9 @@ describe("the UTM lists", () => {
 
 /** The page's lists, filtered by one source. */
 async function detail(source: string) {
-  const { breakdowns } = (
-    await get(`/analytics?period=today&source=${encodeURIComponent(source)}`, sourcesProject)
-  ).json();
-  return breakdowns;
+  return allLists(`period=today&source=${encodeURIComponent(source)}`, (path) =>
+    get(path, sourcesProject),
+  );
 }
 
 describe("one source's drill-down", () => {

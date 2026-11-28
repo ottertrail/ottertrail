@@ -39,17 +39,10 @@ import {
   type VisitsSource,
 } from "./reports.ts";
 
+/** The lists the page's answer holds: those its cards show first. */
 export const ANALYTICS_BREAKDOWNS = [
   "source",
-  "sourceKind",
-  "referrer",
-  "channel",
-  "utmSource",
-  "utmMedium",
   "utmCampaign",
-  "utmTerm",
-  "utmContent",
-  "hostname",
   "entryPage",
   "exitPage",
   "country",
@@ -57,18 +50,34 @@ export const ANALYTICS_BREAKDOWNS = [
   "city",
   "deviceType",
   "browser",
-  "browserVersion",
   "os",
   "release",
 ] as const satisfies readonly VisitDimension[];
 
 export type AnalyticsBreakdown = (typeof ANALYTICS_BREAKDOWNS)[number];
 
+/**
+ * Lists behind a tab, or shown only under a filter: the dashboard reads each
+ * from the list route when its tab shows, so the page's answer stays small.
+ */
+export const TAB_BREAKDOWNS = [
+  "sourceKind",
+  "referrer",
+  "channel",
+  "utmSource",
+  "utmMedium",
+  "utmTerm",
+  "utmContent",
+  "hostname",
+  "browserVersion",
+] as const satisfies readonly VisitDimension[];
+
 /** Lists support full pagination. */
 export const LIST_REPORTS = [
   "pages",
   "customEvents",
   ...ANALYTICS_BREAKDOWNS,
+  ...TAB_BREAKDOWNS,
   "outboundLinks",
   "fileDownloads",
   "notFoundPages",
@@ -318,15 +327,7 @@ export async function projectAnalytics(
     // One session runs one query at a time, so the reports run one after another.
     const breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]> = {
       source: await by("source"),
-      sourceKind: await by("sourceKind"),
-      referrer: await by("referrer"),
-      channel: await by("channel"),
-      utmSource: await by("utmSource"),
-      utmMedium: await by("utmMedium"),
       utmCampaign: await by("utmCampaign"),
-      utmTerm: await by("utmTerm"),
-      utmContent: await by("utmContent"),
-      hostname: await by("hostname"),
       entryPage: await by("entryPage"),
       exitPage: await by("exitPage"),
       country: await by("country"),
@@ -334,7 +335,6 @@ export async function projectAnalytics(
       city: await by("city"),
       deviceType: await by("deviceType"),
       browser: await by("browser"),
-      browserVersion: await by("browserVersion"),
       os: await by("os"),
       release: await by("release"),
     };
@@ -454,7 +454,15 @@ export async function projectList(
         ? customEvents(reader, range, limit + 1, visits, page)
         : isEventList(report)
           ? eventValues(reader, range, report, limit + 1, visits, page, reached)
-          : breakdown(reader, range, report, limit + 1, visits, page, reached);
+          : breakdown(
+              reader,
+              range,
+              report,
+              limit + 1,
+              visits,
+              { ...page, exitRate: true },
+              reached,
+            );
   const rows =
     goal === undefined || report === "customEvents"
       ? await list(base, undefined, undefined)

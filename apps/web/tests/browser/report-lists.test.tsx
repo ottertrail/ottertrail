@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { analyticsFixture, FAKE_SHARE_TOKEN, installFakeApi, PROJECT } from "./fake-api.ts";
+import { FAKE_SHARE_TOKEN, fakeList, installFakeApi, json, PROJECT } from "./fake-api.ts";
 import { currentPath, renderApp, renderShare } from "./render.tsx";
 
 /*
@@ -27,6 +27,12 @@ function cellText(cell: HTMLTableCellElement): string {
   return text.startsWith(label) ? text.slice(label.length) : text;
 }
 
+/** A table's rows once it shows: a tab's list loads when the tab is selected. */
+async function shownRows(caption: string): Promise<string[][]> {
+  await expect.element(page.getByRole("table", { name: caption })).toBeVisible();
+  return tableRows(caption);
+}
+
 /** Each body row of a table as its cells' text, leaving out the cell that only holds a bar. */
 function tableRows(caption: string): string[][] {
   const table = page.getByRole("table", { name: caption }).element();
@@ -47,7 +53,7 @@ describe("the new lists", () => {
     await expect
       .element(page.getByRole("table", { name: "Channels, most visitors first" }))
       .toBeVisible();
-    expect(tableRows("Channels, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Channels, most visitors first")).map((row) => row[0])).toEqual([
       "Direct",
       "Organic search",
       "Email",
@@ -64,10 +70,8 @@ describe("the new lists", () => {
     installFakeApi();
     const router = renderApp(ANALYTICS);
 
-    await expect
-      .element(page.getByRole("table", { name: "Hostnames, most visitors first" }))
-      .toBeVisible();
-    expect(tableRows("Hostnames, most visitors first").map((row) => row[0])).toEqual([
+    await views("Pages").getByRole("button", { name: "Hostnames" }).click();
+    expect((await shownRows("Hostnames, most visitors first")).map((row) => row[0])).toEqual([
       "shop.example",
       "docs.shop.example",
       "Unknown",
@@ -83,7 +87,7 @@ describe("the new lists", () => {
     const router = renderApp(ANALYTICS);
 
     await views("Campaigns").getByRole("button", { name: "Term", exact: true }).click();
-    expect(tableRows("Term, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Term, most visitors first")).map((row) => row[0])).toEqual([
       "No term",
       "web analytics",
     ]);
@@ -106,7 +110,7 @@ describe("the new lists", () => {
     const table = page.getByRole("table", { name: "Browsers, most visitors first" });
     await expect.element(table).toBeVisible();
     expect(table.element().querySelector("thead th")?.textContent).toBe("Firefox version");
-    expect(tableRows("Browsers, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Browsers, most visitors first")).map((row) => row[0])).toEqual([
       "Firefox 133",
       "Firefox 132",
     ]);
@@ -121,7 +125,9 @@ describe("the new lists", () => {
     renderApp(ANALYTICS);
 
     await views("Devices").getByRole("button", { name: "Browsers" }).click();
-    expect(tableRows("Browsers, most visitors first").map((row) => row[0])).toEqual(["Firefox"]);
+    expect((await shownRows("Browsers, most visitors first")).map((row) => row[0])).toEqual([
+      "Firefox",
+    ]);
   });
 });
 
@@ -131,7 +137,7 @@ describe("the UTM lists", () => {
     const router = renderApp(ANALYTICS);
 
     await views("Campaigns").getByRole("button", { name: "Source", exact: true }).click();
-    expect(tableRows("Source, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Source, most visitors first")).map((row) => row[0])).toEqual([
       "No source",
       "newsletter",
       "google",
@@ -140,7 +146,7 @@ describe("the UTM lists", () => {
     await expect.poll(() => currentPath(router)).toBe(`${ANALYTICS}?utmSource=newsletter`);
 
     await views("Campaigns").getByRole("button", { name: "Medium", exact: true }).click();
-    expect(tableRows("Medium, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Medium, most visitors first")).map((row) => row[0])).toEqual([
       "No medium",
       "email",
       "cpc",
@@ -171,25 +177,23 @@ const breakdownRow = ([value, visitors]: [string | null, number]) => ({
   bounceRate: 0.5,
 });
 
-/** The answer for a page filtered by one source, as the API counts its drill-down. */
+/** The list route for a page filtered by one source, as the API counts its drill-down. */
 function sourceDetail(sourceKind: [string, number][], referrer: [string | null, number][]) {
-  const base = analyticsFixture();
-  return () =>
-    analyticsFixture({
-      breakdowns: {
-        ...base.breakdowns,
-        sourceKind: sourceKind.map(breakdownRow),
-        referrer: referrer.map(breakdownRow),
-        utmMedium: [breakdownRow(["email", 70])],
-        utmCampaign: [breakdownRow(["november-picks", 70])],
-      },
-    });
+  const lists: Record<string, ReturnType<typeof breakdownRow>[]> = {
+    sourceKind: sourceKind.map(breakdownRow),
+    referrer: referrer.map(breakdownRow),
+    utmMedium: [breakdownRow(["email", 70])],
+  };
+  return (query: URLSearchParams) => {
+    const rows = lists[query.get("report") ?? ""];
+    return rows === undefined ? fakeList(query) : { rows, hasMore: false };
+  };
 }
 
 describe("one source's drill-down", () => {
   test("a referrer-only source shows how it came and its referrers, no tag lists", async () => {
     installFakeApi({
-      analytics: sourceDetail([["referrer", 145]], [["https://www.google.com/", 145]]),
+      list: sourceDetail([["referrer", 145]], [["https://www.google.com/", 145]]),
     });
     const router = renderApp(`${ANALYTICS}?source=google.com`);
 
@@ -204,7 +208,9 @@ describe("one source's drill-down", () => {
     await expect
       .element(page.getByText("google.com: how its visits got this source, and their referrers."))
       .toBeVisible();
-    expect(tableRows("How, most visitors first").map((row) => row[0])).toEqual(["Referrer"]);
+    expect((await shownRows("How, most visitors first")).map((row) => row[0])).toEqual([
+      "Referrer",
+    ]);
     await group.getByRole("button", { name: "Referrers" }).click();
     await page.getByRole("link", { name: "Filter by Referrer: www.google.com/" }).click();
     await expect
@@ -213,18 +219,21 @@ describe("one source's drill-down", () => {
   });
 
   test("a tagged-only source adds its medium and campaign", async () => {
-    installFakeApi({ analytics: sourceDetail([["tag", 70]], [[null, 70]]) });
+    installFakeApi({ list: sourceDetail([["tag", 70]], [[null, 70]]) });
     const router = renderApp(`${ANALYTICS}?source=newsletter`);
 
     const group = views("Sources");
     await expect.element(group).toBeVisible();
-    expect(
-      group
-        .getByRole("button")
-        .elements()
-        .map((button) => button.textContent),
-    ).toEqual(["How", "Referrers", "Medium", "Campaign", "Channels"]);
-    expect(tableRows("How, most visitors first").map((row) => row[0])).toEqual([
+    // Medium and Campaign join once the How list shows a tagged visit.
+    await expect
+      .poll(() =>
+        group
+          .getByRole("button")
+          .elements()
+          .map((button) => button.textContent),
+      )
+      .toEqual(["How", "Referrers", "Medium", "Campaign", "Channels"]);
+    expect((await shownRows("How, most visitors first")).map((row) => row[0])).toEqual([
       "Tagged (utm_source or ref)",
     ]);
     await page
@@ -234,16 +243,18 @@ describe("one source's drill-down", () => {
       .poll(() => currentPath(router))
       .toBe(`${ANALYTICS}?source=newsletter&sourceKind=tag`);
     await group.getByRole("button", { name: "Referrers" }).click();
-    expect(tableRows("Referrers, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("Referrers, most visitors first")).map((row) => row[0])).toEqual([
       "No referrer",
     ]);
     await group.getByRole("button", { name: "Medium" }).click();
-    expect(tableRows("Medium, most visitors first").map((row) => row[0])).toEqual(["email"]);
+    expect((await shownRows("Medium, most visitors first")).map((row) => row[0])).toEqual([
+      "email",
+    ]);
   });
 
   test("a mixed source lists both ways", async () => {
     installFakeApi({
-      analytics: sourceDetail(
+      list: sourceDetail(
         [
           ["referrer", 20],
           ["tag", 5],
@@ -257,7 +268,7 @@ describe("one source's drill-down", () => {
     renderApp(`${ANALYTICS}?source=chatgpt.com`);
 
     await expect.element(views("Sources")).toBeVisible();
-    expect(tableRows("How, most visitors first")).toEqual([
+    expect(await shownRows("How, most visitors first")).toEqual([
       ["Referrer", "20", "20"],
       ["Tagged (utm_source or ref)", "5", "5"],
     ]);
@@ -265,7 +276,7 @@ describe("one source's drill-down", () => {
 
   test("Direct / none says it has no tag and no referrer from another site", async () => {
     installFakeApi({
-      analytics: sourceDetail(
+      list: sourceDetail(
         [["none", 300]],
         [
           [null, 280],
@@ -276,7 +287,7 @@ describe("one source's drill-down", () => {
     renderApp(`${ANALYTICS}?source=${encodeURIComponent("Direct / none")}`);
 
     await expect.element(views("Sources")).toBeVisible();
-    expect(tableRows("How, most visitors first").map((row) => row[0])).toEqual([
+    expect((await shownRows("How, most visitors first")).map((row) => row[0])).toEqual([
       "No tag, no referrer",
     ]);
     await expect
@@ -309,7 +320,7 @@ describe("one source's drill-down", () => {
     await page.viewport(390, 844);
     installFakeApi({
       signedIn: false,
-      analytics: sourceDetail([["referrer", 145]], [["https://www.google.com/", 145]]),
+      list: sourceDetail([["referrer", 145]], [["https://www.google.com/", 145]]),
     });
     const history = renderShare(`${SHARED}?source=google.com`);
 
@@ -329,19 +340,19 @@ describe("one source's drill-down", () => {
 describe("the exit rate", () => {
   test("is a column of the Exit list and of its Show all", async () => {
     installFakeApi({
-      analytics: () =>
-        analyticsFixture({
-          breakdowns: {
-            ...analyticsFixture().breakdowns,
-            exitPage: Array.from({ length: 10 }, (_, i) => ({
-              value: `/page-${i + 1}`,
-              visitors: 100 - i,
-              visits: 100 - i,
-              bounceRate: 0.5,
-              exitRate: i === 0 ? 0.42 : 0.1,
-            })),
-          },
-        }),
+      list: (query) =>
+        query.get("report") === "exitPage" && query.get("limit") === "10"
+          ? {
+              rows: Array.from({ length: 10 }, (_, i) => ({
+                value: `/page-${i + 1}`,
+                visitors: 100 - i,
+                visits: 100 - i,
+                bounceRate: 0.5,
+                exitRate: i === 0 ? 0.42 : 0.1,
+              })),
+              hasMore: true,
+            }
+          : fakeList(query),
     });
     renderApp(ANALYTICS);
 
@@ -353,7 +364,12 @@ describe("the exit rate", () => {
     );
     expect(headings).toContain("Exits");
     expect(headings).toContain("Exit rate");
-    expect(tableRows("Exit, most visitors first")[0]).toEqual(["/page-1", "100", "100", "42%"]);
+    expect((await shownRows("Exit, most visitors first"))[0]).toEqual([
+      "/page-1",
+      "100",
+      "100",
+      "42%",
+    ]);
 
     await page.getByRole("button", { name: "Show all exit" }).click();
     const dialog = page.getByRole("dialog", { name: "Pages: Exit" });
@@ -408,9 +424,109 @@ describe("a shared link", () => {
     await expect
       .element(page.getByRole("link", { name: "Filter by Term: web analytics" }))
       .toBeVisible();
+    await views("Pages").getByRole("button", { name: "Hostnames" }).click();
     await expect
       .element(page.getByRole("link", { name: "Filter by Hostname: docs.shop.example" }))
       .toBeVisible();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+  });
+});
+
+/** The list route requests for one list. */
+const listRequests = (api: { requests: string[] }, report: string) =>
+  api.requests.filter(
+    (path) => path.includes("/analytics/list?") && path.includes(`report=${report}&`),
+  );
+
+describe("a tab's list loads when it shows", () => {
+  test("only once its tab is selected, and the page's answer leaves it out", async () => {
+    const api = installFakeApi();
+    renderApp(ANALYTICS);
+
+    await expect.element(views("Sources")).toBeVisible();
+    // The page's own request, and no list of a hidden tab.
+    expect(api.requests.some((path) => path.includes("/analytics?"))).toBe(true);
+    expect(api.requests.filter((path) => path.includes("/analytics/list?"))).toEqual([]);
+
+    await views("Sources").getByRole("button", { name: "Channels" }).click();
+    await shownRows("Channels, most visitors first");
+    expect(listRequests(api, "channel")).toHaveLength(1);
+    expect(listRequests(api, "channel")[0]).toContain("limit=10");
+    expect(listRequests(api, "utmTerm")).toEqual([]);
+  });
+
+  test("shows its rows at once when someone switches away and back", async () => {
+    installFakeApi();
+    renderApp(ANALYTICS);
+
+    await views("Sources").getByRole("button", { name: "Channels" }).click();
+    await shownRows("Channels, most visitors first");
+    await views("Sources").getByRole("button", { name: "Sources" }).click();
+    await views("Sources").getByRole("button", { name: "Channels" }).click();
+    // From the cache: no loading state in between.
+    expect(
+      page.getByRole("table", { name: "Channels, most visitors first" }).elements(),
+    ).toHaveLength(1);
+    expect(document.querySelector("[aria-label=Loading]")).toBeNull();
+  });
+
+  test("shows a loading state, then its rows", async () => {
+    let release: (() => void) | undefined;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    installFakeApi({
+      list: async (query) => {
+        await waiting;
+        return fakeList(query);
+      },
+    });
+    renderApp(ANALYTICS);
+
+    await views("Campaigns").getByRole("button", { name: "Term", exact: true }).click();
+    await expect.element(page.getByLabelText("Loading")).toBeVisible();
+    release?.();
+    expect((await shownRows("Term, most visitors first")).map((row) => row[0])).toEqual([
+      "No term",
+      "web analytics",
+    ]);
+  });
+
+  test("says why it did not load, and retries", async () => {
+    let fail = true;
+    installFakeApi({
+      list: (query) =>
+        fail
+          ? json({ error: "internal", message: "The list is unavailable." }, 500)
+          : fakeList(query),
+    });
+    renderApp(ANALYTICS);
+
+    await views("Pages").getByRole("button", { name: "Hostnames" }).click();
+    await expect.element(page.getByText("The list could not load")).toBeVisible();
+    await expect.element(page.getByText("The list is unavailable.")).toBeVisible();
+    fail = false;
+    await page.getByRole("button", { name: "Retry" }).click();
+    expect((await shownRows("Hostnames, most visitors first")).map((row) => row[0])).toEqual([
+      "shop.example",
+      "docs.shop.example",
+      "Unknown",
+    ]);
+  });
+
+  test("on a shared link, from the link's own list route", async () => {
+    const api = installFakeApi({ signedIn: false });
+    renderShare(SHARED);
+
+    await views("Pages").getByRole("button", { name: "Exit" }).click();
+    await shownRows("Exit, most visitors first");
+    expect(
+      api.requests.some(
+        (path) =>
+          path.startsWith(`/api/share/${FAKE_SHARE_TOKEN}/analytics/list?`) &&
+          path.includes("report=exitPage"),
+      ),
+    ).toBe(true);
+    expect(api.requests.some((path) => path.startsWith("/api/projects/"))).toBe(false);
   });
 });
