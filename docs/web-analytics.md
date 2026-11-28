@@ -919,6 +919,40 @@ GET /api/projects/:id/analytics/now[?environment=staging]
 
 Signed-in dashboard users, through one endpoint per page ([dashboard.md](dashboard.md#83-report-endpoints)), and anyone with database access through `vp run report`. A public project key never reads data (section 2). Each breakdown name maps to a fixed SQL expression, so request text never becomes SQL, and row limits are clamped to 1-100.
 
+Anyone with a project's [shared link](#shared-links) reads its Web analytics page, in one environment, without signing in.
+
+### Shared links
+
+A secret address, `/share/<token>`, that shows one project's Web analytics page to anyone who has it, read-only, without signing in. Code: `apps/api/src/share/`, `apps/web/src/share/`, and `features/analytics/scope.ts`; who manages them: [access](access.md#shared-links); the settings tab: [dashboard](dashboard.md#shared-links).
+
+**What it shows.** The Web analytics page itself: the summary, the chart, every list and its Show all, custom events, the goals (read-only, shown once there are some), and Right now's live count, for the environment chosen when the link was made (production by default). The period picker, the filters, and the goal filter work as on the dashboard; each is in the page's address. There is no environment picker, and the answers name no other environment.
+
+**What it never shows.** Users, Product analytics, Errors, Replays, Heatmaps, Speed, Monitoring, the project's settings and keys, and anything about members. No user ID, visitor ID, or replay is in any answer: the routes answer the same aggregates as the dashboard's report routes. No link leads into the dashboard: the heatmap and event links, the Right now view, Add goal, and the install hint are the dashboard's alone. The page names the project, with its icon, and says "Shared with Ottertrail. Read-only."
+
+**One page, two scopes.** The page's components (`analytics-page.tsx`, its lists, Show all, the goals, the filter links) read an `AnalyticsScope` (`scope.ts`): where the reports are read (`/api/projects/<id>` or `/api/share/<token>`), how a link changes the address, and the dashboard's extras, which a shared link has none of. The dashboard's scope is `dashboard-analytics-page.tsx`; a shared link's is `src/share/share-app.tsx`. On the API, the dashboard's routes and the shared link's call the same functions (`analyticsAnswer`, `listAnswer`, `nowAnswer`), and `projectAnalytics` returns every list. So a list added to the page appears on shared links with no more work, as long as it is part of the page's answer.
+
+**Its own small app.** `share.html` is a second entry of the dashboard's build, with `src/share/main.tsx`: React, React Query, the page and its charts. It loads none of the signed-in code (the router, the session check, the sidebar, the access checks): about 1,130 kB, 358 kB gzipped, most of it Recharts (127 kB). The build fails above `SHARE_JS_BUDGET` (`apps/web/vite.config.ts`), measured apart from the dashboard's own budget, which the shared page does not change. The API serves `share.html` for `/share/*` with `X-Robots-Tag: noindex, nofollow`, and the page has `<meta name="robots" content="noindex, nofollow">` and `no-referrer`. The dashboard's headers apply as well: its Content Security Policy, `frame-ancestors 'none'`, so a link cannot be embedded in a frame.
+
+**The token.** 32 random bytes (256 bits), 43 URL-safe characters, in the address's path. Only its SHA-256 hash is stored, and links are found by it, so a copy of the database holds no working link. The full address is shown once, when it is made, with a copy button; the settings then show its name and first 6 characters. Revoking deletes the row, so the link stops at once. This is stricter than the project's keys, which stay readable to those who manage the project: a key sends data in, while a link reads it out, and a lost link is replaced by a new one.
+
+**The routes.**
+
+```text
+GET /api/share/:token                       the project's name and icon, the environment, the timezone
+GET /api/share/:token/icon                  the project's icon
+GET /api/share/:token/analytics             the page, with the same query as the dashboard's, without environment
+GET /api/share/:token/analytics/list        one full list
+GET /api/share/:token/analytics/now         Right now
+```
+
+- The project and environment come from the link only. The routes take no project ID, and refuse `environment`, as any unknown parameter (400).
+- A malformed, unknown, or revoked token answers one 404 with one body.
+- Limited per client address, an IPv6 address by its /64, before any database work (60, then 1 a second, `SHARE_IP_LIMIT`), then per link from every address together (300, then 5 a second, `SHARE_LINK_LIMIT`); 429 with `Retry-After`. The reports run within the dashboard's query limit, and Right now in its live slot, as on the dashboard.
+- Answers are never cached (`no-store`), carry `noindex, nofollow` and `no-referrer`, and the request log masks the token (`server-log/redact.ts`).
+- Opening the page records when the link was last opened, at most once a minute.
+
+**Limits.** Anyone who has the address sees the page until the link is revoked: a forwarded email or chat message passes it on. There is no expiry and no password. The limits are kept in each API process's memory, as every limit is. A link stays when the user who made it is removed; it goes with its project.
+
 ### Try it
 
 ```sh
