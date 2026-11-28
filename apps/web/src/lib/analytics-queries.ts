@@ -8,6 +8,8 @@ import {
   type CustomEventRow,
   type DayPoint,
   DEFAULT_ENVIRONMENT,
+  type EventList,
+  type EventValueRow,
   type Filters,
   type ListReport,
   type PageGoalResult,
@@ -77,6 +79,22 @@ const isCustomEventRow = (value: unknown): value is CustomEventRow =>
   isNumber(value.events) &&
   isNumber(value.visitors);
 
+const isEventValueRow = (value: unknown): value is EventValueRow =>
+  isRecord(value) &&
+  typeof value.value === "string" &&
+  isNumber(value.visitors) &&
+  isNumber(value.events) &&
+  hasConverted(value);
+
+export const EVENT_LISTS: readonly EventList[] = [
+  "outboundLinks",
+  "fileDownloads",
+  "notFoundPages",
+];
+
+const isEventList = (report: ListReport): report is EventList =>
+  EVENT_LISTS.some((list) => list === report);
+
 const isPreviousPeriod = (value: unknown): value is PreviousPeriod =>
   isRecord(value) &&
   typeof value.firstDay === "string" &&
@@ -107,6 +125,7 @@ export const isAnalytics = (value: unknown): value is Analytics =>
   isListOf(value.days, isDayPoint) &&
   isListOf(value.pages, isPageRow) &&
   isListOf(value.customEvents, isCustomEventRow) &&
+  EVENT_LISTS.every((list) => isListOf(value[list], isEventValueRow)) &&
   isListOf(value.goals, isGoalResult) &&
   (value.goal === null || isPageGoal(value.goal)) &&
   isPreviousPeriod(value.previous) &&
@@ -119,7 +138,13 @@ export const isAnalytics = (value: unknown): value is Analytics =>
 export type GoalChoice = { id: string } | { event: string };
 
 /** The tracker's own events: never a goal (product events only). */
-export const TRACKER_EVENTS: readonly string[] = ["pageview", "engagement", "error", "vitals"];
+export const TRACKER_EVENTS: readonly string[] = [
+  "pageview",
+  "engagement",
+  "error",
+  "vitals",
+  "not_found",
+];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 /** As collection allows a name: 1 to 200 characters, no control characters. */
@@ -222,6 +247,19 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
             name: row.path,
             visitors: row.visitors,
             second: row.pageviews,
+            converted: row.converted,
+          })),
+        }
+      : null;
+  }
+  if (isEventList(report)) {
+    return isListOf(value.rows, isEventValueRow)
+      ? {
+          hasMore: more,
+          rows: value.rows.map((row) => ({
+            name: row.value,
+            visitors: row.visitors,
+            second: row.events,
             converted: row.converted,
           })),
         }

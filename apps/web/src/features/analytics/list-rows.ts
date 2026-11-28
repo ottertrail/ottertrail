@@ -4,6 +4,7 @@ import {
   type BreakdownRow,
   type CustomEventRow,
   DEFAULT_ENVIRONMENT,
+  type EventValueRow,
   DEFAULT_PERIOD,
   FILTER_LABELS,
   type FilterName,
@@ -27,6 +28,10 @@ export function valueText(name: FilterName, value: string): string {
   }
   if (name === "country") {
     return countryName(value);
+  }
+  // A link without its scheme: github.com/acme/widgets.
+  if (name === "outbound" || name === "download") {
+    return value.replace(/^https?:\/\//u, "");
   }
   return name === "deviceType" ? capitalize(value) : value;
 }
@@ -76,6 +81,9 @@ export const LIST_FILTERS: Record<ListReport, FilterName | undefined> = {
   browser: "browser",
   os: "os",
   release: "release",
+  outboundLinks: "outbound",
+  fileDownloads: "download",
+  notFoundPages: "notFound",
 };
 
 export type FilterLinkFor = (name: FilterName, value: string) => React.ReactNode;
@@ -122,6 +130,13 @@ export const fromBreakdown = (rows: readonly BreakdownRow[]): ListRow[] =>
     name: row.value,
     visitors: row.visitors,
     second: row.visits,
+    converted: row.converted,
+  }));
+export const fromEventValues = (rows: readonly EventValueRow[]): ListRow[] =>
+  rows.map((row) => ({
+    name: row.value,
+    visitors: row.visitors,
+    second: row.events,
     converted: row.converted,
   }));
 export const fromEvents = (rows: readonly CustomEventRow[]): ListRow[] =>

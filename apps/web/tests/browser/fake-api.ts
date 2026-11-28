@@ -2502,7 +2502,13 @@ export function fakeList(query: URLSearchParams) {
   const offset = Number(query.get("offset") ?? 0);
   const limit = Number(query.get("limit") ?? 50);
   const names = Array.from({ length: 120 }, (_, i) =>
-    report === "pages" ? `/page-${i + 1}` : `${report}-${i + 1}`,
+    report === "pages"
+      ? `/page-${i + 1}`
+      : report === "notFoundPages"
+        ? `/missing-${i + 1}`
+        : report === "outboundLinks" || report === "fileDownloads"
+          ? `https://example.org/${report}-${i + 1}`
+          : `${report}-${i + 1}`,
   ).filter((name) => name.toLowerCase().includes(search));
   // With a goal, a tenth of each row's visitors converted, so the order stays.
   const goal = query.has("goal") || query.has("goalEvent");
@@ -2512,6 +2518,8 @@ export function fakeList(query: URLSearchParams) {
     if (report === "pages")
       return { path: name, pageviews: visitors * 2, visitors, avgEngagedMs: null, ...converted };
     if (report === "customEvents") return { name, events: visitors * 2, visitors };
+    if (["outboundLinks", "fileDownloads", "notFoundPages"].includes(report))
+      return { value: name, visitors, events: visitors + 3, ...converted };
     return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5, ...converted };
   });
   return { rows, hasMore: offset + limit < names.length };
@@ -2885,6 +2893,19 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       release: [row("1.4.2", 500, 540), row(null, 265, 284)],
     },
     customEvents: [{ name: "signup", events: 140, visitors: 127 }],
+    outboundLinks: [
+      { value: "https://github.com/acme/shop-sdk", visitors: 42, events: 57 },
+      { value: "https://status.acme.example/", visitors: 18, events: 21 },
+      { value: "https://www.youtube.com/watch", visitors: 9, events: 9 },
+    ],
+    fileDownloads: [
+      { value: "https://acme.example/files/price-list.pdf", visitors: 36, events: 41 },
+      { value: "https://cdn.acme.example/releases/acme-cli-2.4.0.dmg", visitors: 12, events: 12 },
+    ],
+    notFoundPages: [
+      { value: "/old-pricing", visitors: 14, events: 15 },
+      { value: "/blog/2019/launch", visitors: 6, events: 6 },
+    ],
     goals: fakeGoals(),
     goal: null,
     // The same week before, up to 15:00 on its last day (07:00 UTC).
@@ -3012,6 +3033,9 @@ export function withGoal(
     },
     days: analytics.days.map((day, index) => ({ ...day, converted: perDay[index] ?? 0 })),
     pages: rows(analytics.pages, (item) => item.path),
+    outboundLinks: rows(analytics.outboundLinks, (item) => item.value),
+    fileDownloads: rows(analytics.fileDownloads, (item) => item.value),
+    notFoundPages: rows(analytics.notFoundPages, (item) => item.value),
     breakdowns,
   };
 }
@@ -3047,6 +3071,9 @@ export function emptyAnalytics(): Analytics {
       release: [],
     },
     customEvents: [],
+    outboundLinks: [],
+    fileDownloads: [],
+    notFoundPages: [],
     goals: [],
     previous: { ...fixture.previous, summary: empty },
   };

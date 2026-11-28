@@ -105,6 +105,15 @@ export interface CustomEventRow {
   visitors: number;
 }
 
+/** An outbound link's or a file's origin and path, or a not found page's path. */
+export interface EventValueRow {
+  value: string;
+  visitors: number;
+  events: number;
+  /** With a goal: the visitors who did it in a visit that reached it. */
+  converted?: number;
+}
+
 export const BREAKDOWNS = [
   "source",
   "utmCampaign",
@@ -157,6 +166,9 @@ export interface Analytics {
   pages: PageRow[];
   breakdowns: Record<Breakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
+  outboundLinks: EventValueRow[];
+  fileDownloads: EventValueRow[];
+  notFoundPages: EventValueRow[];
   /** The project's saved goals, in the order added, counted in the same visits. */
   goals: GoalResult[];
   /** The goal the page is filtered by, with its counts; null without one. */
@@ -178,11 +190,21 @@ export interface PageGoalResult {
 }
 
 /** Every list of the analytics page; each can be read in full (analytics-queries.ts). */
-export type ListReport = "pages" | "customEvents" | Breakdown;
+export type ListReport = "pages" | "customEvents" | Breakdown | EventList;
 
-/** "page" matches visits that viewed that page. Other filters match exact property values. */
+/** The lists of the tracker's link and not found events. */
+export type EventList = "outboundLinks" | "fileDownloads" | "notFoundPages";
+
+/**
+ * "page" matches visits that viewed that page; "outbound", "download", and
+ * "notFound" visits with that link clicked or that not found page. Other
+ * filters match exact property values.
+ */
 export const FILTER_NAMES = [
   "page",
+  "outbound",
+  "download",
+  "notFound",
   "entryPage",
   "exitPage",
   "source",
@@ -194,7 +216,7 @@ export const FILTER_NAMES = [
   "browser",
   "os",
   "release",
-] as const satisfies readonly ("page" | Breakdown)[];
+] as const satisfies readonly ("page" | "outbound" | "download" | "notFound" | Breakdown)[];
 
 export type FilterName = (typeof FILTER_NAMES)[number];
 
@@ -203,6 +225,9 @@ export type Filters = { [Name in FilterName]?: string | undefined };
 
 export const FILTER_LABELS: Record<FilterName, string> = {
   page: "Page",
+  outbound: "Outbound link",
+  download: "File download",
+  notFound: "Not found page",
   entryPage: "Entry page",
   exitPage: "Exit page",
   source: "Source",
@@ -245,6 +270,9 @@ export function filtersFrom(
 ): Record<FilterName, string | undefined> {
   return {
     page: filterValue(search.page),
+    outbound: filterValue(search.outbound),
+    download: filterValue(search.download),
+    notFound: filterValue(search.notFound),
     entryPage: filterValue(search.entryPage),
     exitPage: filterValue(search.exitPage),
     source: filterValue(search.source),

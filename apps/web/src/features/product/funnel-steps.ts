@@ -49,7 +49,13 @@ const CONTROL = /[\u0000-\u001F\u007F]/u;
 const MAX_PATH = 500;
 
 /** The tracker's own events, which a step can never be (apps/api/src/product/steps.ts). */
-const TRACKER_EVENTS: readonly string[] = ["pageview", "engagement", "error", "vitals"];
+const TRACKER_EVENTS: readonly string[] = [
+  "pageview",
+  "engagement",
+  "error",
+  "vitals",
+  "not_found",
+];
 
 export function stepProblems(step: DraftStep): StepProblems {
   const problems: StepProblems = {};

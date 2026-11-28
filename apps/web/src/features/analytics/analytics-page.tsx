@@ -46,6 +46,7 @@ import {
   type Breakdown,
   type DayPoint,
   DEFAULT_ENVIRONMENT,
+  type EventList,
   type Filters,
   type ListReport,
   type PageGoalResult,
@@ -89,6 +90,7 @@ import {
   filterText,
   fromBreakdown,
   fromEvents,
+  fromEventValues,
   fromPages,
   goalText,
   type PageSearch,
@@ -133,6 +135,43 @@ interface ListTab {
   report: ListReport;
   rows: RankedRow[];
 }
+
+/**
+ * The tracker's link and not found lists (docs/web-analytics.md, "Links
+ * and not found pages"). Empty, each says how it fills.
+ */
+const EVENT_SECTIONS = [
+  {
+    report: "outboundLinks",
+    title: "Outbound links",
+    nameHeading: "Link",
+    secondaryHeading: "Clicks",
+    empty:
+      'No clicks on links to other sites in this period. The tracker records them unless its snippet has data-outbound="off".',
+  },
+  {
+    report: "fileDownloads",
+    title: "File downloads",
+    nameHeading: "File",
+    secondaryHeading: "Downloads",
+    empty:
+      'No file downloads in this period. Clicks on links to files such as .pdf or .zip count unless the snippet has data-downloads="off".',
+  },
+  {
+    report: "notFoundPages",
+    title: "Not found pages",
+    nameHeading: "Path",
+    secondaryHeading: "Views",
+    empty:
+      'No not found pages in this period. To count them, add <meta name="ottertrail" content="not-found"> to your not found page.',
+  },
+] as const satisfies readonly {
+  report: EventList;
+  title: string;
+  nameHeading: string;
+  secondaryHeading: string;
+  empty: string;
+}[];
 
 function visitsTab(
   value: string,
@@ -688,6 +727,28 @@ function Reports({
               },
             ]}
           />
+          {EVENT_SECTIONS.map((section) => (
+            <BreakdownSection
+              key={section.report}
+              {...card}
+              title={section.title}
+              tabs={[
+                {
+                  value: section.report,
+                  label: section.title,
+                  nameHeading: section.nameHeading,
+                  secondaryHeading: section.secondaryHeading,
+                  empty: section.empty,
+                  report: section.report,
+                  rows: rankedRows(
+                    section.report,
+                    fromEventValues(analytics[section.report]),
+                    link,
+                  ),
+                },
+              ]}
+            />
+          ))}
         </div>
       </div>
       <GoalsSection analytics={analytics} projectId={projectId} search={search} />
@@ -714,7 +775,12 @@ function GoalsSection({
     <GoalsCard
       goals={analytics.goals}
       projectId={projectId}
-      eventNames={analytics.customEvents.map((event) => event.name)}
+      // The tracker's link events can be goals too (docs/product-analytics.md, "Goals").
+      eventNames={[
+        ...analytics.customEvents.map((event) => event.name),
+        "outbound_link",
+        "file_download",
+      ]}
       search={search}
     />
   );

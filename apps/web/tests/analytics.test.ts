@@ -169,6 +169,9 @@ describe("isAnalytics", () => {
     pages: [{ path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null }],
     breakdowns: { ...empty, source: [{ value: null, visitors: 1, visits: 1, bounceRate: 1 }] },
     customEvents: [],
+    outboundLinks: [],
+    fileDownloads: [],
+    notFoundPages: [],
     goals: [
       {
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
