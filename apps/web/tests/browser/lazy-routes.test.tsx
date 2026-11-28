@@ -46,6 +46,10 @@ vi.mock("../../src/features/analytics/custom-range-dialog.tsx", () => {
   throw new TypeError(`${FAILED_FETCH}: https://ottertrail.example/assets/custom-range-old.js`);
 });
 
+vi.mock("../../src/features/analytics/filter-form.tsx", () => {
+  throw new TypeError(`${FAILED_FETCH}: https://ottertrail.example/assets/filter-form-old.js`);
+});
+
 vi.mock("../../src/features/notifications/notification-panel.tsx", () => {
   throw new TypeError(
     `${FAILED_FETCH}: https://ottertrail.example/assets/notification-panel-old.js`,
@@ -209,6 +213,27 @@ describe("the custom range dialog", () => {
     await expect.element(dialog).not.toBeInTheDocument();
     // The page is still there, with its period picker.
     await expect.element(page.getByRole("combobox", { name: "Period" })).toBeVisible();
+  });
+});
+
+describe("the filter editor", () => {
+  test("whose code fails to download says so in a dialog, and the chips stay", async () => {
+    reload.calls = 0;
+    installFakeApi();
+    renderApp(`/projects/${PROJECT.id}/web-analytics?country.not=DE`);
+
+    // The chip's words need no editor code.
+    const chip = page.getByRole("button", { name: "Edit the filter Country is not Germany" });
+    await chip.click();
+
+    const dialog = page.getByRole("dialog", { name: "The filter editor could not load" });
+    await expect.element(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Reload" }).click();
+    expect(reload.calls).toBe(1);
+
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.element(chip).toBeVisible();
   });
 });
 

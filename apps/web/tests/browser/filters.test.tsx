@@ -297,6 +297,24 @@ describe("operators and several values", () => {
     await expect.poll(chips).toEqual(["Country is not France, Germany"]);
   });
 
+  test("the chip opens and closes its editor, and the focus goes back to it", async () => {
+    installFakeApi();
+    renderApp(`${ANALYTICS}?page.contains=/blog`);
+    const chip = page.getByRole("button", { name: "Edit the filter Page contains /blog" });
+
+    await expect.element(chip).toHaveAttribute("aria-expanded", "false");
+    await chip.click();
+    await expect.element(page.getByRole("button", { name: "Apply" })).toBeVisible();
+    await expect.element(chip).toHaveAttribute("aria-expanded", "true");
+    // A second press on the chip closes it rather than opening it again.
+    await chip.click();
+    await expect.element(page.getByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+
+    await chip.click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect.poll(() => document.activeElement === chip.element()).toBe(true);
+  });
+
   test("Cancel and Escape leave the filters as they were", async () => {
     installFakeApi();
     const router = renderApp(`${ANALYTICS}?page.contains=/blog`);
