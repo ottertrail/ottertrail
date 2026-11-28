@@ -28,7 +28,7 @@ import {
 } from "./overlay-names.ts";
 import { randomId } from "./random-id.ts";
 import { type Recorder, REPLAY_PROPERTY, type ReplayConfig } from "./replay-names.ts";
-import { cleanSignature, cleanUserId } from "./sanitize.ts";
+import { cleanSignature, cleanUserId, sanitizeProperties } from "./sanitize.ts";
 import {
   pageLoadTrace,
   type TracedRequest,
@@ -67,6 +67,12 @@ export interface OttertrailApi {
   replay(on: boolean): void;
   /** Records the page shown now as not found, once per page view. */
   notFound(): void;
+  /**
+   * Records a pageview of the page shown now, or of `path` on this site
+   * (such as "/products/:id", to group pages), cleaned as every page is.
+   * For data-pageviews="manual", which turns automatic pageviews off.
+   */
+  pageview(path?: string): void;
 }
 
 declare global {
@@ -92,10 +98,25 @@ const ENVIRONMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // eslint-disable-next-line no-control-regex -- control characters are what it refuses
 const RELEASE_PATTERN = /^[^\s\u0000-\u001F\u007F-\u009F]{1,200}$/u;
 
-/** The first page of a visit: its URL and the external referrer, if any. */
-function landing(): Page {
-  const referrer = cleanReferrer(document.referrer);
-  return { url: cleanPageUrl(location.href), ...(referrer === undefined ? {} : { referrer }) };
+/** The tracker's own events: track() refuses their names, and a before-send hook keeps their properties. */
+const OWN_EVENTS = ["pageview", ENGAGEMENT, ERROR, VITALS, OUTBOUND_LINK, FILE_DOWNLOAD, NOT_FOUND];
+
+/** An element's custom event on click (data-ottertrail-event), and the prefix of its properties. */
+const EVENT_ATTRIBUTE = "data-ottertrail-event";
+const EVENT_PROPERTY_PREFIX = `${EVENT_ATTRIBUTE}-`;
+
+/**
+ * The site owner's own browser, when its localStorage has
+ * ottertrail_ignore = "true": read only, never written, so nothing is stored
+ * on a visitor's device. Storage that cannot be read (blocked, sandboxed)
+ * counts as not set.
+ */
+function ignoredBrowser(): boolean {
+  try {
+    return window.localStorage.getItem("ottertrail_ignore") === "true";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -141,6 +162,23 @@ const REAL = Symbol.for("ottertrail.tracker");
       console.warn("Ottertrail: data-release is invalid. The release is omitted.");
       release = undefined;
     }
+    const hashRoutes = script?.dataset.hashRoutes === "on";
+    const automatic = script?.dataset.pageviews !== "manual";
+    const ignored = ignoredBrowser();
+    if (ignored) {
+      console.info(
+        "Ottertrail: this browser is ignored (localStorage.ottertrail_ignore). Nothing is sent.",
+      );
+    }
+
+    /** The first page of a visit: its URL and the external referrer, if any. */
+    const landing = (href = location.href): Page => {
+      const referrer = cleanReferrer(document.referrer);
+      return {
+        url: cleanPageUrl(href, hashRoutes),
+        ...(referrer === undefined ? {} : { referrer }),
+      };
+    };
 
     // Web Vitals (v.js), session replay (r.js), heatmaps (h.js), and the
     // heatmap overlay (o.js) come from beside this script, unless the page
@@ -185,7 +223,7 @@ const REAL = Symbol.for("ottertrail.tracker");
     let loading = !overlay;
     const held: (() => void)[] = [];
     const whenSending = (run: () => void) => {
-      if (shown) return;
+      if (shown || ignored) return;
       if (loading) run();
       else held.push(run);
     };
@@ -200,13 +238,74 @@ const REAL = Symbol.for("ottertrail.tracker");
       ...(environment === undefined ? {} : { environment }),
       ...(release === undefined ? {} : { release }),
     });
+    // Ignored: nothing is queued or sent, and no other script loads but o.js,
+    // so the owner can still open a heatmap overlay.
+    if (ignored) tracker.discard();
+
+    // The site's before-send hook (data-before-send): a global function's
+    // name, looked up for each event, so a later script may define it too.
+    // When it is named but missing, throws, or returns no object, the event
+    // is dropped, not sent as it was: the hook may be what removes personal
+    // data from it. Its result is cleaned as any event is. Returns the page
+    // the event went with, or undefined when it was dropped.
+    const hookName = script?.dataset.beforeSend;
+    const send = (
+      name: string,
+      page: Page,
+      properties?: unknown,
+      extra?: Parameters<typeof tracker.track>[3],
+    ): Page | undefined => {
+      // A page whose URL is too long to send ("") sends nothing.
+      if (ignored || page.url === "") return undefined;
+      if (hookName === undefined) {
+        tracker.track(name, page, properties, extra);
+        return page;
+      }
+      let result: unknown;
+      try {
+        const hook: unknown = Reflect.get(window, hookName);
+        if (typeof hook !== "function") {
+          warnOnce(`data-before-send names no function "${hookName}". Events are dropped.`);
+          return undefined;
+        }
+        result = hook({
+          name,
+          url: page.url,
+          referrer: page.referrer,
+          properties: sanitizeProperties(properties),
+        });
+        if (result === null) return undefined;
+        if (typeof result !== "object") throw new Error();
+        const changed: { url?: unknown; referrer?: unknown; properties?: unknown } = result;
+        if (typeof changed.url !== "string") throw new Error();
+        const url = cleanPageUrl(changed.url, hashRoutes);
+        // Another origin could refuse the whole batch: its hostname may not be allowed.
+        if (new URL(url).origin !== new URL(page.url).origin) throw new Error();
+        const referrer =
+          typeof changed.referrer === "string" ? cleanReferrer(changed.referrer) : undefined;
+        const sent = { url, ...(referrer === undefined ? {} : { referrer }) };
+        // The tracker's own measurements stay as they are: the API checks them.
+        tracker.track(
+          name,
+          sent,
+          name === ERROR || !OWN_EVENTS.includes(name) ? changed.properties : properties,
+          extra,
+        );
+        return sent;
+      } catch {
+        warnOnce(
+          "the before-send hook threw or returned no event on this site. The event is dropped.",
+        );
+        return undefined;
+      }
+    };
 
     /**
      * The visit counts, for now: the tracker sends what it holds, and, with
      * `scripts`, the scripts that wait load. Hidden or left, only the former.
      */
     const unpause = (scripts: boolean) => {
-      if (shown) return;
+      if (shown || ignored) return;
       if (!sending) {
         sending = true;
         tracker.resume();
@@ -315,7 +414,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       const measured = Object.entries(vitals);
       if (vitalsSent || landedOn === undefined || measured.length === 0) return;
       vitalsSent = true;
-      tracker.track(
+      send(
         VITALS,
         landedOn.page,
         Object.fromEntries(measured.map(([name, value]) => [name.toLowerCase(), value])),
@@ -328,11 +427,12 @@ const REAL = Symbol.for("ottertrail.tracker");
       // A tab left open for days still reports at most what the API accepts.
       const engagedMs = Math.min(engaged.take(), MAX_ENGAGED_MS);
       if (current !== undefined && engagedMs >= MIN_REPORTED_MS) {
-        tracker.track(ENGAGEMENT, current, { engagedMs }, { user: viewedBy });
+        send(ENGAGEMENT, current, { engagedMs }, { user: viewedBy });
       }
     };
 
-    const pageview = () => {
+    /** A pageview of the page shown now, or of `href` (pageview(path)): it is cleaned the same way. */
+    const pageview = (href = location.href) => {
       const landed = current === undefined;
       if (!landed) {
         reportEngagement(); // The page being left, before the new one.
@@ -340,11 +440,11 @@ const REAL = Symbol.for("ottertrail.tracker");
       // After the first page, the "referrer" is the previous page in the app,
       // as it would be for a normal page load.
       if (current === undefined) {
-        current = landing();
+        current = landing(href);
       } else {
         const referrer = cleanReferrer(current.url);
         current = {
-          url: cleanPageUrl(location.href),
+          url: cleanPageUrl(href, hashRoutes),
           ...(referrer === undefined ? {} : { referrer }),
         };
       }
@@ -355,17 +455,19 @@ const REAL = Symbol.for("ottertrail.tracker");
       loadTrace = undefined;
       requestsTraced = tracesOn && Math.random() < (tracesSample ?? 1);
       landedOn ??= { page: current, user, trace: pageTrace };
-      tracker.track("pageview", current, undefined, { trace: pageTrace });
+      const sent = send("pageview", current, undefined, { trace: pageTrace });
       // Only on a page load: an app's later pages keep the head the server sent.
       if (landed && document.querySelector('meta[name="ottertrail"][content="not-found"]')) {
         notFound();
       }
-      // Heatmaps: this pageview is in the sample or not, decided now, kept nowhere.
+      // Heatmaps: this pageview is in the sample or not, decided now, kept
+      // nowhere. They follow the pageview as sent: a before-send hook that
+      // changed its URL or dropped it changes or drops them too.
       if (heatmapsDeclared) {
         heatmapPage =
           // A page whose URL is too long to send ("") has none.
-          current.url !== "" && Math.random() < (heatmapSample ?? 1)
-            ? { url: current.url, referrer: current.referrer, at: Date.now() }
+          sent !== undefined && sent.url !== "" && Math.random() < (heatmapSample ?? 1)
+            ? { url: sent.url, referrer: sent.referrer, at: Date.now() }
             : null;
         if (heatmapPage !== null) loadHeatmaps();
         heatmaps?.navigated();
@@ -426,7 +528,7 @@ const REAL = Symbol.for("ottertrail.tracker");
     const errors = createErrorCapture((error, properties) => {
       const replayId = recorder?.error();
       const requests = recentRequests?.() ?? [];
-      tracker.track(ERROR, current ?? landing(), properties, {
+      send(ERROR, current ?? landing(), properties, {
         error: {
           ...error,
           ...(replayId === undefined ? {} : { replayId }),
@@ -448,33 +550,45 @@ const REAL = Symbol.for("ottertrail.tracker");
     const notFound = () => {
       if (notFoundOn && current !== undefined && notFoundPage !== current) {
         notFoundPage = current;
-        tracker.track(NOT_FOUND, current);
+        send(NOT_FOUND, current);
       }
     };
     const linksOn = {
       outbound: script?.dataset.outbound !== "off",
       downloads: script?.dataset.downloads !== "off",
     };
-    // One listener for every link, in the capture phase, so a page's own
+    // One listener for every click, in the capture phase, so a page's own
     // handler that stops the click cannot hide it. It never delays the
     // navigation: the event leaves at once, in a request that outlives the page.
+    // It records clicks on links (links.ts), and the custom event of an
+    // element marked with data-ottertrail-event, with its properties from
+    // data-ottertrail-event-* attributes, and no other attribute or text.
     const clicked = (event: MouseEvent) => {
       try {
         // The main button, or the middle one (auxclick), which opens a new tab; not the menu's.
         const { target } = event;
-        const link =
-          event.button < 2 && target instanceof Element ? target.closest("a[href]") : null;
+        if (event.button > 1 || !(target instanceof Element)) return;
+        const link = target.closest("a[href]");
         const click = link && linkClick(link, location.hostname, linksOn);
-        if (click)
-          tracker.track(click.name, current ?? landing(), { url: click.url }, { now: true });
+        const marked = target.closest(`[${EVENT_ATTRIBUTE}]`);
+        // With a marked element, its event sends both in one request.
+        if (click) send(click.name, current ?? landing(), { url: click.url }, { now: !marked });
+        // A middle click counts only on a link, where it opens the page in a new tab.
+        if (marked && (event.type === "click" || link)) {
+          const properties: Record<string, string> = {};
+          for (const { name, value } of Array.from(marked.attributes)) {
+            if (name.startsWith(EVENT_PROPERTY_PREFIX)) {
+              properties[name.slice(EVENT_PROPERTY_PREFIX.length)] = value;
+            }
+          }
+          api.track(marked.getAttribute(EVENT_ATTRIBUTE) ?? "", properties);
+        }
       } catch {
         // Never break the page the tracker runs on.
       }
     };
-    if (linksOn.outbound || linksOn.downloads) {
-      document.addEventListener("click", clicked, true);
-      document.addEventListener("auxclick", clicked, true);
-    }
+    document.addEventListener("click", clicked, true);
+    document.addEventListener("auxclick", clicked, true);
 
     if (beside && script?.dataset.vitals !== "off") {
       // A page restored from the back/forward cache is a new page load. In
@@ -544,6 +658,27 @@ const REAL = Symbol.for("ottertrail.tracker");
       whenSending(() => load("h.js", HEATMAP_PROPERTY, config));
     };
 
+    /** pageview(path): what a page's script passes, checked. */
+    const pageviewOf = (path: unknown) => {
+      try {
+        let href = location.href;
+        if (path !== undefined) {
+          if (typeof path !== "string" || !path.startsWith("/")) throw new Error();
+          const url = new URL(path, location.origin);
+          // A path such as "/\evil.example" would leave the site.
+          if (url.origin !== location.origin) throw new Error();
+          // The page's UTM tags stay.
+          url.search = location.search;
+          href = url.href;
+        }
+        pageview(href);
+      } catch {
+        warnOnce(
+          'pageview(path) takes a path on this site, such as "/products/:id". Nothing is recorded.',
+        );
+      }
+    };
+
     // The page's stand-in from before this script ran, with its queued calls.
     const early: unknown = window.ottertrail;
     const api: OttertrailApi = {
@@ -555,7 +690,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       replay: (on: unknown) => {
         try {
           // On the owner's page, opened for the overlay, nothing records.
-          if (on !== true || shown) {
+          if (on !== true || shown || ignored) {
             replayWanted = false;
             recorder?.stop();
           } else if (!replayDeclared) {
@@ -580,17 +715,14 @@ const REAL = Symbol.for("ottertrail.tracker");
       },
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
-        if (
-          ["pageview", ENGAGEMENT, ERROR, VITALS, OUTBOUND_LINK, FILE_DOWNLOAD, NOT_FOUND].includes(
-            name,
-          )
-        ) {
+        if (OWN_EVENTS.includes(name)) {
           console.warn(`Ottertrail: "${name}" is reserved. Use a different event name.`);
           return;
         }
         // At once: a site's event often comes just before the page is left.
-        tracker.track(name, current ?? landing(), properties, { now: true });
+        send(name, current ?? landing(), properties, { now: true });
       },
+      pageview: pageviewOf,
       flush: () => tracker.flush(),
     };
     Object.defineProperty(api, REAL, { value: true });
@@ -603,14 +735,20 @@ const REAL = Symbol.for("ottertrail.tracker");
       // later answer took back.
       const queued = early.q as unknown[];
       if (queued.length > 0) api.replay(queued[queued.length - 1] === true);
+      // Pageviews the stand-in queued, in order, for pages shown before this script ran.
+      if ("p" in early && Array.isArray(early.p)) {
+        for (const path of early.p as unknown[]) pageviewOf(path);
+      }
     }
 
     const start = () => {
       if (document.visibilityState === "visible") {
         engaged.resume();
       }
-      pageview();
-      watchNavigation(window, pageview);
+      if (automatic) {
+        pageview();
+        watchNavigation(window, () => pageview(), hashRoutes);
+      }
 
       // Back or forward to a page kept in the back/forward cache: the
       // browser shows it again without running this script again. A load
@@ -625,7 +763,7 @@ const REAL = Symbol.for("ottertrail.tracker");
             engaged.resume();
           }
           current = undefined; // As on a fresh load: a landing page.
-          pageview();
+          if (automatic) pageview();
         }
       });
     };

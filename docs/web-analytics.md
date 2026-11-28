@@ -272,7 +272,9 @@ The tracker runs on the customer's site (`example.com`) but sends to the Ottertr
 
 ### URL cleanup
 
-Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment. UTM values are trimmed and cut to 200 characters, without splitting a character such as an emoji in half. A tag that decodes to a NUL character (`%00`) is dropped, like a bad referrer.
+Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment, except a hash router's route (below). UTM values are trimmed and cut to 200 characters, without splitting a character such as an emoji in half. A tag that decodes to a NUL character (`%00`) is dropped, like a bad referrer.
+
+**Routes in the fragment.** A site with a hash router ([hash routes](#hash-routes)) has its pages in the fragment: `https://example.com/#/pricing`. The endpoint keeps a fragment only when it looks like a route: it starts with `#/`, it is cut at its first `?`, and what is left has no `=`, `&`, or second `#`, and is more than `#/`. Sign-in flows put tokens in the fragment (`#access_token=…`, `#/callback&code=…`, `#/access_token=…`), and none of those match. The route goes at the end of the stored path, so `https://example.com/app/#/pricing?plan=team` is stored as `/app/#/pricing`, and reports show it so. A route that would make the path longer than 2,048 characters is dropped, and the event is kept. The rule applies to every sender, as it trusts none; the tracker sends a route only with `data-hash-routes="on"`. Code: `routeOf` in `apps/api/src/collection/normalize.ts`, the same rule as the tracker's in `packages/tracker/src/url.ts`.
 
 Referrers lose their query string and fragment too: `https://news.ycombinator.com/item?id=1` is stored as `https://news.ycombinator.com/item`. App referrers keep their scheme and host (`android-app://com.google.android.gm`). A referrer that cannot be parsed is dropped, not rejected: a bad referrer is not a reason to lose the event.
 
@@ -378,7 +380,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 14.7 KB, 6.1 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, `dist/n.js` (1.6 KB gzipped) for [request tracing](#traces) with `data-traces="on"`, and `dist/o.js` (8.0 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 16.5 KB, 6.8 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, `dist/n.js` (1.6 KB gzipped) for [request tracing](#traces) with `data-traces="on"`, and `dist/o.js` (8.0 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
 
 ```html
 <script
@@ -408,14 +410,14 @@ The script runs on customers' pages, next to their own code, so:
 - It never throws into the page. Every entry point catches its own errors.
 - It never blocks the page: `defer` loads it after the HTML, and sending happens in the background.
 - It stays small, with no dependencies.
-- Secrets never leave the visitor's device. Page URLs are reduced to origin, path, and UTM tags, and referrers to origin and path, before anything is sent. The API removes them again, because it trusts no sender.
+- Secrets never leave the visitor's device. Page URLs are reduced to origin, path, and UTM tags (and the route, with [hash routes](#hash-routes)), and referrers to origin and path, before anything is sent. The API removes them again, because it trusts no sender.
 - Bad input does not cost other events. The API rejects a whole batch for one invalid event, so `track()` cleans names (control characters removed, 200 characters at most) and properties (flat values only, at most 30 keys, strings cut to 500 characters, 8 KB in total) before queuing them.
 
 ### What counts as a pageview
 
 A pageview is a new path. The tracker records one on page load, then watches for path changes without a page load: single-page apps (React Router, Next.js, Vue Router) change the URL with `history.pushState` and `replaceState`, and the back and forward buttons fire `popstate`. The tracker wraps those two methods and listens for `popstate`.
 
-A change to only the query string (`?tab=2`) or the fragment (`#faq`) is not a new pageview. Chrome can prerender a page before the visitor opens it; the tracker waits until the page is actually shown.
+A change to only the query string (`?tab=2`) or the fragment (`#faq`) is not a new pageview. A site with a hash router turns on [hash routes](#hash-routes), and a site that records its pageviews itself turns automatic ones off ([manual pageviews](#manual-pageviews)). Chrome can prerender a page before the visitor opens it; the tracker waits until the page is actually shown.
 
 Going back or forward to a page can show it from the browser's back/forward cache, without loading it or running the tracker again. A load without the cache would record a pageview, so the tracker records one on the restore (`pageshow` with `persisted`), with the page's original referrer, and times the page from zero: time spent in the cache is not engaged time.
 
@@ -460,7 +462,7 @@ The tracker measures how long each page is visible: time in a background tab or 
 How fast each page load felt, measured in the visitor's browser: Largest Contentful Paint (LCP, when the main content showed), Interaction to Next Paint (INP, how quickly the page answered clicks, taps, and keys), Cumulative Layout Shift (CLS, how much the content jumped), and, to explain them, First Contentful Paint (FCP) and Time to First Byte (TTFB).
 
 - **Measured by Google's [web-vitals](https://github.com/GoogleChrome/web-vitals) library** (Apache-2.0, version 6.2.3), which handles the cases a hand-written version would get wrong: back/forward cache restores, prerendered pages, background tabs, and how INP picks among many interactions.
-- **In a second script, `v.js`,** served beside the tracker (`/v.js`), which the tracker adds to the page when it starts: 3.7 KB gzipped, smaller than the tracker itself (6.1 KB), so a page that does not want it never downloads it (`data-vitals="off"`). The browser keeps the entries the library reads, so loading it after the page loses only interactions before it ran, which the tracker's `defer` makes rare.
+- **In a second script, `v.js`,** served beside the tracker (`/v.js`), which the tracker adds to the page when it starts: 3.7 KB gzipped, smaller than the tracker itself (6.8 KB), so a page that does not want it never downloads it (`data-vitals="off"`). The browser keeps the entries the library reads, so loading it after the page loses only interactions before it ran, which the tracker's `defer` makes rare.
 - **One `vitals` event per page load,** sent when the page is first hidden or left, with `lcp`, `inp`, `fcp`, and `ttfb` in whole milliseconds and `cls` to four decimals, as measured until then. It belongs to the page the visitor landed on and whoever was signed in at that moment, whatever in-app navigations came after: an early redirect, such as `/` to `/en/`, does not lose it, and the click that navigates still counts for INP. A value not measured by then is left out: INP without an interaction, LCP if the page was hidden before its main content showed. Later changes, such as a slow click after the visitor comes back to the tab, are not sent. A page restored from the back/forward cache is a new page load, with its own event. When the visitor leaves the page, the browser fires `pagehide`, then `visibilitychange`, when the library takes its last measurements: the tracker sends on the second, so a slow click just before leaving still counts.
 - **Not web analytics:** like time on page, `vitals` events make no visit, pageview, or custom event (`analyticsEvent()` in `visits.ts`), and are not a user's own activity (`NOT_THEIRS` in `identities/users.ts`). The name is reserved: the tracker refuses `track("vitals")`, and server-side events cannot use it. An event a site named `vitals` itself before this now counts as a page load's Web Vitals and leaves web analytics; reports ignore values outside the limits below, and a `vitals` event without one is not a page load.
 - **In-app navigations get no values of their own.** The library measures page loads, as Chrome's own field data does: in a single-page app, the page load's values belong to the page the visitor landed on, and its INP and CLS include clicks and shifts on later in-app pages, until the page is first hidden.
@@ -505,6 +507,81 @@ Three of the tracker's own events, each on by default. Code: `packages/tracker/s
 - **In visits:** a click on a link or a file is an interaction, as a custom event is, so a visit with one is no bounce. A not found page is not: a visitor who only saw the missing page bounced. None of them is a custom event in reports; each has its list ([Reports](#links-and-not-found-pages-in-reports)). `track()` refuses the three names, with a warning, and server-side events cannot use them.
 - **Cost:** `tracker.js` grew from 5,630 to 6,103 bytes gzipped (13.6 to 14.7 KB raw) with all three.
 
+### Hash routes
+
+A site whose router keeps the page in the fragment (`https://example.com/#/pricing`) adds `data-hash-routes="on"` to the snippet. Without it, every page of such a site is `/`.
+
+- **The page is the route:** the fragment, cut at its first `?`, when it looks like a route (the [rule](#url-cleanup) the API applies too: it starts with `#/`, and has no `=`, `&`, or second `#`). The tracker sends it after the path: `https://example.com/#/pricing`, stored as `/#/pricing`. Any other fragment, such as `#faq` or `#access_token=…`, is dropped, and the page is the path alone.
+- **A new route is a pageview,** on `hashchange` as well as on the history changes the tracker already watches. A change to the route's query (`#/docs?tab=2`) or to a fragment that is no route is not.
+- **Never sent, in any mode:** a fragment with a token in it. `#access_token=…`, `#/callback&code=…`, and `#/access_token=…` all fail the rule. A token written as a plain path segment, such as `#/reset/8f2a…`, looks like a route and is sent, as it would be in a path: a site should not put secrets in its routes.
+- Heatmaps follow the route, as they follow the path. The [overlay](#the-overlay-on-your-site) does not yet: it asks for the page's path without its route, so on such a site it shows the heatmap of the path alone.
+
+### Manual pageviews
+
+`data-pageviews="manual"` turns automatic pageviews off: none on the page load, on a path or route change, or on a restore from the back/forward cache. The site calls `window.ottertrail.pageview()` for each page it shows, after it has changed the address:
+
+```js
+window.ottertrail?.pageview(); // The page shown now.
+window.ottertrail?.pageview("/products/:id"); // A path of your choice, to group pages.
+```
+
+- **The path** must start with `/` and stay on the site; anything else records nothing, with a warning. It takes the place of the page's path, and its own query string and fragment are dropped. The page's UTM tags stay, so a campaign still counts. It is cleaned as every page is: with hash routes on, `pageview("/#/products/:id")` keeps its route.
+- Each call is a pageview, with its time-on-page report, its heatmap sample, and the previous page as its referrer, as an automatic one would be. Without `data-pageviews="manual"`, `pageview()` adds a pageview to the automatic ones.
+- **Calls before the tracker runs** are queued by the [stand-in](session-replay.md#waiting-for-consent), in order, and made when it runs. Without the stand-in, call `window.ottertrail?.pageview()` only once the tracker has loaded, or place the tracker's tag before the app's script.
+
+### Before send
+
+`data-before-send="ottertrailBeforeSend"` names a global function that sees each event before it is queued, the first pageview included, and returns it, changed or not, or `null` to drop it:
+
+```html
+<script>
+  function ottertrailBeforeSend(event) {
+    if (event.url.includes("/admin/")) return null;
+    return { ...event, url: event.url.replace(/\/users\/\d+/, "/users/:id") };
+  }
+</script>
+<script
+  defer
+  src="https://ottertrail.example.com/t.js"
+  data-key="pk_…"
+  data-host="https://ottertrail.example.com"
+  data-before-send="ottertrailBeforeSend"
+></script>
+```
+
+- **Defined before the tracker runs** applies it to the first pageview: an inline script before the tag does it. The tracker looks the function up for each event, so one defined later applies from then on.
+- **What it sees:** `name`, `url` and `referrer` (already cleaned), and `properties` (as they would be sent). It can change `url`, `referrer`, and the properties of custom events and errors. The name cannot change, and the tracker's own measurements (time on page, Web Vitals, links) keep their properties, since the API checks them. An error's message and stack are not shown to it; it can drop the error.
+- **Its result is cleaned again,** as any event is: query strings, fragments that are no route, and properties outside the [limits](#rules-for-a-batch) are removed. A URL on another origin is refused, since one event on a hostname the project does not allow would refuse its whole batch.
+- **When it fails,** the event is dropped, not sent unchanged, since the hook may be what removes personal data from it: a hook that throws, returns anything but an object or `null`, or returns a URL on another site, and a name that is not a function. Each failure warns once in the console. Other events still go, and the page is not affected.
+- It covers events only. Heatmaps follow the pageview as sent: a pageview it drops has no heatmap, and a changed URL is the heatmap's URL too. Session replays do not pass through it; their own [masking](session-replay.md) applies.
+
+### Events from HTML attributes
+
+A click on an element with `data-ottertrail-event` records that custom event, with a property for each `data-ottertrail-event-*` attribute:
+
+```html
+<button data-ottertrail-event="Signup" data-ottertrail-event-plan="pro">Start</button>
+```
+
+- A click inside the element counts too (the nearest marked element is used). The property name is what follows `data-ottertrail-event-` (`plan` above; attribute names are lowercase in HTML), and the value is the attribute's text. Nothing else about the element is read: no text, `id`, `class`, or other attribute.
+- The event is a custom event, as `track()` sends it: the same limits (a name of 1 to 200 characters, at most 30 properties, values cut to 500 characters), and the tracker's own event names are refused, with a warning.
+- **Links that leave the page:** the event leaves at once, in a request that outlives the page (`keepalive`), as a link click does. On a link to another site, the `outbound_link` event and the custom event go in the same request. The middle button counts on links, where it opens a new tab, and not elsewhere.
+- `data-ottertrail-name`, which names an element for [heatmaps](#heatmaps), is a separate attribute: heatmaps never read `data-ottertrail-event`, and these events never read `data-ottertrail-name`.
+
+### Ignoring your own visits
+
+To keep your own visits out of the reports, open your site in your browser, and run this in the browser's console:
+
+```js
+localStorage.ottertrail_ignore = "true";
+```
+
+While it is set, the tracker on that site, in that browser, records nothing: no events, no heatmaps, no session replays, no Web Vitals, no request tracing. It loads no other script, and logs once in the console that it is ignored. The [heatmap overlay](#the-overlay-on-your-site) still opens, so you can look at your heatmaps on your own site. `localStorage.removeItem("ottertrail_ignore")` ends it.
+
+- **Read only:** the tracker reads the value and never writes storage, so it still stores nothing on visitors' devices. Only the exact value `"true"` counts. Storage that cannot be read, such as in a sandboxed page, counts as not set.
+- **Per browser and site:** `localStorage` belongs to one origin in one browser profile, so set it on each of your sites (`www.` and the bare domain are two), in each browser you use. A private window starts without it.
+- It is for the site's owner and team. Visitors who want to opt out need the site to offer it, with the consent controls below.
+
 ### The playground
 
 `packages/tracker/demo` is a pretend single-page app with the tracker installed, for watching it work. Every request the tracker sends is listed on the page with its body and the response. Start the API (`vp -C apps/api run dev`), then:
@@ -517,10 +594,9 @@ It asks for a project's public key; the project must allow the hostname `localho
 
 ### Not done yet
 
-- Serving `tracker.js` from each instance. Until then the script is only used through the playground.
 - Calls to `window.ottertrail.track` before the script has loaded are lost; a small queue stub will fix that.
-- Hash-based routers (`/#/pricing`): every page is recorded as `/`.
-- Consent controls and opting out of tracking.
+- Consent controls, and an opt-out a visitor can choose. [Ignoring your own visits](#ignoring-your-own-visits) is for the site's owner and team.
+- The heatmap overlay on a site with [hash routes](#hash-routes): it shows the path's heatmap, not the route's.
 
 ## 4. Enrichment
 
@@ -1100,7 +1176,7 @@ The Heatmaps screen lists clicks under the name, with the path from the named el
 
 ### Privacy and consent
 
-Heatmaps follow page analytics: they have no consent switch of their own. Nothing is stored on the visitor's device (no cookies, no storage), and a record carries less than a pageview: no visitor ID, no page text, no address beyond the path. Session replay is different, because it records what was on the screen ([session replay](session-replay.md#waiting-for-consent)). The planned analytics opt-out will cover heatmaps too. This is not legal advice: a site's privacy notice should say it measures clicks and scrolling.
+Heatmaps follow page analytics: they have no consent switch of their own. Nothing is stored on the visitor's device (no cookies, no storage), and a record carries less than a pageview: no visitor ID, no page text, no address beyond the path. Session replay is different, because it records what was on the screen ([session replay](session-replay.md#waiting-for-consent)). A browser the site's owner ignores ([ignoring your own visits](#ignoring-your-own-visits)) records no heatmaps either. This is not legal advice: a site's privacy notice should say it measures clicks and scrolling.
 
 ### Sending
 
@@ -1257,5 +1333,5 @@ Decided on 22 November 2026: the heatmap can be read over the page without openi
 
 ### Not done yet
 
-- Dead clicks, clicks followed by an error, and paths grouped by template (`/products/*`).
+- Clicks followed by an error, and paths grouped by template (`/products/*`).
 - The budgets measured on a real site.

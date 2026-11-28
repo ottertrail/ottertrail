@@ -112,11 +112,16 @@ The rule is the same without `data-replay-consent`: recording starts on load, as
     window.ottertrail ||
     (function () {
       var q = [];
+      var p = [];
       function noop() {}
       return {
         q: q,
+        p: p,
         replay: function (on) {
           q.push(on);
+        },
+        pageview: function (path) {
+          p.push(path);
         },
         track: noop,
         identify: noop,
@@ -128,7 +133,9 @@ The rule is the same without `data-replay-consent`: recording starts on load, as
 </script>
 ```
 
-It keeps the answers to `replay()` in `q`. Its other methods, `track()`, `identify()`, `reset()`, `captureError()`, and `notFound()`, do nothing: those calls are not queued, and are lost if they come before the tracker runs, but they never throw, so code written as `window.ottertrail?.track(…)` keeps working. When the tracker runs, it puts the real `window.ottertrail` in its place, points the stand-in's methods at its own (so a reference the page kept, such as `var ot = window.ottertrail`, reaches the tracker too), and makes the last queued call as `replay()` takes it: only `true` starts, and anything else, such as `"denied"`, stops. So a "yes" followed by a "no" before it ran never loads `r.js`. If the tracker never runs (blocked, or a tag without `data-key`), the answers stay queued and nothing is recorded.
+It keeps the answers to `replay()` in `q`, and calls to `pageview()` in `p`, for sites that record their own pageviews ([manual pageviews](web-analytics.md#manual-pageviews)): the tracker makes each of those, in order, when it runs. Its other methods, `track()`, `identify()`, `reset()`, `captureError()`, and `notFound()`, do nothing: those calls are not queued, and are lost if they come before the tracker runs, but they never throw, so code written as `window.ottertrail?.track(…)` keeps working. When the tracker runs, it puts the real `window.ottertrail` in its place, points the stand-in's methods at its own (so a reference the page kept, such as `var ot = window.ottertrail`, reaches the tracker too), and makes the last queued call as `replay()` takes it: only `true` starts, and anything else, such as `"denied"`, stops. So a "yes" followed by a "no" before it ran never loads `r.js`. If the tracker never runs (blocked, or a tag without `data-key`), the answers stay queued and nothing is recorded.
+
+**The site owner's own browser,** ignored with `localStorage.ottertrail_ignore = "true"` ([web analytics](web-analytics.md#ignoring-your-own-visits)), records no replay: `r.js` never loads there, and `replay(true)` does nothing.
 
 **The tracker twice on one page,** such as in a tag manager and in the page's template: the second copy finds the first's `window.ottertrail` (marked as the real one, which the stand-in is not), warns in the console once, and does nothing more. It sends no events, loads no recorder, and leaves `window.ottertrail` to the first, so `replay(false)` always reaches the one recorder.
 
@@ -140,11 +147,16 @@ A plain HTML banner, for a site without a consent tool, that asks on each page l
     window.ottertrail ||
     (function () {
       var q = [];
+      var p = [];
       function noop() {}
       return {
         q: q,
+        p: p,
         replay: function (on) {
           q.push(on);
+        },
+        pageview: function (path) {
+          p.push(path);
         },
         track: noop,
         identify: noop,

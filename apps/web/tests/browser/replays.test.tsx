@@ -227,10 +227,13 @@ describe("the project's Session replay card", () => {
     expect(EARLY_CALLS).toBe(`<script>
   window.ottertrail = window.ottertrail || (function () {
     var q = [];
+    var p = [];
     function noop() {}
     return {
       q: q,
+      p: p,
       replay: function (on) { q.push(on); },
+      pageview: function (path) { p.push(path); },
       track: noop,
       identify: noop,
       reset: noop,

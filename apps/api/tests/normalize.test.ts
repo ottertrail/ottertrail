@@ -60,6 +60,34 @@ describe("parsePageUrl", () => {
   test("rejects paths longer than 2,048 characters", () => {
     expect(parsePageUrl(`https://example.com/${"a".repeat(2048)}`)).toBeNull();
   });
+
+  test("keeps a hash router's route at the end of the path, cut at its query", () => {
+    expect(parsePageUrl("https://example.com/#/pricing?plan=team&token=s3cret")).toEqual({
+      hostname: "example.com",
+      path: "/#/pricing",
+      utm: {},
+    });
+    expect(parsePageUrl("https://example.com/app/#/products/42")?.path).toBe("/app/#/products/42");
+  });
+
+  test.each([
+    "#access_token=s3cret&token_type=bearer",
+    "#/callback&code=s3cret",
+    "#/access_token=s3cret",
+    "#/a#s3cret",
+    "#id_token=s3cret",
+    "#faq",
+    "#/",
+    "#",
+  ])("never keeps the fragment %j", (hash) => {
+    expect(parsePageUrl(`https://example.com/${hash}`)?.path).toBe("/");
+  });
+
+  test("drops a route that would pass the path's limit, and keeps the event", () => {
+    const path = `/${"a".repeat(2040)}`;
+    expect(parsePageUrl(`https://example.com${path}#/abcdefgh`)?.path).toBe(path);
+    expect(parsePageUrl(`https://example.com${path}#/abcde`)?.path).toBe(`${path}#/abcde`);
+  });
 });
 
 describe("cleanReferrer", () => {

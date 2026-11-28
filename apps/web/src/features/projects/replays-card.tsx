@@ -40,10 +40,13 @@ export const CONSENT_CALL = "window.ottertrail.replay(true);";
 export const EARLY_CALLS = `<script>
   window.ottertrail = window.ottertrail || (function () {
     var q = [];
+    var p = [];
     function noop() {}
     return {
       q: q,
+      p: p,
       replay: function (on) { q.push(on); },
+      pageview: function (path) { p.push(path); },
       track: noop,
       identify: noop,
       reset: noop,
@@ -155,8 +158,8 @@ function SiteHelp() {
           <CopyableCode text={CONSENT_CALL} copyLabel="Copy the consent call" />
           <p>
             The tracker loads after the page. If your site may call before then, add this script
-            before the tracker&apos;s tag and your consent tool&apos;s. The tracker makes the call
-            once it loads. Until then, other tracker calls do nothing.
+            before the tracker&apos;s tag and your consent tool&apos;s. The tracker makes the call,
+            and any pageview() calls, once it loads. Until then, other tracker calls do nothing.
           </p>
           <CopyableCode text={EARLY_CALLS} copyLabel="Copy the script for early calls" />
           <p>

@@ -46,6 +46,39 @@ describe("cleanPageUrl", () => {
   });
 });
 
+describe("cleanPageUrl with hash routes", () => {
+  test("keeps a route, cut at its query", () => {
+    expect(cleanPageUrl("https://example.com/?utm_source=a#/pricing?plan=team", true)).toBe(
+      "https://example.com/?utm_source=a#/pricing",
+    );
+    expect(cleanPageUrl("https://example.com/app/#/products/42", true)).toBe(
+      "https://example.com/app/#/products/42",
+    );
+  });
+
+  test.each([
+    "#access_token=s3cret&token_type=bearer",
+    "#/callback&code=s3cret",
+    "#/access_token=s3cret",
+    "#/a#token",
+    "#faq",
+    "#/",
+    "#",
+  ])("never keeps %j", (hash) => {
+    expect(cleanPageUrl(`https://example.com/${hash}`, true)).toBe("https://example.com/");
+  });
+
+  test("drops every fragment without hash routes", () => {
+    expect(cleanPageUrl("https://example.com/#/pricing")).toBe("https://example.com/");
+  });
+
+  test("counts the route in the 2,048 characters of the path", () => {
+    const route = `#/${"a".repeat(2045)}`;
+    expect(cleanPageUrl(`https://example.com/${route}`, true)).toBe(`https://example.com/${route}`);
+    expect(cleanPageUrl(`https://example.com/${route}a`, true)).toBe("");
+  });
+});
+
 describe("cleanReferrer", () => {
   test("keeps where the visitor came from, not what they searched for", () => {
     expect(cleanReferrer("https://www.google.com/search?q=private+question")).toBe(
@@ -214,9 +247,12 @@ describe("randomId", () => {
 
 function fakeWindow(pathname = "/") {
   const listeners: (() => void)[] = [];
-  const location = { pathname };
+  const location = { pathname, hash: "" };
   const navigate: History["pushState"] = (_data, _unused, url) => {
-    if (url) location.pathname = new URL(String(url), "https://example.com").pathname;
+    if (!url) return;
+    const next = new URL(String(url), `https://example.com${location.pathname}`);
+    location.pathname = next.pathname;
+    location.hash = next.hash;
   };
   const original = {
     pushState: vi.fn<History["pushState"]>(navigate),
@@ -225,7 +261,8 @@ function fakeWindow(pathname = "/") {
   const win = {
     location,
     history: { pushState: original.pushState, replaceState: original.replaceState },
-    addEventListener: (_type: "popstate", listener: () => void) => listeners.push(listener),
+    addEventListener: (_type: "popstate" | "hashchange", listener: () => void) =>
+      listeners.push(listener),
   };
   return { win, original, listeners };
 }
@@ -264,6 +301,30 @@ describe("watchNavigation", () => {
     for (const listener of listeners) listener();
 
     expect(onNewPath).toHaveBeenCalledOnce();
+  });
+
+  test("with hash routes, a new route is a pageview, and its query or another fragment is not", () => {
+    const { win, listeners } = fakeWindow("/");
+    const onNewPath = vi.fn<() => void>();
+    watchNavigation(win, onNewPath, true);
+
+    win.location.hash = "#/pricing";
+    for (const listener of listeners) listener(); // hashchange
+    win.history.pushState({}, "", "#/pricing?plan=team");
+    win.history.pushState({}, "", "#faq"); // No route: the page at "/".
+    win.history.pushState({}, "", "#access_token=s3cret");
+
+    expect(onNewPath).toHaveBeenCalledTimes(2);
+  });
+
+  test("without hash routes, a hash change is no pageview, and no hashchange listener is added", () => {
+    const { win, listeners } = fakeWindow("/");
+    const onNewPath = vi.fn<() => void>();
+    watchNavigation(win, onNewPath);
+    win.history.pushState({}, "", "#/pricing");
+
+    expect(onNewPath).not.toHaveBeenCalled();
+    expect(listeners).toHaveLength(1);
   });
 
   test("never breaks the app's navigation if tracking fails", () => {

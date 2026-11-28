@@ -1,18 +1,28 @@
+import { routeOf } from "./url.ts";
+
 export interface NavigationWindow {
-  location: { pathname: string };
+  location: { pathname: string; hash: string };
   history: Pick<History, "pushState" | "replaceState">;
-  addEventListener(type: "popstate", listener: () => void): void;
+  addEventListener(type: "popstate" | "hashchange", listener: () => void): void;
 }
 
-/** Track SPA path changes as pageviews. Query and fragment changes do not count. */
-export function watchNavigation(win: NavigationWindow, onNewPath: () => void): void {
-  let lastPath = win.location.pathname;
+/**
+ * Track SPA path changes as pageviews. Query changes do not count, and
+ * fragment changes count only as a new route with `hashRoutes` (routeOf).
+ */
+export function watchNavigation(
+  win: NavigationWindow,
+  onNewPath: () => void,
+  hashRoutes = false,
+): void {
+  const page = () => win.location.pathname + (hashRoutes ? routeOf(win.location.hash) : "");
+  let lastPage = page();
 
   const check = () => {
     try {
-      const path = win.location.pathname;
-      if (path !== lastPath) {
-        lastPath = path;
+      const current = page();
+      if (current !== lastPage) {
+        lastPage = current;
         onNewPath();
       }
     } catch {
@@ -29,4 +39,5 @@ export function watchNavigation(win: NavigationWindow, onNewPath: () => void): v
     };
   }
   win.addEventListener("popstate", check);
+  if (hashRoutes) win.addEventListener("hashchange", check);
 }

@@ -10,7 +10,7 @@ export const MAX_EVENT_AGE_MS = 24 * 60 * 60 * 1000;
 export interface PageUrl {
   /** Lowercase hostname, for checking against the project's allowed hostnames. */
   hostname: string;
-  /** Path without the query string or fragment, such as "/lessons/closures". */
+  /** Path without the query string or fragment, such as "/lessons/closures", or with a route: "/#/pricing". */
   path: string;
   utm: Utm;
 }
@@ -44,8 +44,22 @@ export function truncate(text: string, max: number): string {
 }
 
 /**
+ * A hash router's route ("#/pricing"), cut at its query, or "" for any other
+ * fragment. A fragment with "=", "&", or a second "#" is no route: sign-in
+ * flows put tokens there ("#access_token=…", "#/callback&code=…"). "#/"
+ * alone is the home page. The tracker applies the same rule
+ * (packages/tracker/src/url.ts); this one does not trust it.
+ */
+export function routeOf(hash: string): string {
+  const route = hash.split("?")[0] ?? "";
+  return /^#\/[^=&#]+$/.test(route) ? route : "";
+}
+
+/**
  * Keeps the hostname, path, and five UTM tags. Other query fields and fragments
- * can contain secrets. Returns null for invalid http(s) URLs or paths over the limit.
+ * can contain secrets. A route-like fragment (routeOf) stays at the end of the
+ * path, as "/#/pricing", unless the two together pass the path's limit.
+ * Returns null for invalid http(s) URLs or paths over the limit.
  */
 export function parsePageUrl(raw: string): PageUrl | null {
   const url = URL.parse(raw);
@@ -55,6 +69,9 @@ export function parsePageUrl(raw: string): PageUrl | null {
   if (url.pathname.length > MAX_PATH_LENGTH) {
     return null;
   }
+  const route = routeOf(url.hash);
+  const path =
+    url.pathname.length + route.length > MAX_PATH_LENGTH ? url.pathname : url.pathname + route;
 
   const utm: Utm = {};
   for (const [field, param] of UTM_PARAMS) {
@@ -64,7 +81,7 @@ export function parsePageUrl(raw: string): PageUrl | null {
       utm[field] = truncate(value, MAX_UTM_LENGTH);
     }
   }
-  return { hostname: url.hostname, path: url.pathname, utm };
+  return { hostname: url.hostname, path, utm };
 }
 
 /**

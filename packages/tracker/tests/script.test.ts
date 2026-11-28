@@ -38,14 +38,25 @@ class FakeErrorEvent {
 
 /**
  * Stands in for an element clicked inside a link: closest("a[href]") finds
- * the link, given as its href and attributes, or none.
+ * the link, given as its href and attributes, or none; and
+ * closest("[data-ottertrail-event]") the element marked with an event, given
+ * as its attributes, or none.
  */
 class FakeElement {
   link: { href: unknown; attributes?: string[] } | undefined;
-  constructor(link?: { href: unknown; attributes?: string[] }) {
+  marked: Record<string, string> | undefined;
+  constructor(link?: { href: unknown; attributes?: string[] }, marked?: Record<string, string>) {
     this.link = link;
+    this.marked = marked;
   }
   closest(selector: string) {
+    if (selector === "[data-ottertrail-event]" && this.marked !== undefined) {
+      const marked = this.marked;
+      return {
+        attributes: Object.entries(marked).map(([name, value]) => ({ name, value })),
+        getAttribute: (name: string) => marked[name] ?? null,
+      };
+    }
     if (selector !== "a[href]" || this.link === undefined) return null;
     const { href, attributes = [] } = this.link;
     return { href, hasAttribute: (name: string) => attributes.includes(name) };
@@ -61,11 +72,14 @@ function fakePage(
     attributes = {},
     src = "https://ottertrail.example.com/t.js",
     nonce = "",
+    storage = {},
   }: {
     maxTouchPoints?: number;
     attributes?: Record<string, string>;
     src?: string;
     nonce?: string;
+    /** The site's localStorage, or null for storage that throws when read. */
+    storage?: Record<string, string> | null;
   } = {},
 ) {
   const listeners: Record<string, Listener[]> = {};
@@ -82,6 +96,9 @@ function fakePage(
     },
     get hostname() {
       return new URL(this.href).hostname;
+    },
+    get origin() {
+      return new URL(this.href).origin;
     },
     get hash() {
       return new URL(this.href).hash;
@@ -133,6 +150,16 @@ function fakePage(
       },
     },
     addEventListener: on,
+    /** Read only: a test fails if the tracker writes. */
+    localStorage: {
+      getItem: (name: string) => {
+        if (storage === null) throw new Error("SecurityError");
+        return storage[name] ?? null;
+      },
+      setItem: () => {
+        throw new Error("the tracker must never write storage");
+      },
+    },
     ottertrail: undefined as
       | {
           track(name: string, properties?: object): void;
@@ -141,6 +168,7 @@ function fakePage(
           reset(): void;
           captureError(error: unknown, properties?: object): void;
           replay(on: boolean): void;
+          pageview(path?: string): void;
           flush(): Promise<void>;
         }
       | undefined,
@@ -1028,6 +1056,7 @@ const WAIT = { replay: "errors", replayConsent: "wait", vitals: "off" };
 interface StandIn {
   q: unknown[];
   replay(on: unknown): void;
+  pageview(path?: string): void;
   track(name: string, properties?: object): void;
   identify(userId: string): void;
   reset(): void;
@@ -2180,5 +2209,412 @@ describe("links and not found pages", () => {
 
     expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
     expect(warn).toHaveBeenCalledTimes(3);
+  });
+});
+
+/** Every request body as sent, as one text, for checking that a value never leaves. */
+const allSent = (page: ReturnType<typeof fakePage>) => JSON.stringify(page.batches);
+
+describe("hash routes", () => {
+  test('with data-hash-routes="on", the route is the page, cut at its query, and a new route is a pageview', async () => {
+    const page = fakePage("https://example.com/?utm_source=news#/pricing?plan=team", "", {
+      attributes: { hashRoutes: "on" },
+    });
+    await runScript();
+    page.window.location.href = "https://example.com/#/docs";
+    page.fire("hashchange");
+    page.window.location.href = "https://example.com/#/docs?tab=2"; // Its query: no pageview.
+    page.fire("hashchange");
+    page.window.location.href = "https://example.com/#faq"; // No route: the page at "/".
+    page.fire("hashchange");
+    page.hide();
+    await page.settle();
+
+    expect(
+      page.events
+        .filter((event) => event.name === "pageview")
+        .map((event) => [event.url, event.referrer]),
+    ).toEqual([
+      ["https://example.com/?utm_source=news#/pricing", undefined],
+      ["https://example.com/#/docs", "https://example.com/"],
+      ["https://example.com/", "https://example.com/"],
+    ]);
+  });
+
+  test.each([
+    "https://example.com/#access_token=s3cret&token_type=bearer",
+    "https://example.com/#/callback&code=s3cret",
+    "https://example.com/#/access_token=s3cret",
+    "https://example.com/#/a#s3cret",
+  ])("a token in the fragment never leaves: %s", async (href) => {
+    const page = fakePage("https://example.com/#/start", "", { attributes: { hashRoutes: "on" } });
+    await runScript();
+    page.window.location.href = href;
+    page.fire("hashchange");
+    page.window.ottertrail?.track("signup");
+    page.window.ottertrail?.captureError(new Error("failed"));
+    page.hide();
+    await page.settle();
+
+    expect(page.events.length).toBeGreaterThan(2);
+    expect(allSent(page)).not.toContain("s3cret");
+    expect(page.events.at(-1)?.url).toBe("https://example.com/");
+  });
+
+  test("without the attribute, every fragment is dropped and a hash change is no pageview", async () => {
+    const page = fakePage("https://example.com/#/pricing");
+    await runScript();
+    page.window.location.href = "https://example.com/#/docs";
+    page.fire("hashchange");
+    page.fire("popstate");
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => [event.name, event.url])).toEqual([
+      ["pageview", "https://example.com/"],
+    ]);
+  });
+});
+
+describe("manual pageviews", () => {
+  test('with data-pageviews="manual", only pageview() records pageviews, with a path if given', async () => {
+    const page = fakePage("https://example.com/products/42?utm_source=news&token=s3cret", "", {
+      attributes: { pageviews: "manual" },
+    });
+    await runScript();
+    page.window.location.href = "https://example.com/products/43";
+    page.window.history.pushState(); // No automatic pageview.
+    page.window.ottertrail?.pageview("/products/:id");
+    vi.setSystemTime(start + 3000);
+    page.window.ottertrail?.pageview();
+    page.hide();
+    await page.settle();
+
+    expect(summary(page.events)).toEqual([
+      ["pageview", "https://example.com/products/:id", undefined],
+      ["engagement", "https://example.com/products/:id", 3000],
+      ["pageview", "https://example.com/products/43", undefined],
+    ]);
+    expect(allSent(page)).not.toContain("s3cret");
+  });
+
+  test("a path keeps the page's UTM tags, and goes through the before-send hook too", async () => {
+    const page = fakePage("https://example.com/p/42?utm_campaign=launch", "", {
+      attributes: { pageviews: "manual", beforeSend: "hook" },
+    });
+    const seen: unknown[] = [];
+    Object.assign(page.window, {
+      hook: (event: { url: string }) => {
+        seen.push(event.url);
+        return event;
+      },
+    });
+    await runScript();
+    page.window.ottertrail?.pageview("/p/:id?ref=x#top");
+    page.hide();
+    await page.settle();
+
+    expect(seen).toEqual(["https://example.com/p/:id?utm_campaign=launch"]);
+    expect(page.events.map((event) => event.url)).toEqual([
+      "https://example.com/p/:id?utm_campaign=launch",
+    ]);
+  });
+
+  test.each(["products", "//evil.example/x", "/\\evil.example/x", "https://evil.example/", 42])(
+    "pageview(%j) records nothing and warns",
+    async (path) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const page = fakePage("https://example.com/", "", { attributes: { pageviews: "manual" } });
+      await runScript();
+      page.window.ottertrail?.pageview(path as string);
+      page.hide();
+      await page.settle();
+
+      expect(page.events).toEqual([]);
+      expect(warn).toHaveBeenCalledOnce();
+    },
+  );
+
+  test("the stand-in queues pageviews made before the tracker runs", async () => {
+    const page = fakePage("https://example.com/", "", { attributes: { pageviews: "manual" } });
+    standIn(page).pageview("/early");
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => [event.name, event.url])).toEqual([
+      ["pageview", "https://example.com/early"],
+    ]);
+  });
+});
+
+/** A page whose snippet names the before-send hook, with `hook` as that global. */
+const withHook = async (hook: unknown, href = "https://example.com/pricing") => {
+  const page = fakePage(href, "https://news.example/item", {
+    attributes: { beforeSend: "ottertrailBeforeSend" },
+  });
+  Object.assign(page.window, { ottertrailBeforeSend: hook });
+  await runScript();
+  return page;
+};
+
+describe("the before-send hook", () => {
+  test("sees each event, the first pageview included, and can change its page and properties", async () => {
+    const seen: unknown[] = [];
+    const page = await withHook(
+      (event: { name: string; url: string; properties?: Record<string, unknown> }) => {
+        seen.push(structuredClone(event));
+        return {
+          ...event,
+          url: event.url.replace(/\/users\/\d+/, "/users/:id"),
+          referrer: undefined,
+          properties: event.name === "signup" ? { plan: "pro" } : event.properties,
+        };
+      },
+      "https://example.com/users/42?secret=1",
+    );
+    page.window.ottertrail?.track("signup", { plan: "free", nested: { a: 1 } });
+    page.hide();
+    await page.settle();
+
+    expect(seen[0]).toEqual({
+      name: "pageview",
+      url: "https://example.com/users/42",
+      referrer: "https://news.example/item",
+      properties: undefined,
+    });
+    // It sees the properties as they would be sent.
+    expect(seen[1]).toMatchObject({ name: "signup", properties: { plan: "free" } });
+    expect(page.events[0]?.url).toBe("https://example.com/users/:id");
+    expect(sentOnce(page)).toEqual([["signup", "https://example.com/users/:id", { plan: "pro" }]]);
+    expect(page.events[0]).not.toHaveProperty("referrer");
+  });
+
+  test("null drops the event; the others still go", async () => {
+    const page = await withHook((event: { name: string }) =>
+      event.name === "signup" ? null : event,
+    );
+    page.window.ottertrail?.track("signup");
+    page.window.ottertrail?.track("upgrade");
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["pageview", "upgrade"]);
+  });
+
+  test("its result is cleaned: query strings, bad properties, and a name change are not kept", async () => {
+    const page = await withHook((event: { name: string }) => ({
+      ...event,
+      name: "pageview",
+      url: "https://example.com/next?token=s3cret#frag",
+      referrer: "https://other.example/path?q=private",
+      properties: { nested: { a: 1 }, ok: "yes", "": "x" },
+    }));
+    page.window.ottertrail?.track("signup");
+    await page.settle();
+
+    expect(page.events[1]).toMatchObject({
+      name: "signup",
+      url: "https://example.com/next",
+      referrer: "https://other.example/path",
+      properties: { ok: "yes" },
+    });
+    expect(allSent(page)).not.toContain("s3cret");
+    expect(allSent(page)).not.toContain("private");
+  });
+
+  test("the tracker's own measurements stay as they are", async () => {
+    const page = await withHook((event: object) => ({ ...event, properties: { engagedMs: "x" } }));
+    vi.setSystemTime(start + 5000);
+    page.hide();
+    await page.settle();
+
+    expect(page.events[1]).toMatchObject({ name: "engagement", properties: { engagedMs: 5000 } });
+  });
+
+  test.each([
+    [
+      "throws",
+      (event: { name: string }) => {
+        if (event.name === "signup") throw new Error("hook bug");
+        return event;
+      },
+    ],
+    ["returns nothing", (event: { name: string }) => (event.name === "signup" ? undefined : event)],
+    [
+      "moves it to another site",
+      (event: { name: string; url: string }) =>
+        event.name === "signup" ? { ...event, url: "https://evil.example/" } : event,
+    ],
+  ])(
+    "a hook that %s drops that event only, warns once, and never breaks the page",
+    async (_, hook) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const page = await withHook(hook);
+      expect(() => {
+        page.window.ottertrail?.track("signup");
+        page.window.ottertrail?.track("signup");
+        page.window.ottertrail?.track("upgrade");
+      }).not.toThrow();
+      await page.settle();
+
+      expect(page.events.map((event) => event.name)).toEqual(["pageview", "upgrade"]);
+      expect(warn).toHaveBeenCalledOnce();
+    },
+  );
+
+  test("named but not defined: events are dropped, not sent unfiltered, with one warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = await withHook(undefined);
+    page.window.ottertrail?.track("signup");
+    page.hide();
+    await page.settle();
+
+    expect(page.events).toEqual([]);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  test("a hook defined after the tracker applies from then on", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = await withHook(undefined);
+    Object.assign(page.window, { ottertrailBeforeSend: (event: object) => event });
+    page.window.ottertrail?.track("signup");
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["signup"]);
+  });
+});
+
+/** A click on an element marked with an event, as the browser dispatches it to the document. */
+const clickMarked = (
+  page: ReturnType<typeof fakePage>,
+  marked: Record<string, string>,
+  { type = "click", button = 0, href }: { type?: string; button?: number; href?: string } = {},
+) =>
+  page.fire(type, {
+    type,
+    button,
+    target: new FakeElement(href === undefined ? undefined : { href }, marked),
+  });
+
+describe("events from HTML attributes", () => {
+  test("a click records the element's event, with its data-ottertrail-event-* properties only", async () => {
+    const page = fakePage("https://example.com/pricing?token=s3cret");
+    await runScript();
+    clickMarked(page, {
+      "data-ottertrail-event": "Signup",
+      "data-ottertrail-event-plan": "pro",
+      "data-ottertrail-event-billing-period": "yearly",
+      "data-ottertrail-name": "hero-cta",
+      class: "button",
+    });
+
+    // Sent at once, before any timer runs, as a custom event is.
+    expect(sentOnce(page)).toEqual([
+      ["Signup", "https://example.com/pricing", { plan: "pro", "billing-period": "yearly" }],
+    ]);
+  });
+
+  test("on a link that leaves the page, its event and the outbound link both go at once", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    clickMarked(page, { "data-ottertrail-event": "Docs" }, { href: "https://docs.example.org/" });
+
+    expect(sentOnce(page).map(([name]) => name)).toEqual(["outbound_link", "Docs"]);
+  });
+
+  test("the limits on names and properties apply, and reserved names are refused", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const page = fakePage("https://example.com/");
+    await runScript();
+    const many = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`data-ottertrail-event-p${index}`, "v"]),
+    );
+    clickMarked(page, {
+      "data-ottertrail-event": "n".repeat(250),
+      "data-ottertrail-event-long": "x".repeat(600),
+      ...many,
+    });
+    clickMarked(page, { "data-ottertrail-event": "pageview" });
+    clickMarked(page, { "data-ottertrail-event": "" });
+    await page.settle();
+
+    const [event, ...rest] = page.events.filter((sent) => sent.name !== "pageview");
+    expect(rest).toEqual([]);
+    expect(event?.name).toHaveLength(200);
+    expect(Object.keys(event?.properties ?? {})).toHaveLength(30);
+    expect(event?.properties?.long).toHaveLength(500);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  test("a middle click counts on a link only, and the menu's button never", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    clickMarked(page, { "data-ottertrail-event": "A" }, { type: "auxclick", button: 1 });
+    clickMarked(
+      page,
+      { "data-ottertrail-event": "B" },
+      { type: "auxclick", button: 1, href: "https://example.com/b" },
+    );
+    clickMarked(page, { "data-ottertrail-event": "C" }, { type: "auxclick", button: 2 });
+    await page.settle();
+
+    expect(sentOnce(page).map(([name]) => name)).toEqual(["B"]);
+  });
+});
+
+describe("ignoring the owner's own browser", () => {
+  test('with localStorage.ottertrail_ignore = "true", nothing at all is sent and no script loads', async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const page = fakePage("https://example.com/", "", {
+      storage: { ottertrail_ignore: "true" },
+      attributes: { heatmaps: "on", replay: "errors", traces: "on" },
+    });
+    await runScript();
+    page.window.ottertrail?.track("signup");
+    page.window.ottertrail?.pageview("/other");
+    page.window.ottertrail?.captureError(new Error("failed"));
+    page.window.ottertrail?.replay(true);
+    page.fire("click", {
+      type: "click",
+      button: 0,
+      target: new FakeElement({ href: "https://github.com/" }, { "data-ottertrail-event": "A" }),
+    });
+    page.window.location.href = "https://example.com/next";
+    page.window.history.pushState();
+    vi.setSystemTime(start + 5000);
+    page.hide();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await page.window.ottertrail?.flush();
+
+    expect(page.batches).toEqual([]);
+    expect(page.added).toEqual([]);
+    expect(info).toHaveBeenCalledOnce();
+  });
+
+  test("the overlay still opens for the owner, and nothing is sent", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const page = fakePage(`https://example.com/pricing#ottertrail-heatmap=${"a".repeat(43)}`, "", {
+      storage: { ottertrail_ignore: "true" },
+      attributes: { vitals: "off" },
+    });
+    await runScript();
+    expect(page.added.map((script) => script.src)).toEqual(["https://ottertrail.example.com/o.js"]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    page.hide();
+    await page.settle();
+
+    expect(page.batches).toEqual([]);
+  });
+
+  test.each([
+    ["another value", { ottertrail_ignore: "1" }],
+    ["storage that throws", null],
+  ])("%s does not ignore the browser", async (_, storage) => {
+    const page = fakePage("https://example.com/", "", { storage });
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
   });
 });

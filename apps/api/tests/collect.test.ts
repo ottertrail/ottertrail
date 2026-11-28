@@ -195,6 +195,34 @@ describe("POST /api/events", () => {
     expect(second).toMatchObject({ path: "/", occurred_at: new Date(NOW - 1000) });
   });
 
+  test("keeps a hash router's route in the path, and never a token in the fragment", async () => {
+    const project = await createProject();
+    const urls = [
+      `https://${SITE}/#/pricing?plan=team`,
+      `https://${SITE}/app/#/products/42`,
+      `https://${SITE}/#access_token=s3cret&token_type=bearer`,
+      `https://${SITE}/#/callback&code=s3cret`,
+      `https://${SITE}/#/access_token=s3cret`,
+    ];
+    const response = await send(
+      batch(
+        project.public_key,
+        urls.map((url, index) => pageview({ occurredAt: NOW - 5000 + index, url })),
+      ),
+    );
+
+    expect(response.statusCode).toBe(202);
+    const stored = await storedEvents(project.id);
+    expect(stored.map((event) => event.path)).toEqual([
+      "/#/pricing",
+      "/app/#/products/42",
+      "/",
+      "/",
+      "/",
+    ]);
+    expect(JSON.stringify(stored)).not.toContain("s3cret");
+  });
+
   test("answers the same for every outcome, so a sender cannot tell which filter caught it", async () => {
     const project = await insertProject(db(), {
       name: "Filters",
