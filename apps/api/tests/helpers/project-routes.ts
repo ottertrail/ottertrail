@@ -73,6 +73,9 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("PUT", "/avatar", "/avatar"),
   request("DELETE", "/avatar", "/avatar"),
   request("GET", "/ingest-activity", "/ingest-activity"),
+  request("GET", "/share-links", "/share-links"),
+  request("POST", "/share-links", "/share-links", { name: "For the client" }),
+  request("DELETE", "/share-links/:linkId", `/share-links/${SOME_ID}`),
   request("POST", "/spam-visits/preview", "/spam-visits/preview", {
     from: "2026-11-15",
     to: "2026-11-15",

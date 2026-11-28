@@ -5,6 +5,7 @@ import { requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { environmentOf } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
@@ -23,7 +24,35 @@ import {
   RANGE_PROPERTIES,
   type RangeQuery,
   refuseUnknownParameters,
+  type ReportScope,
 } from "./routes.ts";
+
+/**
+ * Right now for one project and environment, at `current`: the visitors
+ * now, their minutes, pages, sources, and countries (now.ts).
+ */
+export async function nowAnswer(
+  db: Kysely<Database>,
+  reader: Reader,
+  scope: Omit<ReportScope, "savedGoals">,
+  current: Date,
+) {
+  const { projectId, environment, timeZone } = scope;
+  const day = dayIn(timeZone)(windowStart(current));
+  const [{ from: dayStart }, project] = await Promise.all([
+    localDays(db, day, day, timeZone),
+    db
+      .selectFrom("projects")
+      .select("allowed_hostnames")
+      .where("id", "=", projectId)
+      .executeTakeFirstOrThrow(),
+  ]);
+  const answer = await projectNow(
+    { ...reader, settings: DASHBOARD_SETTINGS },
+    { projectId, environment, ownHostnames: project.allowed_hostnames, now: current, dayStart },
+  );
+  return { timeZone, environment, at: current.toISOString(), ...answer };
+}
 
 /**
  * Right now (now.ts; docs/web-analytics.md, "Right now"), with the Web
@@ -73,23 +102,14 @@ export const nowRoutes: FastifyPluginCallback<{
     },
     async (request, reply) => {
       const { projectId, timeZone } = accessOf(request);
-      const current = now();
-      const day = dayIn(timeZone)(windowStart(current));
-      const [{ from: dayStart }, project] = await Promise.all([
-        localDays(db, day, day, timeZone),
-        db
-          .selectFrom("projects")
-          .select("allowed_hostnames")
-          .where("id", "=", projectId)
-          .executeTakeFirstOrThrow(),
-      ]);
-      const environment = environmentOf(request.query.environment);
-      const answer = await projectNow(
-        { ...liveReader(clickhouse, limiter, liveLimiter, reply), settings: DASHBOARD_SETTINGS },
-        { projectId, environment, ownHostnames: project.allowed_hostnames, now: current, dayStart },
+      const answer = await nowAnswer(
+        db,
+        liveReader(clickhouse, limiter, liveLimiter, reply),
+        { projectId, environment: environmentOf(request.query.environment), timeZone },
+        now(),
       );
       void reply.header("cache-control", "no-store");
-      return { timeZone, environment, at: current.toISOString(), ...answer };
+      return answer;
     },
   );
   done();

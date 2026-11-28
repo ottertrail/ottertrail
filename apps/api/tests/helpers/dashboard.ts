@@ -40,6 +40,7 @@ export async function signedInDashboard({
   telemetry,
   uptime,
   heartbeats,
+  shareLinks,
   notifications,
   locationData,
   storage,
@@ -73,6 +74,8 @@ export async function signedInDashboard({
   uptime?: AppOptions["uptime"];
   /** Heartbeat pings' limits (tests/heartbeats.test.ts). */
   heartbeats?: AppOptions["heartbeats"];
+  /** Shared links' limits (tests/share-links.test.ts). */
+  shareLinks?: AppOptions["shareLinks"];
   /** Whether email is set up, for notification channels (tests/channels.test.ts). */
   notifications?: AppOptions["notifications"];
   /** The location data the API has loaded, for the Settings page (tests/location-data.test.ts). */
@@ -144,6 +147,7 @@ export async function signedInDashboard({
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(uptime === undefined ? {} : { uptime }),
     ...(heartbeats === undefined ? {} : { heartbeats }),
+    ...(shareLinks === undefined ? {} : { shareLinks }),
     notifications: { linkSecret: TEST_AUTH_SECRET, ...notifications },
     ...(locationData === undefined ? {} : { locationData }),
     ...(storage === undefined ? {} : { storage }),

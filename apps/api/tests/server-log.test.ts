@@ -202,6 +202,12 @@ describe("masking", () => {
     ],
     // A heartbeat's ping URL holds its token.
     ["/api/heartbeats/AbCdEf_-0123456789abcdef01234567/fail", "/api/heartbeats/…/fail"],
+    // A shared link's page and its reports hold its token.
+    ["/share/AbCdEf_-0123456789abcdef0123456789abcdefghi", "/share/…"],
+    [
+      "/api/share/AbCdEf_-0123456789abcdef0123456789abcdefghi/analytics?period=7d",
+      "/api/share/…/analytics?period=7d",
+    ],
     [
       "/api/auth/verify-email?token=eyJhbGci&callbackURL=/",
       "/api/auth/verify-email?token=…&callbackURL=/",

@@ -32,6 +32,7 @@ import * as userDeletions from "./0029_user_deletions.ts";
 import * as stepMatching from "./0030_step_matching.ts";
 import * as notificationAnyAreas from "./0031_notification_any_areas.ts";
 import * as heartbeats from "./0032_heartbeats.ts";
+import * as shareLinks from "./0033_share_links.ts";
 
 /**
  * Every migration, in order. Kysely runs them by name, alphabetically, and
@@ -73,4 +74,5 @@ export const migrations: Record<string, Migration> = {
   "0030_step_matching": stepMatching,
   "0031_notification_any_areas": notificationAnyAreas,
   "0032_heartbeats": heartbeats,
+  "0033_share_links": shareLinks,
 };

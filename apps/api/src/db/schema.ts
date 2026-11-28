@@ -627,6 +627,19 @@ export interface HeatmapOverlayTokensTable {
   created_at: DatabaseDefault<Date>;
 }
 
+/** A shared link to a project's Web analytics (share/links.ts): its token's hash, never the token. */
+export interface ShareLinksTable {
+  id: DatabaseDefault<string>;
+  project_id: ColumnType<string, string, never>;
+  name: string;
+  environment: ColumnType<string, string, never>;
+  token_hash: ColumnType<Buffer, Buffer, never>;
+  token_prefix: ColumnType<string, string, never>;
+  created_by: ColumnType<string | null, string | null, never>;
+  created_at: DatabaseDefault<Date>;
+  last_opened_at: ColumnType<Date | null, never, Date>;
+}
+
 /** A saved heatmap view: one per project, page, and device class (heatmaps/snapshots.ts). */
 export interface HeatmapSnapshotsTable {
   project_id: string;
@@ -855,6 +868,7 @@ export interface Database {
   owner_setup_tokens: OwnerSetupTokensTable;
   heatmap_overlay_tokens: HeatmapOverlayTokensTable;
   heatmap_snapshots: HeatmapSnapshotsTable;
+  share_links: ShareLinksTable;
   ingest_activity: IngestActivityTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;

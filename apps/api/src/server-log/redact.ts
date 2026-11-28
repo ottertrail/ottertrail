@@ -148,7 +148,8 @@ export function redactText(text: string): string {
  * - an event property filter's value (`p.<property>=`), which may be one too
  *   (each name read after percent-decoding, as redactText's are);
  * - the token in Better Auth's reset link path (`/reset-password/:token`);
- * - a heartbeat's token in its ping URL (`/api/heartbeats/:token`).
+ * - a heartbeat's token in its ping URL (`/api/heartbeats/:token`);
+ * - a shared link's token (`/share/:token`, `/api/share/:token/…`).
  *
  * Other parameters stay: periods, environments, services, routes, models,
  * features, and the names and IDs Ottertrail makes (traces, errors, checks).
@@ -157,7 +158,8 @@ export function redactUrl(url: string): string {
   const masked = redactText(url)
     .replace(/(\/users\/)[^/?#]+/g, `$1${MASK}`)
     .replace(/(\/reset-password\/)[^/?#]+/g, `$1${MASK}`)
-    .replace(/(\/heartbeats\/)[^/?#]+/g, `$1${MASK}`);
+    .replace(/(\/heartbeats\/)[^/?#]+/g, `$1${MASK}`)
+    .replace(/(\/share\/)[^/?#]+/g, `$1${MASK}`);
   return maskParameters(masked, PERSONAL_PARAMETERS);
 }
 

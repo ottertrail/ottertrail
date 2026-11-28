@@ -56,6 +56,14 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/heartbeats/:token",
   "GET /api/heartbeats/:token/fail",
   "POST /api/heartbeats/:token/fail",
+  // A shared link: its token is the capability, and reaches its own
+  // project's Web analytics, in its own environment, read-only. Limited per
+  // client address and per link (docs/access.md).
+  "GET /api/share/:token",
+  "GET /api/share/:token/icon",
+  "GET /api/share/:token/analytics",
+  "GET /api/share/:token/analytics/list",
+  "GET /api/share/:token/analytics/now",
 ]);
 
 /** What each dashboard route declares, as text: "errors:manage", "permission:channels" … */
@@ -137,6 +145,10 @@ const EXPECTED: Record<string, string> = {
   "DELETE /api/projects/:id/replays": "project:permission:projects",
   "POST /api/projects/:id/spam-visits/preview": "project:permission:projects",
   "POST /api/projects/:id/spam-visits/delete": "project:permission:projects",
+  // Shared links show the project's data to anyone who has one.
+  "GET /api/projects/:id/share-links": "project:permission:projects",
+  "POST /api/projects/:id/share-links": "project:permission:projects",
+  "DELETE /api/projects/:id/share-links/:linkId": "project:permission:projects",
 
   "GET /api/projects/:id/analytics": "web_analytics:view",
   "GET /api/projects/:id/analytics/list": "web_analytics:view",

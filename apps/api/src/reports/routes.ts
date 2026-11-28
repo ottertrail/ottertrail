@@ -5,6 +5,7 @@ import { canUse, FORBIDDEN, type ProjectAccess, requireProjectAccess } from "../
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
+import type { Reader } from "../clickhouse/query.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
 import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
@@ -14,6 +15,7 @@ import { stepOf } from "../product/steps.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import {
+  type Analytics,
   LIST_REPORTS,
   type ListReport,
   type PageGoal,
@@ -166,8 +168,6 @@ interface GoalQuery {
   goalEvent?: string;
 }
 
-const GOAL_PARAMETERS = ["goal", "goalEvent"] as const;
-
 const GOAL_PROPERTIES = {
   goal: { type: "string", pattern: UUID_PATTERN },
   goalEvent: EVENT_NAME_SCHEMA,
@@ -181,21 +181,38 @@ export function accessOf(request: { projectAccess: ProjectAccess | null }): Proj
 }
 
 /**
+ * What a Web analytics report reads: one project, one environment, in the
+ * instance's timezone. The dashboard's routes take them from the access
+ * check and the request; a shared link's from the link alone
+ * (share/routes.ts).
+ */
+export interface ReportScope {
+  projectId: string;
+  environment: string;
+  timeZone: string;
+  /**
+   * Whether the project's saved goals are listed and may filter: with
+   * product analytics at view (docs/access.md), and on a shared link.
+   */
+  savedGoals: boolean;
+}
+
+type Refusal = { status: 400 | 403; body: ReturnType<typeof problem> };
+
+/**
  * The goal a request filters by, or why it is refused. A saved goal belongs
  * to product analytics, as the Goals table does (docs/access.md); a custom
  * event is on the page already, so it needs nothing more.
  */
 async function requestGoal(
   db: Kysely<Database>,
-  request: { query: GoalQuery; projectAccess: ProjectAccess | null },
-): Promise<
-  { goal: PageGoal | undefined } | { status: 400 | 403; problem: ReturnType<typeof problem> }
-> {
-  const { goal: goalId, goalEvent } = request.query;
+  scope: ReportScope,
+  { goal: goalId, goalEvent }: GoalQuery,
+): Promise<{ goal: PageGoal | undefined } | Refusal> {
   if (goalId !== undefined && goalEvent !== undefined) {
     return {
       status: 400,
-      problem: problem("invalid_goal", "Send either goal or goalEvent, not both."),
+      body: problem("invalid_goal", "Send either goal or goalEvent, not both."),
     };
   }
   if (goalEvent !== undefined) {
@@ -203,29 +220,171 @@ async function requestGoal(
     if (step === null) {
       return {
         status: 400,
-        problem: problem(
-          "invalid_goal",
-          "goalEvent names a custom event, not one of the tracker's.",
-        ),
+        body: problem("invalid_goal", "goalEvent names a custom event, not one of the tracker's."),
       };
     }
     return { goal: { id: null, name: goalEvent, step } };
   }
   if (goalId === undefined) return { goal: undefined };
-  const access = accessOf(request);
-  if (!canUse(access.user, "product_analytics", "view")) {
-    return { status: 403, problem: FORBIDDEN };
+  if (!scope.savedGoals) {
+    return { status: 403, body: FORBIDDEN };
   }
-  const saved = (await listGoals(db, access.projectId)).find(
+  const saved = (await listGoals(db, scope.projectId)).find(
     (item) => item.id.toLowerCase() === goalId.toLowerCase(),
   );
   if (saved === undefined) {
     return {
       status: 400,
-      problem: problem("unknown_goal", "This goal does not exist. It may have been deleted."),
+      body: problem("unknown_goal", "This goal does not exist. It may have been deleted."),
     };
   }
   return { goal: { id: saved.id, name: saved.name, step: saved.step } };
+}
+
+/** The Web analytics page's query, without the environment, which the scope names. */
+export type AnalyticsQuery = Omit<RangeQuery, "environment"> & {
+  limit?: number;
+} & GoalQuery &
+  Partial<Record<FilterName, string>>;
+
+/** One full list's query, without the environment. */
+export type ListQuery = Omit<RangeQuery, "environment"> & {
+  report: ListReport;
+  search?: string;
+  offset?: number;
+  limit?: number;
+} & GoalQuery &
+  Partial<Record<FilterName, string>>;
+
+const { environment: _environment, ...DAY_PROPERTIES } = RANGE_PROPERTIES;
+
+const ANALYTICS_PROPERTIES = {
+  ...DAY_PROPERTIES,
+  limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+  ...GOAL_PROPERTIES,
+  ...FILTER_PROPERTIES,
+};
+
+const LIST_PROPERTIES = {
+  ...DAY_PROPERTIES,
+  report: { type: "string", enum: LIST_REPORTS },
+  search: { type: "string", maxLength: MAX_SEARCH_LENGTH, pattern: NO_NUL },
+  offset: { type: "integer", minimum: 0, maximum: 100_000 },
+  limit: { type: "integer", minimum: 1, maximum: LIST_PAGE_SIZE },
+  ...GOAL_PROPERTIES,
+  ...FILTER_PROPERTIES,
+};
+
+/**
+ * The route options' query checks for the page and for a full list: with
+ * the environment for the dashboard, and without it where the scope fixes
+ * it (a shared link), so a request cannot name another.
+ */
+export function analyticsQueryChecks({ environment }: { environment: boolean }) {
+  const properties = environment
+    ? { ...ANALYTICS_PROPERTIES, environment: RANGE_PROPERTIES.environment }
+    : ANALYTICS_PROPERTIES;
+  return {
+    preValidation: refuseUnknownParameters(Object.keys(properties)),
+    querystring: { type: "object", additionalProperties: false, properties },
+  };
+}
+
+export function listQueryChecks({ environment }: { environment: boolean }) {
+  const properties = environment
+    ? { ...LIST_PROPERTIES, environment: RANGE_PROPERTIES.environment }
+    : LIST_PROPERTIES;
+  return {
+    preValidation: refuseUnknownParameters(Object.keys(properties)),
+    querystring: {
+      type: "object",
+      additionalProperties: false,
+      required: ["report"],
+      properties,
+    },
+  };
+}
+
+/**
+ * The Web analytics page for `scope`: the period's days in the instance's
+ * timezone, the filters, and the goal. Without saved goals, the answer's
+ * list of goals is empty.
+ */
+export async function analyticsAnswer(
+  db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
+  scope: ReportScope,
+  query: AnalyticsQuery,
+  { now, reader }: { now: Date; reader: Reader },
+): Promise<{ report: Analytics } | Refusal> {
+  // One reading of the clock: the period's days and the comparison's cut-off agree.
+  const days = requestDays(query, dayIn(scope.timeZone)(now));
+  if ("problem" in days) return { status: 400, body: days.problem };
+  const goal = await requestGoal(db, scope, query);
+  if ("status" in goal) return goal;
+  const { limit } = query;
+  const report = await projectAnalytics(db, clickhouse, {
+    projectId: scope.projectId,
+    environment: scope.environment,
+    firstDay: days.from,
+    lastDay: days.to,
+    timeZone: scope.timeZone,
+    filters: requestFilters(query),
+    goal: goal.goal,
+    now,
+    reader,
+    ...(limit === undefined ? {} : { limit }),
+  });
+  // Goals belong to product analytics (docs/access.md).
+  return { report: scope.savedGoals ? report : { ...report, goals: [] } };
+}
+
+/**
+ * One list in full for `scope`. Match search case-insensitively; country
+ * lists search English names. Use the same days, filters, and goal as the
+ * analytics page.
+ */
+export async function listAnswer(
+  db: Kysely<Database>,
+  clickhouse: ClickHouseClient,
+  scope: ReportScope,
+  query: ListQuery,
+  { now, reader }: { now: Date; reader: Reader },
+): Promise<{ list: Awaited<ReturnType<typeof projectList>> } | Refusal> {
+  const days = requestDays(query, dayIn(scope.timeZone)(now));
+  if ("problem" in days) return { status: 400, body: days.problem };
+  const goal = await requestGoal(db, scope, query);
+  if ("status" in goal) return goal;
+  const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = query;
+  const list = await projectList(db, clickhouse, {
+    projectId: scope.projectId,
+    environment: scope.environment,
+    firstDay: days.from,
+    lastDay: days.to,
+    timeZone: scope.timeZone,
+    filters: requestFilters(query),
+    report,
+    limit,
+    offset,
+    goal: goal.goal,
+    reader,
+    ...(search === undefined ? {} : { search }),
+  });
+  return { list };
+}
+
+/** The scope of a dashboard request, after requireProjectAccess. */
+function dashboardScope(request: {
+  projectAccess: ProjectAccess | null;
+  query: { environment?: string };
+}): ReportScope {
+  const access = accessOf(request);
+  return {
+    projectId: access.projectId,
+    environment: environmentOf(request.query.environment),
+    timeZone: access.timeZone,
+    savedGoals: canUse(access.user, "product_analytics", "view"),
+  };
 }
 
 /**
@@ -250,130 +409,40 @@ export const reportRoutes: FastifyPluginCallback<{
 
   // For these routes only (clickhouse/route-errors.ts).
   app.setErrorHandler(clickHouseErrorHandler);
+  const analyticsChecks = analyticsQueryChecks({ environment: true });
   app.get<{
     Params: { id: string };
-    Querystring: RangeQuery & { limit?: number } & GoalQuery & Partial<Record<FilterName, string>>;
+    Querystring: AnalyticsQuery & Pick<RangeQuery, "environment">;
   }>(
     "/projects/:id/analytics",
     {
       preHandler: [signedIn, canView],
-      preValidation: refuseUnknownParameters([
-        ...Object.keys(RANGE_PROPERTIES),
-        "limit",
-        ...GOAL_PARAMETERS,
-        ...FILTER_NAMES,
-      ]),
-      schema: {
-        params: PARAMS_SCHEMA,
-        querystring: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            ...RANGE_PROPERTIES,
-            limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
-            ...GOAL_PROPERTIES,
-            ...FILTER_PROPERTIES,
-          },
-        },
-      },
+      preValidation: analyticsChecks.preValidation,
+      schema: { params: PARAMS_SCHEMA, querystring: analyticsChecks.querystring },
     },
     async (request, reply) => {
-      const { timeZone } = accessOf(request);
-      // One reading of the clock: the period's days and the comparison's cut-off agree.
-      const current = now();
-      const days = requestDays(request.query, dayIn(timeZone)(current));
-      if ("problem" in days) {
-        return reply.code(400).send(days.problem);
-      }
-      const goal = await requestGoal(db, request);
-      if ("problem" in goal) return reply.code(goal.status).send(goal.problem);
-      const { limit } = request.query;
-      const report = await projectAnalytics(db, clickhouse, {
-        projectId: request.params.id,
-        environment: environmentOf(request.query.environment),
-        firstDay: days.from,
-        lastDay: days.to,
-        timeZone,
-        filters: requestFilters(request.query),
-        goal: goal.goal,
-        now: current,
+      const answer = await analyticsAnswer(db, clickhouse, dashboardScope(request), request.query, {
+        now: now(),
         reader: dashboardReader(clickhouse, limiter, reply),
-        ...(limit === undefined ? {} : { limit }),
       });
-      // Goals belong to product analytics (docs/access.md).
-      return canUse(accessOf(request).user, "product_analytics", "view")
-        ? report
-        : { ...report, goals: [] };
+      return "status" in answer ? reply.code(answer.status).send(answer.body) : answer.report;
     },
   );
 
-  /**
-   * Match search case-insensitively; country lists search English names.
-   * Use the same days, filters, and goal as the analytics page.
-   */
-  app.get<{
-    Params: { id: string };
-    Querystring: RangeQuery & {
-      report: ListReport;
-      search?: string;
-      offset?: number;
-      limit?: number;
-    } & GoalQuery &
-      Partial<Record<FilterName, string>>;
-  }>(
+  const listChecks = listQueryChecks({ environment: true });
+  app.get<{ Params: { id: string }; Querystring: ListQuery & Pick<RangeQuery, "environment"> }>(
     "/projects/:id/analytics/list",
     {
       preHandler: [signedIn, canView],
-      preValidation: refuseUnknownParameters([
-        ...Object.keys(RANGE_PROPERTIES),
-        "report",
-        "search",
-        "offset",
-        "limit",
-        ...GOAL_PARAMETERS,
-        ...FILTER_NAMES,
-      ]),
-      schema: {
-        params: PARAMS_SCHEMA,
-        querystring: {
-          type: "object",
-          additionalProperties: false,
-          required: ["report"],
-          properties: {
-            ...RANGE_PROPERTIES,
-            report: { type: "string", enum: LIST_REPORTS },
-            search: { type: "string", maxLength: MAX_SEARCH_LENGTH, pattern: NO_NUL },
-            offset: { type: "integer", minimum: 0, maximum: 100_000 },
-            limit: { type: "integer", minimum: 1, maximum: LIST_PAGE_SIZE },
-            ...GOAL_PROPERTIES,
-            ...FILTER_PROPERTIES,
-          },
-        },
-      },
+      preValidation: listChecks.preValidation,
+      schema: { params: PARAMS_SCHEMA, querystring: listChecks.querystring },
     },
     async (request, reply) => {
-      const { timeZone } = accessOf(request);
-      const days = requestDays(request.query, dayIn(timeZone)(now()));
-      if ("problem" in days) {
-        return reply.code(400).send(days.problem);
-      }
-      const goal = await requestGoal(db, request);
-      if ("problem" in goal) return reply.code(goal.status).send(goal.problem);
-      const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
-      return projectList(db, clickhouse, {
-        projectId: request.params.id,
-        environment: environmentOf(request.query.environment),
-        firstDay: days.from,
-        lastDay: days.to,
-        timeZone,
-        filters: requestFilters(request.query),
-        report,
-        limit,
-        offset,
-        goal: goal.goal,
+      const answer = await listAnswer(db, clickhouse, dashboardScope(request), request.query, {
+        now: now(),
         reader: dashboardReader(clickhouse, limiter, reply),
-        ...(search === undefined ? {} : { search }),
       });
+      return "status" in answer ? reply.code(answer.status).send(answer.body) : answer.list;
     },
   );
   done();

@@ -59,6 +59,7 @@ import { serverLogDestination } from "./server-log/destination.ts";
 import { redactUrl } from "./server-log/redact.ts";
 import { serverLogRoutes } from "./server-log/routes.ts";
 import { settingsRoutes } from "./settings/routes.ts";
+import { shareLinkRoutes, shareRoutes } from "./share/routes.ts";
 import { SourceMapCache } from "./source-maps/resolve.ts";
 import { sourceMapRoutes, sourceMapUploadRoutes } from "./source-maps/routes.ts";
 import { spamRoutes } from "./spam/routes.ts";
@@ -197,6 +198,8 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    * resolver that checks a URL's host when a check is saved (tests fake it).
    */
   uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
+  /** Shared links' limits per client address and per link (share/routes.ts), which tests lower. */
+  shareLinks?: { ipLimit?: RateLimit; linkLimit?: RateLimit };
   /** Heartbeat pings' limits per client address and per heartbeat (uptime/heartbeat-routes.ts), which tests lower. */
   heartbeats?: { ipLimit?: RateLimit; checkLimit?: RateLimit };
   /**
@@ -310,6 +313,7 @@ export function buildApp({
   aiCalls = {},
   uptime = {},
   heartbeats = {},
+  shareLinks = {},
   notifications = {},
   storage = {},
   backups = {},
@@ -843,6 +847,24 @@ export function buildApp({
       auth: dashboard.auth,
       limiter,
       liveLimiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(shareLinkRoutes, {
+      prefix: "/api",
+      db,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      publicUrl: dashboard.publicUrl,
+    });
+    // Public: a shared link's token is its capability (docs/access.md).
+    app.register(shareRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      store: objectStore,
+      limiter,
+      liveLimiter,
+      ...shareLinks,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(serverLogRoutes, {

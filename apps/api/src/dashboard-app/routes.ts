@@ -87,16 +87,31 @@ export const dashboardAppRoutes: FastifyPluginAsync<{
     },
   });
 
+  const sharePage = existsSync(join(root, SHARE_PAGE));
   app.get("/*", async (request, reply) => {
     if (!isPagePath(request.url)) {
       return reply.callNotFound();
+    }
+    if (isSharePath(request.url)) {
+      // A shared link's page is its own small app, without the signed-in dashboard's code.
+      if (!sharePage) return reply.callNotFound();
+      return reply.header("x-robots-tag", "noindex, nofollow").sendFile(SHARE_PAGE);
     }
     return reply.sendFile("index.html");
   });
 };
 
+/** The page of a shared link (docs/web-analytics.md, "Shared links"), a second entry of the build. */
+const SHARE_PAGE = "share.html";
+
+/** `/share/<token>`: a shared link's page. */
+function isSharePath(url: string): boolean {
+  const path = url.split("?", 1)[0] ?? "";
+  return path.startsWith("/share/");
+}
+
 function cacheControlFor(path: string, hashedPrefix: string): string {
-  if (basename(path) === "index.html") {
+  if (basename(path) === "index.html" || basename(path) === SHARE_PAGE) {
     return "no-cache";
   }
   if (path.startsWith(hashedPrefix)) {

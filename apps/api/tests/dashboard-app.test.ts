@@ -16,6 +16,9 @@ import { createDatabase } from "../src/db/database.ts";
 const INDEX_HTML =
   '<!doctype html><div id="root"></div><script src="/assets/app-a1b2.js"></script>';
 
+const SHARE_HTML =
+  '<!doctype html><meta name="robots" content="noindex, nofollow"><div id="root"></div>';
+
 describe("the built dashboard", () => {
   // These routes never query the database, and the pool only connects on
   // first use, so this placeholder address is never contacted.
@@ -29,6 +32,7 @@ describe("the built dashboard", () => {
     const root = join(directory, "dist");
     await mkdir(join(root, "assets"), { recursive: true });
     await writeFile(join(root, "index.html"), INDEX_HTML);
+    await writeFile(join(root, "share.html"), SHARE_HTML);
     await writeFile(join(root, "assets", "app-a1b2.js"), "console.log('app');\n");
     await writeFile(join(root, "favicon.svg"), "<svg></svg>");
     // Beside the dashboard, never inside it: must stay unreachable.
@@ -72,6 +76,18 @@ describe("the built dashboard", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-cache");
     expect(response.body).toBe(INDEX_HTML);
+  });
+
+  test("answers a shared link's page with its own page, never indexed, never framed", async () => {
+    const response = await app.inject({ url: `/share/${"a".repeat(43)}?period=30d` });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(SHARE_HTML);
+    expect(response.headers["cache-control"]).toBe("no-cache");
+    expect(response.headers["x-robots-tag"]).toBe("noindex, nofollow");
+    expect(response.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    expect(response.headers["referrer-policy"]).toBe("same-origin");
+    // The dashboard's own paths never get the shared page.
+    expect((await app.inject({ url: "/projects" })).body).toBe(INDEX_HTML);
   });
 
   test("caches hashed build files for a year, and other files for an hour", async () => {
