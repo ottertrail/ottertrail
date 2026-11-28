@@ -6,6 +6,7 @@ import {
   FilterXIcon,
   MousePointerClickIcon,
   OctagonAlertIcon,
+  PlusIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -19,6 +20,15 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -26,15 +36,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAccess } from "@/lib/access";
@@ -717,76 +718,57 @@ function GoalsSection({
   );
 }
 
-const NO_GOAL = "none";
-
-/** A goal as one of the Goal picker's values. */
-const valueOf = (goal: GoalChoice) => ("id" in goal ? `goal:${goal.id}` : `event:${goal.event}`);
-
 /**
- * The Goal picker: the saved goals and the period's custom events, so a
- * goal is a choice away on a phone too, where the lists are far down.
+ * Adds the goal filter, or replaces it: the saved goals and the period's
+ * custom events, so a goal is a choice away on a phone too, where the lists
+ * are far down. The filter's chip shows the goal chosen and removes it.
  */
-function GoalSelect({
+function GoalMenu({
   analytics,
-  search,
   onGoal,
 }: {
   analytics: Analytics | undefined;
-  search: PageSearch;
-  onGoal: (goal: GoalChoice | undefined) => void;
+  onGoal: (goal: GoalChoice) => void;
 }) {
   const goals = analytics?.goals ?? [];
   const events = (analytics?.customEvents ?? [])
     .map((event) => event.name)
     .filter((name) => canBeGoal(name));
-  const chosen = search.goal;
-  if (chosen !== undefined && "event" in chosen && !events.includes(chosen.event)) {
-    events.push(chosen.event);
-  }
   if (goals.length === 0 && events.length === 0) return null;
-  const items = [
-    { value: NO_GOAL, label: "No goal" },
-    ...goals.map((goal) => ({ value: valueOf({ id: goal.id }), label: goal.name })),
-    ...events.map((name) => ({ value: valueOf({ event: name }), label: name })),
-  ];
   return (
-    <Select
-      items={items}
-      value={chosen === undefined ? NO_GOAL : valueOf(chosen)}
-      onValueChange={(value) => {
-        if (typeof value !== "string") return;
-        if (value.startsWith("goal:")) onGoal({ id: value.slice("goal:".length) });
-        else if (value.startsWith("event:")) onGoal({ event: value.slice("event:".length) });
-        else onGoal(undefined);
-      }}
-    >
-      <SelectTrigger aria-label="Goal" className="w-40">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={NO_GOAL}>No goal</SelectItem>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline">
+            <PlusIcon data-icon="inline-start" />
+            Goal
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-auto max-w-80 min-w-48">
         {goals.length > 0 && (
-          <SelectGroup>
-            <SelectLabel>Goals</SelectLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Goals</DropdownMenuLabel>
             {goals.map((goal) => (
-              <SelectItem key={goal.id} value={valueOf({ id: goal.id })}>
-                {goal.name}
-              </SelectItem>
+              <DropdownMenuItem key={goal.id} onClick={() => onGoal({ id: goal.id })}>
+                <span className="truncate">{goal.name}</span>
+              </DropdownMenuItem>
             ))}
-          </SelectGroup>
+          </DropdownMenuGroup>
         )}
+        {goals.length > 0 && events.length > 0 && <DropdownMenuSeparator />}
         {events.length > 0 && (
-          <SelectGroup>
-            <SelectLabel>Custom events</SelectLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Custom events</DropdownMenuLabel>
             {events.map((name) => (
-              <SelectItem key={name} value={valueOf({ event: name })}>
-                {name}
-              </SelectItem>
+              <DropdownMenuItem key={name} onClick={() => onGoal({ event: name })}>
+                <span className="truncate">{name}</span>
+              </DropdownMenuItem>
             ))}
-          </SelectGroup>
+          </DropdownMenuGroup>
         )}
-      </SelectContent>
-    </Select>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1032,9 +1014,8 @@ export function AnalyticsPage({
         }
         filters={
           <>
-            <GoalSelect
+            <GoalMenu
               analytics={data}
-              search={search}
               onGoal={(next) => {
                 if (!sameGoal(next, goal)) show({ goal: next });
               }}

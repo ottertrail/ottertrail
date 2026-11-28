@@ -812,7 +812,7 @@ Visitors and pageviews count events in the range. Visits, bounce rate, and durat
 
 ### Breakdowns
 
-A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, or `release`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, which the report script prints as "(unknown)".
+A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, or `release`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, "(unknown)" in the report script, and always comes last, as on an event's page and in a funnel's breakdown. A visit without a campaign is "No campaign", a value, sorted by its count.
 
 **Source** is the first of these that exists:
 
@@ -849,14 +849,14 @@ A goal, a saved goal or a custom event by name, does not narrow the visits, as a
 - **Chart:** converted visitors per day: those with a goal event that day.
 - **A visit-level list** (Entry, Exit, Sources, Campaigns, Countries, Regions, Cities, Devices, Browsers, Systems, Releases): a row's Converted counts its visitors with a visit of that value **in which the goal was reached**: a goal event from the visit's start to its end, anywhere in the visit. A visitor who came from a search, left, and signed up in a later direct visit counts under Direct / none only. A visit has one value of each, so a whole list's Converted add up to the summary's, or more when one visitor converted in two visits of different values.
 - **Pages:** a page's Converted counts its visitors who viewed it in a visit that reached the goal, before or after viewing it. A visit views many pages, so these add up to more than the summary.
-- **In both,** a row's Converted is exactly what the Goals table shows for that goal when the page is filtered by the row, and a test checks it on every row of Sources, Countries, and Pages. Visitors is the row's visitors as before, under the other filters, and Rate is Converted of them. Rows are sorted by Converted, then visitors.
+- **In both,** a row's Converted is exactly what the Goals table shows for that goal when the page is filtered by the row, and a test checks it on every row of Sources, Countries, and Pages. Visitors is the row's visitors as before, under the other filters, and Rate is Converted of them. Rows are sorted by Converted, then visitors, with Unknown last.
 - **Custom events** keep their own numbers.
 
 **How:** with a goal, the request's session holds a second temporary table beside the visits (section 8.3 of [dashboard](dashboard.md#visits-worked-out-once)): the visits with a goal event, found by joining the goal's events of the range (`project_id` first, then environment and time, all values as parameters) to the visits. Each list then counts its visitors and its converted in one query, `uniqExactIf(visitor_id, (visitor_id, started_at) IN goal visits)`; Pages finds each pageview's goal visit with an `ASOF LEFT JOIN` (the goal visit that started last at or before it, if it had not ended). Both endpoints run within the dashboard's query limit.
 
 **Measured** on the seeded Demo shop (`vp run seed`: 46,000 events, 30 days, the development stack on an Apple M4 Max), goal "Signed up": the goal visits table read 51,429 rows in 8 ms; each list then read 6,081 rows (5,934 visits and 147 goal visits) in 1 to 2 ms and 5 MB; the whole page took 224 ms with the goal and 245 ms without (the difference is noise). A large project has not been measured: the development machine is too small ([storage-benchmark.md](storage-benchmark.md)).
 
-**Limits:** the period before compares the summary only, as without a goal. The Goal picker lists the period's top 10 custom events. A goal by signed-in user, rather than visitor, is not offered.
+**Limits:** the period before compares the summary only, as without a goal. The Goal menu lists the period's top 10 custom events. A goal by signed-in user, rather than visitor, is not offered.
 
 ### Comparison with the previous period
 

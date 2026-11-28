@@ -392,7 +392,7 @@ export async function eventBreakdowns(
      FROM (${matchingEvents(params, range, match, { withVisit: true })})
      ARRAY JOIN [${pairs.join(", ")}] AS pair
      GROUP BY dimension, value
-     ORDER BY dimension, visitors DESC, events DESC, value ASC NULLS LAST
+     ORDER BY dimension, value IS NULL, visitors DESC, events DESC, value ASC
      LIMIT ${PROPERTY_VALUES} BY dimension`,
     params,
   );

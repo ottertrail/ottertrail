@@ -246,6 +246,41 @@ describe("a saved goal on the Analytics page", () => {
   });
 });
 
+describe("Unknown", () => {
+  test("comes last in every list, with or without a goal, though it has the most", async () => {
+    const project = (await insertProject(dashboard.db, { name: "Unknown last" })).id;
+    await dashboard.store(project, [
+      // Three visitors without a location or a browser sign up; one from Germany only looks.
+      ...["7", "8", "9"].flatMap((visitor) => [
+        event("pageview", undefined, 90, { visitorId: visitor }),
+        event("signup", undefined, 85, { visitorId: visitor }),
+      ]),
+      event("pageview", "10", 80, DE),
+    ]);
+    for (const goal of ["", "&goalEvent=signup"]) {
+      const body = (await get(`/analytics?period=today${goal}`, dashboard.cookie, project)).json();
+      for (const list of ["country", "browser", "deviceType", "region", "city", "release"]) {
+        const values = body.breakdowns[list].map((row: Row) => row.value);
+        expect({
+          goal,
+          list,
+          last: values.at(-1),
+          unknowns: values.filter((v: unknown) => v === null).length,
+        }).toEqual({ goal, list, last: null, unknowns: 1 });
+        expect(values.length).toBe(["region", "city", "release"].includes(list) ? 1 : 2);
+      }
+      const full = (
+        await get(`/analytics/list?report=country&period=today${goal}`, dashboard.cookie, project)
+      ).json();
+      expect(full.rows.map((row: Row) => row.value)).toEqual(["DE", null]);
+    }
+    const lists = (
+      await get("/events/signup/breakdowns?period=today", dashboard.cookie, project)
+    ).json();
+    expect(lists.country.map((row: Row) => row.value)).toEqual([null]);
+  });
+});
+
 describe("a custom event as the goal", () => {
   test("counts as a goal of that event by name", async () => {
     const saved = (await get(`/analytics?period=today&goal=${goalIds.signedUp}`)).json();

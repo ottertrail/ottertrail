@@ -75,11 +75,11 @@ describe("the analytics page", () => {
       ["/", "322", "420"],
       ["/pricing", "201", "260"],
     ]);
-    // Country codes become names, and a missing value is a row of its own.
+    // Country codes become names, and a missing value is a row of its own, last.
     expect(tableRows("Countries, most visitors first")).toEqual([
       ["Germany", "155", "160"],
-      ["Unknown", "125", "130"],
       ["Singapore", "90", "95"],
+      ["Unknown", "125", "130"],
     ]);
     expect(tableRows("Devices, most visitors first")).toEqual([
       ["Desktop", "269", "290"],

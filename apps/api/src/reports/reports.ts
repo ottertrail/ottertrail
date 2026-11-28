@@ -613,8 +613,15 @@ export interface BreakdownRow {
 }
 
 /**
+ * An unknown value ("Unknown") comes last in its list, as on the event page
+ * and in a funnel's breakdown. A visit without a campaign is "No campaign",
+ * a value of its own, so it sorts by its count.
+ */
+const unknownLast = (dimension: VisitDimension) => dimension !== "utmCampaign";
+
+/**
  * Visits grouped by one dimension (see dimensionSql), most visitors first;
- * with a goal, most converted first.
+ * with a goal, most converted first; Unknown last (unknownLast).
  */
 export async function breakdown(
   reader: Reader,
@@ -647,7 +654,8 @@ export async function breakdown(
      FROM (${visits})
      WHERE ${matches}
      GROUP BY value
-     ORDER BY ${goal === undefined ? "" : "converted DESC,"} visitors DESC, visits DESC, value ASC NULLS LAST
+     ORDER BY ${unknownLast(dimension) ? "value IS NULL," : ""}
+              ${goal === undefined ? "" : "converted DESC,"} visitors DESC, visits DESC, value ASC NULLS LAST
      LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
     params,
   );

@@ -2808,7 +2808,7 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       utmCampaign: [row(null, 700, 760), row("launch", 65, 64)],
       entryPage: [row("/pricing", 210, 220), row("/", 190, 200)],
       exitPage: [row("/signup", 150, 160)],
-      country: [row("DE", 155, 160), row(null, 125, 130), row("SG", 90, 95)],
+      country: [row("DE", 155, 160), row("SG", 90, 95), row(null, 125, 130)],
       region: [row("Bavaria", 80, 85)],
       city: [row("Munich", 60, 62)],
       deviceType: [row("desktop", 269, 290), row("mobile", 242, 250)],
@@ -2851,6 +2851,34 @@ function rowShare(name: string | null): number {
 const convertedOf = (visitors: number, rate: number, name: string | null) =>
   Math.min(visitors, Math.round(visitors * rate * rowShare(name)));
 
+/** `total` split in whole numbers in proportion to `weights`, adding up to it exactly. */
+export function splitTotal(total: number, weights: readonly number[]): number[] {
+  const sum = weights.reduce((all, weight) => all + weight, 0);
+  if (sum === 0) return weights.map(() => 0);
+  const exact = weights.map((weight) => (weight / sum) * total);
+  const parts = exact.map(Math.floor);
+  const order = exact
+    .map((value, index) => ({ index, rest: value - Math.floor(value) }))
+    .toSorted((a, b) => b.rest - a.rest);
+  for (
+    let left = total - parts.reduce((all, part) => all + part, 0), i = 0;
+    left > 0;
+    left--, i++
+  ) {
+    const at = order[i % order.length]?.index ?? 0;
+    parts[at] = (parts[at] ?? 0) + 1;
+  }
+  return parts;
+}
+
+/** Most converted first, as the API sorts; an unknown value last (a campaign's null is a value). */
+const byConverted =
+  (unknownLast: boolean) =>
+  <Row extends { value: string | null; visitors: number; converted: number }>(a: Row, b: Row) =>
+    (unknownLast ? Number(a.value === null) - Number(b.value === null) : 0) ||
+    b.converted - a.converted ||
+    b.visitors - a.visitors;
+
 /**
  * The answer with the goal the query names (`goal` or `goalEvent`), as the
  * API counts it: the summary's converted visitors from the goal (or the
@@ -2888,20 +2916,21 @@ export function withGoal(
   const breakdowns = { ...analytics.breakdowns };
   for (const breakdown of BREAKDOWNS) {
     const list = breakdowns[breakdown];
-    const weights = list.map((item) => item.visitors * rowShare(item.value));
-    const total = weights.reduce((sum, weight) => sum + weight, 0);
     const shown = list.reduce((sum, item) => sum + item.visitors, 0);
     const reached = Math.round(converted * Math.min(1, visitors === 0 ? 0 : shown / visitors));
+    const parts = splitTotal(
+      reached,
+      list.map((item) => item.visitors * rowShare(item.value)),
+    );
     breakdowns[breakdown] = list
-      .map((item, index) => ({
-        ...item,
-        converted: Math.min(
-          item.visitors,
-          Math.floor((total === 0 ? 0 : (weights[index] ?? 0) / total) * reached),
-        ),
-      }))
-      .toSorted((a, b) => b.converted - a.converted || b.visitors - a.visitors);
+      .map((item, index) => ({ ...item, converted: Math.min(item.visitors, parts[index] ?? 0) }))
+      .toSorted(byConverted(breakdown !== "utmCampaign"));
   }
+  // Visitor IDs are daily, so the days add up to the period's converted visitors.
+  const perDay = splitTotal(
+    converted,
+    analytics.days.map((day) => day.visitors * rowShare(day.day)),
+  );
   return {
     ...analytics,
     goal: {
@@ -2913,10 +2942,7 @@ export function withGoal(
       conversionRate: rate,
       previous: { converted: Math.round(converted * 0.8), events: Math.round(events * 0.8) },
     },
-    days: analytics.days.map((day) => ({
-      ...day,
-      converted: convertedOf(day.visitors, rate, day.day),
-    })),
+    days: analytics.days.map((day, index) => ({ ...day, converted: perDay[index] ?? 0 })),
     pages: rows(analytics.pages, (item) => item.path),
     breakdowns,
   };
@@ -3295,59 +3321,78 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
   };
 }
 
-const listValue = (value: string | null, visitors: number, events: number) => ({
-  value,
-  visitors,
-  events,
-});
+/** The events of signup's 126 visitors (fakeProductEvent): all but a server's 8. */
+const BROWSER_SIGNUPS = 132;
 
 /**
- * signup's 140 events by each list of its page. Unknown (null) holds a
- * server's 8 events, which have no visitor, visit, location, or device.
+ * One list of signup's: each value's visitors, adding up to all of them,
+ * its events in proportion, adding up to the browsers' events, and the
+ * server's 8 events, which have no visitor, visit, location, or device,
+ * as Unknown, last.
  */
+function signupList(values: [string, number][]) {
+  const events = splitTotal(
+    BROWSER_SIGNUPS,
+    values.map(([, visitors]) => visitors),
+  );
+  return [
+    ...values.map(([value, visitors], index) => ({ value, visitors, events: events[index] ?? 0 })),
+    { value: null, visitors: 0, events: 140 - BROWSER_SIGNUPS },
+  ];
+}
+
 const SIGNUP_LISTS: EventLists = {
-  source: [
-    listValue("Direct / none", 47, 52),
-    listValue("google.com", 37, 41),
-    listValue("newsletter", 22, 25),
-    listValue("news.ycombinator.com", 12, 14),
-    listValue(null, 0, 8),
-  ],
-  utmCampaign: [listValue("", 96, 107), listValue("launch-week", 22, 25), listValue(null, 0, 8)],
-  country: [
-    listValue("DE", 41, 46),
-    listValue("US", 35, 39),
-    listValue("GB", 22, 24),
-    listValue("SG", 20, 23),
-    listValue(null, 0, 8),
-  ],
-  region: [
-    listValue("Bavaria, DE", 24, 27),
-    listValue("California, US", 19, 21),
-    listValue("England, GB", 18, 20),
-    listValue(null, 4, 8),
-  ],
-  city: [
-    listValue("Munich, DE", 21, 24),
-    listValue("San Francisco, US", 15, 17),
-    listValue("London, GB", 14, 16),
-    listValue(null, 4, 8),
-  ],
-  deviceType: [listValue("desktop", 78, 87), listValue("mobile", 40, 45), listValue(null, 0, 8)],
-  browser: [
-    listValue("Chrome", 64, 71),
-    listValue("Safari", 33, 37),
-    listValue("Firefox", 21, 24),
-    listValue(null, 0, 8),
-  ],
-  os: [
-    listValue("macOS", 49, 55),
-    listValue("Windows", 31, 34),
-    listValue("iOS", 26, 29),
-    listValue("Android", 12, 14),
-    listValue(null, 0, 8),
-  ],
-  release: [listValue("1.4.2", 90, 101), listValue("1.4.1", 28, 31), listValue(null, 0, 8)],
+  source: signupList([
+    ["Direct / none", 50],
+    ["google.com", 40],
+    ["newsletter", 23],
+    ["news.ycombinator.com", 13],
+  ]),
+  utmCampaign: signupList([
+    ["", 102],
+    ["launch-week", 24],
+  ]),
+  country: signupList([
+    ["DE", 44],
+    ["US", 38],
+    ["GB", 23],
+    ["SG", 21],
+  ]),
+  region: signupList([
+    ["Bavaria, DE", 30],
+    ["England, GB", 23],
+    ["California, US", 22],
+    ["Central Singapore, SG", 21],
+    ["New York, US", 16],
+    ["Berlin, DE", 14],
+  ]),
+  city: signupList([
+    ["Munich, DE", 30],
+    ["London, GB", 23],
+    ["San Francisco, US", 22],
+    ["Singapore, SG", 21],
+    ["New York City, US", 16],
+    ["Berlin, DE", 14],
+  ]),
+  deviceType: signupList([
+    ["desktop", 84],
+    ["mobile", 42],
+  ]),
+  browser: signupList([
+    ["Chrome", 69],
+    ["Safari", 35],
+    ["Firefox", 22],
+  ]),
+  os: signupList([
+    ["macOS", 52],
+    ["Windows", 33],
+    ["iOS", 28],
+    ["Android", 13],
+  ]),
+  release: signupList([
+    ["1.4.2", 96],
+    ["1.4.1", 30],
+  ]),
 };
 
 /** The share of signup's events a query's list filters keep, as the API would narrow them. */

@@ -163,25 +163,45 @@ describe("the goal filter", () => {
     await expect.poll(() => addressQuery(router)).toEqual({});
   });
 
-  test("the Goal picker lists the saved goals and the period's custom events", async () => {
+  test("the Goal menu adds the goal filter or replaces it; the chip alone shows it", async () => {
     const api = installFakeApi();
     const router = renderApp(ANALYTICS);
 
-    await page.getByRole("combobox", { name: "Goal" }).click();
-    const options = page
-      .getByRole("option")
+    const menu = page.getByRole("button", { name: "Goal", exact: true });
+    await expect.element(menu).toHaveAttribute("aria-haspopup", "menu");
+    await menu.click();
+    const items = page
+      .getByRole("menuitem")
       .elements()
       .map((item) => item.textContent);
-    expect(options).toEqual(["No goal", "Saw pricing", "Team signup", "signup"]);
-    await page.getByRole("option", { name: "Saw pricing" }).click();
+    expect(items).toEqual(["Saw pricing", "Team signup", "signup"]);
+    await page.getByRole("menuitem", { name: "Saw pricing" }).click();
 
     await expect.poll(() => addressQuery(router)).toEqual({ goal: SAW_PRICING?.id });
     await expect.poll(() => lastQuery(api)).toEqual({ period: "7d", goal: SAW_PRICING?.id });
     await expect.poll(chips).toEqual(["Goal: Saw pricing"]);
+    // The menu does not repeat the goal: the chip shows it.
+    const bar = document.querySelector("search[aria-label='Period, environment, and filters']");
+    expect(bar?.textContent?.match(/Saw pricing/g)).toHaveLength(1);
 
-    await page.getByRole("combobox", { name: "Goal" }).click();
-    await page.getByRole("option", { name: "No goal" }).click();
-    await expect.poll(() => addressQuery(router)).toEqual({});
+    // With the keyboard, choosing another replaces it.
+    menu.element().focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("menuitem", { name: "signup" })).toBeVisible();
+    await userEvent.keyboard("{End}{Enter}");
+    await expect.poll(() => addressQuery(router)).toEqual({ goalEvent: "signup" });
+    await expect.poll(chips).toEqual(["Goal: signup"]);
+  });
+
+  test("Unknown comes last in a list under a goal, whatever its conversions", async () => {
+    installFakeApi();
+    renderApp(`${ANALYTICS}?goal=${TEAM_SIGNUP?.id}`);
+    const countries = "Countries, most converted first";
+    await expect.element(page.getByRole("table", { name: countries })).toBeVisible();
+    const rows = listRows(countries);
+    expect(rows.at(-1)?.[0]).toBe("Unknown");
+    // Its share would put it first.
+    expect(Number(rows.at(-1)?.[2])).toBeGreaterThan(Number(rows[0]?.[2]));
   });
 
   test("a deleted goal in a link says so, with a way to remove it", async () => {

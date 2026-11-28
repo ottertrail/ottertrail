@@ -372,16 +372,16 @@ describe("product events", () => {
     });
     // Named as the Analytics page names them; a server's events are Unknown.
     expect(listRows(sources)).toEqual([
-      ["Direct / none", "47", "52"],
-      ["google.com", "37", "41"],
-      ["newsletter", "22", "25"],
-      ["news.ycombinator.com", "12", "14"],
+      ["Direct / none", "50", "52"],
+      ["google.com", "40", "42"],
+      ["newsletter", "23", "24"],
+      ["news.ycombinator.com", "13", "14"],
       ["Unknown", "0", "8"],
     ]);
     await page.getByRole("button", { name: "Campaigns" }).click();
     expect(listRows("Campaigns, most visitors first")).toEqual([
-      ["No campaign", "96", "107"],
-      ["launch-week", "22", "25"],
+      ["No campaign", "102", "107"],
+      ["launch-week", "24", "25"],
       ["Unknown", "0", "8"],
     ]);
     // A campaign's Unknown is an event without a visit: nothing to filter by.
@@ -399,8 +399,8 @@ describe("product events", () => {
           .map((item) => item.textContent),
       ).toEqual(tabs);
     }
-    expect(listRows("Countries, most visitors first")[0]).toEqual(["Germany", "41", "46"]);
-    expect(listRows("Releases, most visitors first")[0]).toEqual(["1.4.2", "90", "101"]);
+    expect(listRows("Countries, most visitors first")[0]).toEqual(["Germany", "44", "46"]);
+    expect(listRows("Releases, most visitors first")[0]).toEqual(["1.4.2", "96", "101"]);
   });
 
   test("a list's row filters the event's page, shown as a chip beside the property filters", async () => {
@@ -431,7 +431,7 @@ describe("product events", () => {
     // The filtered list shows its one value, which no longer filters.
     await expect
       .poll(() => listRows("Sources, most visitors first"))
-      .toEqual([["google.com", "37", "41"]]);
+      .toEqual([["google.com", "40", "42"]]);
     expect(
       page
         .getByRole("table", { name: "Sources, most visitors first" })
