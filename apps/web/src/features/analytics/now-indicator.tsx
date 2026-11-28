@@ -56,7 +56,11 @@ export function NowIndicator({
       className="gap-2 tabular-nums"
     >
       <LiveDot live={visitors > 0} />
-      {visitorsNowText(visitors)}
+      {/* A phone's title row has room for the count only; the words stay the name. */}
+      <span aria-hidden="true" className="sm:hidden">
+        {formatWhole(visitors)}
+      </span>
+      <span className="max-sm:sr-only">{visitorsNowText(visitors)}</span>
     </ButtonLink>
   );
 }

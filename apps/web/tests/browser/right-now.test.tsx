@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, test } from "vite-plus/test";
 import { commands, page } from "vite-plus/test/browser/context";
 
 import { NOW_TIMING } from "../../src/lib/now-api.ts";
@@ -61,6 +61,10 @@ async function emulateReducedMotion(reduce: boolean) {
   await command.call(commands, reduce);
 }
 
+beforeEach(async () => {
+  await page.viewport(1280, 900);
+});
+
 afterEach(() => {
   NOW_TIMING.refreshMs = 15_000;
 });
@@ -70,7 +74,7 @@ describe("the indicator on Web analytics", () => {
     await page.viewport(1440, 900);
     const api = installFakeApi();
     const router = renderApp(ANALYTICS);
-    await expect.element(indicator()).toHaveTextContent("3 visitors now");
+    await expect.element(indicator()).toHaveAccessibleName("3 visitors now");
     const dot = indicator().element().querySelector("[data-slot=live-dot]");
     expect(dot?.getAttribute("data-live")).toBe("true");
     // It sits in the title row, beside the page's title.
@@ -90,10 +94,22 @@ describe("the indicator on Web analytics", () => {
       .toHaveAttribute("data-active");
   });
 
+  test("on a phone, shows the count alone and keeps the title whole", async () => {
+    await page.viewport(390, 844);
+    installFakeApi();
+    renderApp(ANALYTICS);
+    await expect.element(indicator()).toBeVisible();
+    expect(indicator().element().textContent).toContain("3");
+    expect(indicator().element().getBoundingClientRect().width).toBeLessThan(80);
+    const title = page.getByRole("heading", { level: 1, name: "Web analytics" }).element();
+    const text = title.querySelector<HTMLElement>(".truncate") ?? title;
+    expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
+  });
+
   test("says no visitors now, with a grey dot", async () => {
     installFakeApi({ now: nobodyNow });
     renderApp(ANALYTICS);
-    await expect.element(indicator()).toHaveTextContent("No visitors now");
+    await expect.element(indicator()).toHaveAccessibleName("No visitors now");
     const dot = indicator().element().querySelector("[data-slot=live-dot]");
     expect(dot?.getAttribute("data-live")).toBe("false");
   });
