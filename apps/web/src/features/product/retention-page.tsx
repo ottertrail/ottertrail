@@ -29,9 +29,11 @@ import { type ProductSearch, productSearchOf } from "./search";
 
 /**
  * The period picks the cohorts, one a week, so a period under 4 weeks
- * would show one or two rows. Those presets are not offered here.
+ * would show one or two rows. Those presets are not offered here, nor
+ * Month to date, which is shorter for most of the month.
  */
-const RETENTION_PERIODS = PERIODS.filter((item) => item.value !== "today" && item.value !== "7d");
+const SHORT: readonly Period[] = ["today", "yesterday", "7d", "mtd"];
+const RETENTION_PERIODS = PERIODS.filter((item) => !SHORT.includes(item.value));
 const RETENTION_DEFAULT: Period = "90d";
 const LONGEST: Period = "12m";
 

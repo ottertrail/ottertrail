@@ -45,8 +45,10 @@ const isWidgetId = (value: unknown): value is WidgetId =>
 /** The overview's periods. */
 export const OVERVIEW_PERIODS = [
   { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
   { value: "7d", label: "Last 7 days" },
   { value: "30d", label: "Last 30 days" },
+  { value: "mtd", label: "Month to date" },
 ] as const;
 export type OverviewPeriod = (typeof OVERVIEW_PERIODS)[number]["value"];
 export const DEFAULT_OVERVIEW_PERIOD: OverviewPeriod = "7d";

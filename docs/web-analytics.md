@@ -896,7 +896,7 @@ A report covers whole calendar days in the instance's timezone, the timezone tha
 
 ### Ranges
 
-The page takes the periods every report page shares (`today`, `7d`, `30d`, `90d`, `12m`, or `from` and `to` days), and five of its own (`ANALYTICS_PERIODS` in `reports/routes.ts`, `analyticsDays`). The other pages keep the shared ones: they all work in whole days, and their own tables would need an All time of their own.
+The page takes the periods every report page shares (`today`, `yesterday`, `7d`, `30d`, `mtd`, `90d`, `ytd`, `12m`, or `from` and `to` days, `periodDays` in `reports/routes.ts`), and two of its own, `24h` and `all` (`ANALYTICS_PERIODS`, `analyticsDays`). The other pages leave those two out: they all work in whole days, and their own tables would need an All time of their own ([dashboard](dashboard.md#periods)). Yesterday, month to date, and year to date started on this page and moved to the shared list, with their comparison.
 
 | Period      | Covers                                                                                                   |
 | ----------- | -------------------------------------------------------------------------------------------------------- |

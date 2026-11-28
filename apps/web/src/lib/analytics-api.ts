@@ -1,12 +1,18 @@
 import type { ReportGoal } from "./goals-api";
 import type { Step } from "./steps";
 
-/** Ranges the analytics page offers; each ends today in the timezone set in Settings. */
+/**
+ * The periods every report page shares: whole days in the timezone set in
+ * Settings, each ending today but Yesterday.
+ */
 export const PERIODS = [
   { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
   { value: "7d", label: "Last 7 days" },
   { value: "30d", label: "Last 30 days" },
+  { value: "mtd", label: "Month to date" },
   { value: "90d", label: "Last 90 days" },
+  { value: "ytd", label: "Year to date" },
   { value: "12m", label: "Last 12 months" },
 ] as const;
 

@@ -62,7 +62,10 @@ export function FunnelTrendSection({
   count: FunnelCount;
   window: FunnelWindow;
 }) {
-  const oneDay = "period" in range ? range.period === "today" : range.from === range.to;
+  const oneDay =
+    "period" in range
+      ? range.period === "today" || range.period === "yesterday"
+      : range.from === range.to;
   const trend = useQuery({
     ...funnelTrendQuery(projectId, range, environment, steps, count, window),
     enabled: !oneDay,

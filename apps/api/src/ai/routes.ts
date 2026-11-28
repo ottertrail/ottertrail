@@ -10,7 +10,12 @@ import { environmentOf } from "../collection/environment.ts";
 import { USER_ID_PATTERN } from "../collection/identity.ts";
 import type { Database } from "../db/schema.ts";
 import { localDays, previousDays } from "../reports/reports.ts";
-import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
+import {
+  periodCalendar,
+  RANGE_PROPERTIES,
+  type RangeQuery,
+  requestDays,
+} from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { SERVICE_PATTERN, type TelemetryRange } from "../telemetry/dashboard-query.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
@@ -173,6 +178,7 @@ export const aiRoutes: FastifyPluginCallback<{
         range.lastDay,
         range.timeZone,
         moment,
+        periodCalendar(request.query.period),
       );
       const reader = readerOf(reply);
       const [totals, previousTotals, models, features, users, failures, labels, received] =

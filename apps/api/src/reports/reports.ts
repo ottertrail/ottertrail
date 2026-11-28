@@ -124,9 +124,11 @@ export interface PreviousDays {
 }
 
 /**
- * Compare the preceding equal-length period in the same timezone.
- * For a running period, shift now back by its calendar length so partial
- * days compare equally. Use PostgreSQL for daylight saving boundaries.
+ * Compare the preceding equal-length period in the same timezone, or with
+ * `calendar`, the same days a month or a year before (month to date and
+ * year to date, routes.ts periodCalendar). For a running period, shift now
+ * back as far so partial days compare equally. Use PostgreSQL for daylight
+ * saving boundaries.
  */
 export async function previousDays(
   db: Kysely<Database>,
@@ -134,7 +136,15 @@ export async function previousDays(
   lastDay: string,
   timeZone: string,
   now: Date,
+  calendar?: "month" | "year",
 ): Promise<PreviousDays> {
+  if (calendar !== undefined) {
+    return shiftedDays(db, firstDay, lastDay, timeZone, now, {
+      years: calendar === "year" ? 1 : 0,
+      months: calendar === "month" ? 1 : 0,
+      days: 0,
+    });
+  }
   const length =
     (Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / 86_400_000 + 1;
   return shiftedDays(db, firstDay, lastDay, timeZone, now, { years: 0, days: length });

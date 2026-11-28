@@ -999,7 +999,7 @@ describe("retention", () => {
           .elements()
           .map((option) => option.textContent),
       )
-      .toEqual(["Last 30 days", "Last 90 days", "Last 12 months", "Custom range…"]);
+      .toEqual(["Last 30 days", "Last 90 days", "Year to date", "Last 12 months", "Custom range…"]);
     await page.getByRole("option", { name: "Last 30 days" }).click();
     await expect.poll(() => router.state.location.search).toEqual({ period: "30d" });
     await expect.poll(() => lastQuery(api, "/retention")).toEqual({ period: "30d" });

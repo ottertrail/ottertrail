@@ -12,7 +12,12 @@ import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
 import { listSavedFunnels } from "../funnels/saved-funnels.ts";
 import { localDays, type PreviousDays, previousDays } from "../reports/reports.ts";
-import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/routes.ts";
+import {
+  periodCalendar,
+  RANGE_PROPERTIES,
+  type RangeQuery,
+  requestDays,
+} from "../reports/routes.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { isVisitSourceName } from "../visits/visit-source.ts";
@@ -238,12 +243,17 @@ export const productRoutes: FastifyPluginCallback<{
   const reader: Reader = { client: clickhouse };
   app.setErrorHandler(clickHouseErrorHandler);
 
+  /** A request's range, the moment it was asked at, and how its period before moves back. */
+  interface Asked {
+    range: ProductRange;
+    moment: Date;
+    calendar: "month" | "year" | undefined;
+  }
+
   async function rangeOf(request: {
     query: RangeQuery;
     projectAccess: ProjectAccess | null;
-  }): Promise<
-    { range: ProductRange; moment: Date } | { problem: { error: string; message: string } }
-  > {
+  }): Promise<Asked | { problem: { error: string; message: string } }> {
     const { projectId, timeZone } = accessOf(request);
     // One reading of the clock: the period's days and the comparison's cut-off agree.
     const moment = now();
@@ -261,6 +271,7 @@ export const productRoutes: FastifyPluginCallback<{
         to,
       },
       moment,
+      calendar: periodCalendar(request.query.period),
     };
   }
 
@@ -269,13 +280,11 @@ export const productRoutes: FastifyPluginCallback<{
     query: FunnelQuery;
     projectAccess: ProjectAccess | null;
   }): Promise<
-    | {
-        range: ProductRange;
-        moment: Date;
+    | (Asked & {
         steps: FunnelStep[];
         count: FunnelCount;
         window: FunnelWindow;
-      }
+      })
     | { problem: { error: string; message: string } }
   > {
     const steps = parseSteps(request.query.steps);
@@ -294,8 +303,8 @@ export const productRoutes: FastifyPluginCallback<{
    * compare it (reports.ts, previousDays). An event has no window, so the
    * funnel's later cut-off (previousReadEnd) does not apply.
    */
-  async function periodBefore(range: ProductRange, moment: Date): Promise<PreviousDays> {
-    return previousDays(db, range.firstDay, range.lastDay, range.timeZone, moment);
+  async function periodBefore({ range, moment, calendar }: Asked): Promise<PreviousDays> {
+    return previousDays(db, range.firstDay, range.lastDay, range.timeZone, moment, calendar);
   }
 
   app.get<{ Params: { id: string }; Querystring: RangeQuery & { search?: string } }>(
@@ -326,8 +335,8 @@ export const productRoutes: FastifyPluginCallback<{
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range, moment } = asked;
-      const previous = await periodBefore(range, moment);
+      const { range } = asked;
+      const previous = await periodBefore(asked);
       const [events, environments] = await Promise.all([
         listEvents(reader, range, previous, request.query.search?.trim()),
         productEnvironments(reader, range),
@@ -365,8 +374,8 @@ export const productRoutes: FastifyPluginCallback<{
       if ("problem" in matched) return reply.code(400).send(matched.problem);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range, moment } = asked;
-      const previous = await periodBefore(range, moment);
+      const { range } = asked;
+      const previous = await periodBefore(asked);
       const detail = await eventDetail(
         dashboardReader(clickhouse, limiter, reply),
         range,
@@ -417,13 +426,7 @@ export const productRoutes: FastifyPluginCallback<{
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range, moment, steps, count, window } = asked;
       // The period before, compared as the Web analytics summary is (reports.ts, previousDays).
-      const previous = await previousDays(
-        db,
-        range.firstDay,
-        range.lastDay,
-        range.timeZone,
-        moment,
-      );
+      const previous = await periodBefore(asked);
       const before: ProductRange = {
         ...range,
         firstDay: previous.firstDay,
@@ -677,8 +680,8 @@ export const productRoutes: FastifyPluginCallback<{
     async (request, reply) => {
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
-      const { range, moment } = asked;
-      const previous = await periodBefore(range, moment);
+      const { range } = asked;
+      const previous = await periodBefore(asked);
       const before: ProductRange = {
         ...range,
         firstDay: previous.firstDay,

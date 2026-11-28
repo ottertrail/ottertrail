@@ -34,7 +34,7 @@ import {
   topPages,
   visitorCount,
 } from "../reports/reports.ts";
-import { periodDays } from "../reports/routes.ts";
+import { periodCalendar, periodDays } from "../reports/routes.ts";
 import { hasVitals, speedByDevice, THRESHOLDS } from "../speed/speed.ts";
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { DASHBOARD_SETTINGS, hasAnyRow } from "../telemetry/dashboard-query.ts";
@@ -53,8 +53,12 @@ const PARAMS = {
   properties: { id: { type: "string", pattern: UUID_PATTERN } },
 };
 
-/** The overview's periods: each compared with as many days right before it. */
-export const OVERVIEW_PERIODS = ["today", "7d", "30d"] as const;
+/**
+ * The overview's periods, a month at most, so every widget stays quick. Each
+ * compares with as many days right before it; month to date with the same
+ * days of the month before.
+ */
+export const OVERVIEW_PERIODS = ["today", "yesterday", "7d", "30d", "mtd"] as const;
 type OverviewPeriod = (typeof OVERVIEW_PERIODS)[number];
 
 interface OverviewQuery {
@@ -164,10 +168,11 @@ export const overviewRoutes: FastifyPluginCallback<{
     // One reading of the clock: the period and its comparison agree.
     const moment = now();
     const today = dayIn(timeZone)(moment);
-    const { from: firstDay, to: lastDay } = periodDays(request.query.period ?? "7d", today);
+    const period = request.query.period ?? "7d";
+    const { from: firstDay, to: lastDay } = periodDays(period, today);
     const [days, previous] = await Promise.all([
       localDays(db, firstDay, lastDay, timeZone),
-      previousDays(db, firstDay, lastDay, timeZone, moment),
+      previousDays(db, firstDay, lastDay, timeZone, moment, periodCalendar(period)),
     ]);
     return {
       projectId,

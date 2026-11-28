@@ -525,14 +525,18 @@ export async function funnelPeople(
  * the distance between the two periods' starts. Later steps of the period
  * before then count only up to the same moment as this period's can.
  * Never before the period's own end, which a daylight saving change could
- * otherwise move by an hour.
+ * otherwise move by an hour. While the period runs, this period reads up
+ * to now, so the period before stops at its cut-off (`until`): now moved
+ * back on the calendar, which a month or a year before is not a fixed
+ * distance from the start.
  */
 export function previousReadEnd(
   range: { from: Date; to: Date },
-  previous: { from: Date; to: Date },
+  previous: { from: Date; to: Date; until?: Date | null },
   windowSeconds: FunnelWindow,
   now: Date,
 ): Date {
+  if (previous.until !== undefined && previous.until !== null) return previous.until;
   const windowMs = windowSeconds * 1000;
   const currentEnd = Math.min(range.to.getTime() + windowMs, now.getTime());
   const shift = range.from.getTime() - previous.from.getTime();

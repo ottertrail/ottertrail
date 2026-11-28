@@ -38,8 +38,11 @@ import {
 /** Bound query work per request. */
 export const MAX_RANGE_DAYS = 366;
 
-/** Periods end today in the instance timezone, which the browser does not know. */
-export const PERIODS = ["today", "7d", "30d", "90d", "12m"] as const;
+/**
+ * The periods every report page shares, in the instance timezone, which the
+ * browser does not know. Each is whole days; all but yesterday end today.
+ */
+export const PERIODS = ["today", "yesterday", "7d", "30d", "mtd", "90d", "ytd", "12m"] as const;
 export type Period = (typeof PERIODS)[number];
 
 function shiftDay(
@@ -50,29 +53,46 @@ function shiftDay(
   return new Date(Date.UTC(year, month - 1 + months, date + days)).toISOString().slice(0, 10);
 }
 
-const DAYS_BACK: Record<Exclude<Period, "12m">, number> = {
+const DAYS_BACK: Record<"today" | "7d" | "30d" | "90d", number> = {
   today: 0,
   "7d": 6,
   "30d": 29,
   "90d": 89,
 };
 
-/** The first and last day of a period that ends on `today`, both included. */
+/** The first and last day of a period, as of `today`, both included. */
 export function periodDays(period: Period, today: string): { from: string; to: string } {
-  const from =
-    period === "12m"
-      ? // From the day after the same date last year: 365 or 366 days.
-        shiftDay(shiftDay(today, { months: -12 }), { days: 1 })
-      : shiftDay(today, { days: -DAYS_BACK[period] });
-  return { from, to: today };
+  switch (period) {
+    case "yesterday": {
+      const yesterday = shiftDay(today, { days: -1 });
+      return { from: yesterday, to: yesterday };
+    }
+    case "mtd":
+      return { from: `${today.slice(0, 8)}01`, to: today };
+    case "ytd":
+      return { from: `${today.slice(0, 5)}01-01`, to: today };
+    case "12m":
+      // From the day after the same date last year: 365 or 366 days.
+      return { from: shiftDay(shiftDay(today, { months: -12 }), { days: 1 }), to: today };
+    default:
+      return { from: shiftDay(today, { days: -DAYS_BACK[period] }), to: today };
+  }
 }
+
+/**
+ * What a period's "previous period" moves back by (reports.ts,
+ * previousDays): month to date and year to date compare with the same days
+ * of the month or year before, the others with as many days just before.
+ */
+export const periodCalendar = (period: string | undefined): "month" | "year" | undefined =>
+  period === "mtd" ? "month" : period === "ytd" ? "year" : undefined;
 
 /**
  * Web analytics' periods: the shared ones, and ranges only its page
  * offers (docs/web-analytics.md, "Ranges"). "24h" is a rolling window
  * that ends now; "all" starts on the day of the first event.
  */
-export const ANALYTICS_PERIODS = [...PERIODS, "yesterday", "24h", "mtd", "ytd", "all"] as const;
+export const ANALYTICS_PERIODS = [...PERIODS, "24h", "all"] as const;
 export type AnalyticsPeriod = (typeof ANALYTICS_PERIODS)[number];
 
 const isPeriod = (period: AnalyticsPeriod): period is Period =>
@@ -137,16 +157,10 @@ export async function analyticsDays(
   }
   const day = dayIn(scope.timeZone);
   const today = day(now);
-  if (period === "yesterday") {
-    const yesterday = shiftDay(today, { days: -1 });
-    return { from: yesterday, to: yesterday };
-  }
   if (period === "24h") {
     const from = new Date(now.getTime() - 86_400_000);
     return { from: day(from), to: today, window: { from, to: now } };
   }
-  if (period === "mtd") return { from: `${today.slice(0, 8)}01`, to: today };
-  if (period === "ytd") return { from: `${today.slice(0, 5)}01-01`, to: today };
   const earliest = shiftDay(today, { days: 1 - MAX_ALL_TIME_DAYS });
   const first = (await firstEventDay(reader, scope)) ?? today;
   return { from: first < earliest ? earliest : first > today ? today : first, to: today };
@@ -494,8 +508,7 @@ export async function analyticsAnswer(
     goal: goal.goal,
     interval,
     comparison: query.period === "all" ? "off" : query.compare,
-    previousCalendar:
-      query.period === "mtd" ? "month" : query.period === "ytd" ? "year" : undefined,
+    previousCalendar: periodCalendar(query.period),
     now,
     reader,
     ...(limit === undefined ? {} : { limit }),

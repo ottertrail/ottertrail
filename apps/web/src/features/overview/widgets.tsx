@@ -58,6 +58,7 @@ import {
   MIN_ERRORS_FOR_CHANGE,
   MIN_LOADS_FOR_CHANGE,
   MIN_LOADS_TO_RATE,
+  periodLabel,
   periodPhrase,
   shortUrl,
 } from "./format";
@@ -306,7 +307,7 @@ export function ErrorsWidget(props: WidgetProps) {
               />
               {data.top.length === 0 ? (
                 <p className="text-sm text-ink-subtle">
-                  No unresolved errors in {periodPhrase(period)}.
+                  No unresolved errors {periodPhrase(period)}.
                 </p>
               ) : (
                 <ScrollHint>
@@ -383,7 +384,6 @@ export function UptimeWidget(props: WidgetProps) {
   const { canUse } = useAccess();
   const { projectId, period } = props;
   const title = widgetTitle("uptime");
-  const periodLabel = period === "today" ? "today" : period === "7d" ? "7 days" : "30 days";
   return (
     <WidgetFrame
       id="uptime"
@@ -429,7 +429,7 @@ export function UptimeWidget(props: WidgetProps) {
                         State
                       </TableHead>
                       <TableHead scope="col" className={`${numHeadClass} w-28`}>
-                        Uptime, {periodLabel}
+                        Uptime, {periodLabel(period)}
                       </TableHead>
                       <TableHead scope="col" className={`${numHeadClass} w-20`}>
                         Incidents
@@ -535,9 +535,7 @@ export function ServicesWidget(props: WidgetProps) {
           }
           if (data.services.length === 0) {
             return (
-              <p className="text-sm text-ink-subtle">
-                No server requests in {periodPhrase(period)}.
-              </p>
+              <p className="text-sm text-ink-subtle">No server requests {periodPhrase(period)}.</p>
             );
           }
           return (
@@ -694,7 +692,7 @@ export function AiCostWidget(props: WidgetProps) {
                 className="lg:grid-cols-2"
               />
               {data.calls === 0 ? (
-                <p className="text-sm text-ink-subtle">No AI calls in {periodPhrase(period)}.</p>
+                <p className="text-sm text-ink-subtle">No AI calls {periodPhrase(period)}.</p>
               ) : (
                 data.models.length > 0 && (
                   <BreakdownTable
@@ -774,7 +772,7 @@ export function SpeedWidget(props: WidgetProps) {
           if (data.devices.length === 0) {
             return (
               <p className="text-sm text-ink-subtle">
-                No page loads measured in {periodPhrase(period)}.
+                No page loads measured {periodPhrase(period)}.
               </p>
             );
           }
@@ -1177,7 +1175,7 @@ export function TrafficWidget(props: WidgetProps) {
                 className="lg:grid-cols-3"
               />
               {summary.pageviews === 0 ? (
-                <p className="text-sm text-ink-subtle">No pageviews in {periodPhrase(period)}.</p>
+                <p className="text-sm text-ink-subtle">No pageviews {periodPhrase(period)}.</p>
               ) : (
                 data.days.length > 1 && <DayLine days={data.days} />
               )}
@@ -1447,7 +1445,7 @@ export function SourcesWidget(props: WidgetProps) {
   const query = useWidget("sources", props);
   const { projectId, period } = props;
   const title = widgetTitle("sources");
-  const empty = `No visits in ${periodPhrase(period)}.`;
+  const empty = `No visits ${periodPhrase(period)}.`;
   return (
     <WidgetFrame
       id="sources"
