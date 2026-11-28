@@ -31,6 +31,24 @@ export function visitSourceSql(ownHostnames: readonly string[], params: QueryPar
   return `coalesce(utm_source, if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL), ${params.add(DIRECT, "String")})`;
 }
 
+/**
+ * Dimensions over columns that visits (from their first event) and events
+ * both have, named as the Analytics page's lists and filters. Fixed SQL,
+ * never input. Region and city names repeat across countries
+ * ("Springfield"), so the country is kept.
+ */
+export const COLUMN_DIMENSIONS = {
+  country: "country",
+  region: "if(region IS NULL, NULL, concat(region, ', ', ifNull(country, '?')))",
+  city: "if(city IS NULL, NULL, concat(city, ', ', ifNull(country, '?')))",
+  deviceType: "device_type",
+  browser: "browser",
+  os: "os",
+  release: "release",
+} as const;
+
+export type ColumnDimension = keyof typeof COLUMN_DIMENSIONS;
+
 /** The visit dimensions an event can be credited with, named as the Analytics page's filters. */
 export const VISIT_SOURCE_NAMES = ["source", "utmCampaign"] as const;
 export type VisitSourceName = (typeof VISIT_SOURCE_NAMES)[number];

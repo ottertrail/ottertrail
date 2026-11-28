@@ -18,8 +18,11 @@ import { dayIn } from "../visitors/visitor-ids.ts";
 import { isVisitSourceName } from "../visits/visit-source.ts";
 import {
   COUNTED,
+  EVENT_DIMENSIONS,
+  eventBreakdowns,
   eventDetail,
-  eventSources,
+  type EventDimension,
+  type EventMatch,
   listEvents,
   MAX_FILTERS,
   type ProductRange,
@@ -82,7 +85,10 @@ function filtersOf(url: string): PropertyFilter[] | null {
   return filters;
 }
 
-/** An event's page: its name, the range, and p.<key> property filters. */
+/**
+ * An event's page: its name, the range, p.<key> property filters, and its
+ * dimensions' filters, named as the Analytics page's, at most as long.
+ */
 const eventSchema = {
   params: {
     type: "object",
@@ -92,11 +98,32 @@ const eventSchema = {
   querystring: {
     type: "object",
     additionalProperties: false,
-    properties: RANGE_PROPERTIES,
+    properties: {
+      ...RANGE_PROPERTIES,
+      ...Object.fromEntries(
+        EVENT_DIMENSIONS.map((name) => [
+          name,
+          { type: "string", maxLength: 2048, pattern: "^[^\\u0000]*$" },
+        ]),
+      ),
+    },
     // filtersOf validates raw property filters; keep the schema from dropping them.
     patternProperties: { "^p\\.": { type: "string" } },
   },
 };
+
+type EventQuery = RangeQuery & Partial<Record<EventDimension, string>> & Record<string, string>;
+
+/**
+ * The dimensions' filters of an event's page, as on the Analytics page: ""
+ * is unknown, but a campaign of "" is a visit without one ("No campaign").
+ */
+const dimensionFiltersOf = (query: Partial<Record<EventDimension, string>>) =>
+  EVENT_DIMENSIONS.flatMap((name) => {
+    const value = query[name];
+    if (value === undefined) return [];
+    return [{ name, value: value === "" && name !== "utmCampaign" ? null : value }];
+  });
 
 /** An event page's property filters, or why they are refused. */
 function eventFiltersOf(
@@ -308,29 +335,46 @@ export const productRoutes: FastifyPluginCallback<{
     },
   );
 
-  app.get<{
-    Params: { id: string; name: string };
-    Querystring: RangeQuery & Record<string, string>;
-  }>(
+  /** What an event's page counts: the name, its property filters, and its dimensions' filters. */
+  async function eventMatchOf(request: {
+    url: string;
+    params: { name: string };
+    query: EventQuery;
+    projectAccess: ProjectAccess | null;
+  }): Promise<{ match: EventMatch } | { problem: { error: string; message: string } }> {
+    const filters = eventFiltersOf(request.url);
+    if ("problem" in filters) return filters;
+    const dimensions = dimensionFiltersOf(request.query);
+    return {
+      match: {
+        name: request.params.name,
+        filters: filters.filters,
+        dimensions,
+        ownHostnames: await ownHostnames(db, accessOf(request).projectId),
+      },
+    };
+  }
+
+  /** Its queries run within the dashboard's query limit: a filter by source works out visits. */
+  app.get<{ Params: { id: string; name: string }; Querystring: EventQuery }>(
     "/projects/:id/events/:name",
     { preHandler: [signedIn, canView], schema: eventSchema },
     async (request, reply) => {
-      const filters = eventFiltersOf(request.url);
-      if ("problem" in filters) return reply.code(400).send(filters.problem);
+      const matched = await eventMatchOf(request);
+      if ("problem" in matched) return reply.code(400).send(matched.problem);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range, moment } = asked;
       const previous = await periodBefore(range, moment);
       const detail = await eventDetail(
-        reader,
+        dashboardReader(clickhouse, limiter, reply),
         range,
         previous,
-        request.params.name,
-        filters.filters,
+        matched.match,
       );
       return {
         ...answer(range),
-        filters: filters.filters,
+        filters: matched.match.filters,
         ...detail,
         previous: { ...daysOf(previous), ...detail.previous },
       };
@@ -338,30 +382,26 @@ export const productRoutes: FastifyPluginCallback<{
   );
 
   /**
-   * The event by its visit's source and campaign (events.ts, eventSources):
-   * its own request, so the event's page does not wait for it, and its
-   * query within the dashboard's query limit.
+   * The event by its visit's source and campaign and by its own location,
+   * device, and release (events.ts, eventBreakdowns): its own request, so
+   * the event's page does not wait for it, and its query within the
+   * dashboard's query limit.
    */
-  app.get<{
-    Params: { id: string; name: string };
-    Querystring: RangeQuery & Record<string, string>;
-  }>(
-    "/projects/:id/events/:name/sources",
+  app.get<{ Params: { id: string; name: string }; Querystring: EventQuery }>(
+    "/projects/:id/events/:name/breakdowns",
     { preHandler: [signedIn, canView], schema: eventSchema },
     async (request, reply) => {
-      const filters = eventFiltersOf(request.url);
-      if ("problem" in filters) return reply.code(400).send(filters.problem);
+      const matched = await eventMatchOf(request);
+      if ("problem" in matched) return reply.code(400).send(matched.problem);
       const asked = await rangeOf(request);
       if ("problem" in asked) return reply.code(400).send(asked.problem);
       const { range } = asked;
-      const sources = await eventSources(
+      const breakdowns = await eventBreakdowns(
         dashboardReader(clickhouse, limiter, reply),
         range,
-        request.params.name,
-        filters.filters,
-        await ownHostnames(db, range.projectId),
+        matched.match,
       );
-      return { ...answer(range), filters: filters.filters, ...sources };
+      return { ...answer(range), filters: matched.match.filters, ...breakdowns };
     },
   );
 

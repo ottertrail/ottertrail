@@ -1,15 +1,25 @@
 import type { FastifyPluginCallback, FastifyReply, FastifyRequest } from "fastify";
 import type { Kysely } from "kysely";
 
-import { canUse, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
+import { canUse, FORBIDDEN, type ProjectAccess, requireProjectAccess } from "../access/access.ts";
 import type { Auth } from "../auth/auth.ts";
 import { requireSession } from "../auth/routes.ts";
 import type { ClickHouseClient } from "../clickhouse/clickhouse.ts";
 import { clickHouseErrorHandler } from "../clickhouse/route-errors.ts";
 import { ENVIRONMENT_PATTERN, environmentOf } from "../collection/environment.ts";
+import { EVENT_NAME_SCHEMA } from "../collection/routes.ts";
 import type { Database } from "../db/schema.ts";
+import { listGoals } from "../goals/goals.ts";
+import { stepOf } from "../product/steps.ts";
+import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
-import { LIST_REPORTS, type ListReport, projectAnalytics, projectList } from "./analytics.ts";
+import {
+  LIST_REPORTS,
+  type ListReport,
+  type PageGoal,
+  projectAnalytics,
+  projectList,
+} from "./analytics.ts";
 import { FILTER_NAMES, type FilterName, MAX_LIMIT, type ReportFilter } from "./reports.ts";
 
 /** Bound query work per request. */
@@ -150,6 +160,19 @@ function requestFilters(query: Partial<Record<FilterName, string>>): ReportFilte
   });
 }
 
+/** The goal filter: a saved goal by its ID, or a custom event by its name. */
+interface GoalQuery {
+  goal?: string;
+  goalEvent?: string;
+}
+
+const GOAL_PARAMETERS = ["goal", "goalEvent"] as const;
+
+const GOAL_PROPERTIES = {
+  goal: { type: "string", pattern: UUID_PATTERN },
+  goalEvent: EVENT_NAME_SCHEMA,
+};
+
 function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
@@ -158,15 +181,70 @@ function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAcce
 }
 
 /**
+ * The goal a request filters by, or why it is refused. A saved goal belongs
+ * to product analytics, as the Goals table does (docs/access.md); a custom
+ * event is on the page already, so it needs nothing more.
+ */
+async function requestGoal(
+  db: Kysely<Database>,
+  request: { query: GoalQuery; projectAccess: ProjectAccess | null },
+): Promise<
+  { goal: PageGoal | undefined } | { status: 400 | 403; problem: ReturnType<typeof problem> }
+> {
+  const { goal: goalId, goalEvent } = request.query;
+  if (goalId !== undefined && goalEvent !== undefined) {
+    return {
+      status: 400,
+      problem: problem("invalid_goal", "Send either goal or goalEvent, not both."),
+    };
+  }
+  if (goalEvent !== undefined) {
+    const step = stepOf({ type: "event", name: goalEvent });
+    if (step === null) {
+      return {
+        status: 400,
+        problem: problem(
+          "invalid_goal",
+          "goalEvent names a custom event, not one of the tracker's.",
+        ),
+      };
+    }
+    return { goal: { id: null, name: goalEvent, step } };
+  }
+  if (goalId === undefined) return { goal: undefined };
+  const access = accessOf(request);
+  if (!canUse(access.user, "product_analytics", "view")) {
+    return { status: 403, problem: FORBIDDEN };
+  }
+  const saved = (await listGoals(db, access.projectId)).find(
+    (item) => item.id.toLowerCase() === goalId.toLowerCase(),
+  );
+  if (saved === undefined) {
+    return {
+      status: 400,
+      problem: problem("unknown_goal", "This goal does not exist. It may have been deleted."),
+    };
+  }
+  return { goal: { id: saved.id, name: saved.name, step: saved.step } };
+}
+
+/**
  * Use inclusive days in the instance timezone (analytics.ts). Default to
- * production. All filters apply to every report.
+ * production. All filters apply to every report; a goal adds conversions.
+ * The queries run within the dashboard's query limit.
  */
 export const reportRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   auth: Auth;
+  /** The dashboard's query limit (telemetry/dashboard-limit.ts). */
+  limiter?: DashboardQueryLimiter;
   now?: () => Date;
-}> = (app, { db, clickhouse, auth, now = () => new Date() }, done) => {
+}> = (
+  app,
+  { db, clickhouse, auth, limiter = new DashboardQueryLimiter(), now = () => new Date() },
+  done,
+) => {
   const signedIn = requireSession(auth);
   const canView = requireProjectAccess(db, { area: "web_analytics", level: "view" });
 
@@ -174,7 +252,7 @@ export const reportRoutes: FastifyPluginCallback<{
   app.setErrorHandler(clickHouseErrorHandler);
   app.get<{
     Params: { id: string };
-    Querystring: RangeQuery & { limit?: number } & Partial<Record<FilterName, string>>;
+    Querystring: RangeQuery & { limit?: number } & GoalQuery & Partial<Record<FilterName, string>>;
   }>(
     "/projects/:id/analytics",
     {
@@ -182,6 +260,7 @@ export const reportRoutes: FastifyPluginCallback<{
       preValidation: refuseUnknownParameters([
         ...Object.keys(RANGE_PROPERTIES),
         "limit",
+        ...GOAL_PARAMETERS,
         ...FILTER_NAMES,
       ]),
       schema: {
@@ -192,6 +271,7 @@ export const reportRoutes: FastifyPluginCallback<{
           properties: {
             ...RANGE_PROPERTIES,
             limit: { type: "integer", minimum: 1, maximum: MAX_LIMIT },
+            ...GOAL_PROPERTIES,
             ...FILTER_PROPERTIES,
           },
         },
@@ -205,6 +285,8 @@ export const reportRoutes: FastifyPluginCallback<{
       if ("problem" in days) {
         return reply.code(400).send(days.problem);
       }
+      const goal = await requestGoal(db, request);
+      if ("problem" in goal) return reply.code(goal.status).send(goal.problem);
       const { limit } = request.query;
       const report = await projectAnalytics(db, clickhouse, {
         projectId: request.params.id,
@@ -213,7 +295,9 @@ export const reportRoutes: FastifyPluginCallback<{
         lastDay: days.to,
         timeZone,
         filters: requestFilters(request.query),
+        goal: goal.goal,
         now: current,
+        reader: dashboardReader(clickhouse, limiter, reply),
         ...(limit === undefined ? {} : { limit }),
       });
       // Goals belong to product analytics (docs/access.md).
@@ -225,7 +309,7 @@ export const reportRoutes: FastifyPluginCallback<{
 
   /**
    * Match search case-insensitively; country lists search English names.
-   * Use the same days and filters as the analytics page.
+   * Use the same days, filters, and goal as the analytics page.
    */
   app.get<{
     Params: { id: string };
@@ -234,7 +318,8 @@ export const reportRoutes: FastifyPluginCallback<{
       search?: string;
       offset?: number;
       limit?: number;
-    } & Partial<Record<FilterName, string>>;
+    } & GoalQuery &
+      Partial<Record<FilterName, string>>;
   }>(
     "/projects/:id/analytics/list",
     {
@@ -245,6 +330,7 @@ export const reportRoutes: FastifyPluginCallback<{
         "search",
         "offset",
         "limit",
+        ...GOAL_PARAMETERS,
         ...FILTER_NAMES,
       ]),
       schema: {
@@ -259,6 +345,7 @@ export const reportRoutes: FastifyPluginCallback<{
             search: { type: "string", maxLength: MAX_SEARCH_LENGTH, pattern: NO_NUL },
             offset: { type: "integer", minimum: 0, maximum: 100_000 },
             limit: { type: "integer", minimum: 1, maximum: LIST_PAGE_SIZE },
+            ...GOAL_PROPERTIES,
             ...FILTER_PROPERTIES,
           },
         },
@@ -270,6 +357,8 @@ export const reportRoutes: FastifyPluginCallback<{
       if ("problem" in days) {
         return reply.code(400).send(days.problem);
       }
+      const goal = await requestGoal(db, request);
+      if ("problem" in goal) return reply.code(goal.status).send(goal.problem);
       const { report, search, offset = 0, limit = LIST_PAGE_SIZE } = request.query;
       return projectList(db, clickhouse, {
         projectId: request.params.id,
@@ -281,6 +370,8 @@ export const reportRoutes: FastifyPluginCallback<{
         report,
         limit,
         offset,
+        goal: goal.goal,
+        reader: dashboardReader(clickhouse, limiter, reply),
         ...(search === undefined ? {} : { search }),
       });
     },

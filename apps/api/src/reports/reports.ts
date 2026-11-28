@@ -4,7 +4,7 @@ import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
 import { type Step, stepSql } from "../product/steps.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
-import { visitSourceSql } from "../visits/visit-source.ts";
+import { COLUMN_DIMENSIONS, visitSourceSql } from "../visits/visit-source.ts";
 import {
   ENGAGEMENT,
   analyticsEvent,
@@ -219,6 +219,54 @@ function countedVisits(
 }
 
 /**
+ * The goal a report adds conversions for (docs/web-analytics.md, "The goal
+ * filter"). It does not narrow the visits.
+ */
+export interface GoalFilter {
+  step: Step;
+  /** A temporary table of goalVisitsSql's rows in the reader's session; worked out when left out. */
+  table?: string | undefined;
+}
+
+/**
+ * The counted visits in which the goal was reached: a goal event in the
+ * range, from the visit's start to its end. Matching is stepSql's, as for
+ * the Goals table and funnels. `visits` has visitsSql's columns.
+ */
+export function goalVisitsSql(
+  range: ReportRange,
+  visits: string,
+  step: Step,
+  params: QueryParams,
+): string {
+  return `
+    SELECT DISTINCT v.visitor_id AS visitor_id, v.started_at AS started_at, v.ended_at AS ended_at
+    FROM (${visits}) AS v
+    INNER JOIN (
+      SELECT visitor_id, occurred_at
+      FROM events FINAL
+      WHERE project_id = ${params.add(range.projectId, "UUID")}
+        AND environment = ${params.add(range.environment, "String")}
+        AND occurred_at >= ${params.time(range.from)}
+        AND occurred_at < ${params.time(rangeEnd(range))}
+        AND visitor_id IS NOT NULL
+        AND ${stepSql(params, step)}
+    ) AS reached ON reached.visitor_id = v.visitor_id
+    WHERE reached.occurred_at >= v.started_at AND reached.occurred_at <= v.ended_at`;
+}
+
+function reachedVisits(
+  range: ReportRange,
+  goal: GoalFilter,
+  visits: string,
+  params: QueryParams,
+): string {
+  return goal.table === undefined
+    ? goalVisitsSql(range, visits, goal.step, params)
+    : `SELECT visitor_id, started_at, ended_at FROM ${goal.table}`;
+}
+
+/**
  * Count pageviews and custom events within the selected visits. Exclude
  * engagement, errors, and Web Vitals. Goal matching uses properties and
  * error_fingerprint (product/steps.ts, stepSql).
@@ -304,31 +352,37 @@ export interface DayPoint {
   visitors: number;
   pageviews: number;
   visits: number;
+  /** With a goal: the day's visitors with a goal event that day. */
+  converted?: number;
 }
 
 export async function timeseries(
   reader: Reader,
   range: ReportRange,
   visitsSource?: VisitsSource,
+  goal?: Step,
 ): Promise<DayPoint[]> {
   const params = new QueryParams();
   const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
   const timeZone = params.add(range.timeZone, "String");
+  const converted = goal === undefined ? "0" : `uniqExactIf(visitor_id, ${stepSql(params, goal)})`;
   // One query, so the visits are worked out once when no source is given.
   const rows = await queryRows<{
     day: string;
     visitors: string;
     pageviews: string;
     visits: string;
+    converted: string;
   }>(
     reader,
-    `SELECT day, sum(visitors) AS visitors, sum(pageviews) AS pageviews, sum(visits) AS visits
+    `SELECT day, sum(visitors) AS visitors, sum(pageviews) AS pageviews, sum(visits) AS visits,
+            sum(converted) AS converted
      FROM (
        SELECT toString(toDate(occurred_at, ${timeZone})) AS day, uniqExact(visitor_id) AS visitors,
-              countIf(name = '${PAGEVIEW}') AS pageviews, 0 AS visits
+              countIf(name = '${PAGEVIEW}') AS pageviews, 0 AS visits, ${converted} AS converted
        FROM (${activity(range, visits, params)}) GROUP BY day
        UNION ALL
-       SELECT toString(toDate(started_at, ${timeZone})) AS day, 0, 0, count()
+       SELECT toString(toDate(started_at, ${timeZone})) AS day, 0, 0, count(), 0
        FROM (${visits}) GROUP BY day
      )
      GROUP BY day`,
@@ -345,6 +399,7 @@ export async function timeseries(
       visitors: count(row?.visitors),
       pageviews: count(row?.pageviews),
       visits: count(row?.visits),
+      ...(goal === undefined ? {} : { converted: count(row?.converted) }),
     });
   }
   return points;
@@ -356,6 +411,30 @@ export interface PageRow {
   visitors: number;
   /** Average time the page was visible per engagement report, or null without reports. */
   avgEngagedMs: number | null;
+  /** With a goal: the page's visitors who viewed it in a visit that reached the goal. */
+  converted?: number;
+}
+
+/**
+ * The range's pageviews; with a goal, each with `converted`: whether its
+ * visit reached the goal. Visits never overlap, so the goal visit that
+ * started last at or before a pageview is its own only if it had not ended.
+ */
+function pageviewsSql(
+  range: ReportRange,
+  visits: string,
+  params: QueryParams,
+  search: string | undefined,
+  goal: GoalFilter | undefined,
+): string {
+  const views = `SELECT * FROM (${activity(range, visits, params)})
+    WHERE name = '${PAGEVIEW}' AND ${nameContains("path", search, params)}`;
+  if (goal === undefined) return views;
+  return `
+    SELECT a.path AS path, a.visitor_id AS visitor_id, reached.ended_at >= a.occurred_at AS converted
+    FROM (${views}) AS a
+    ASOF LEFT JOIN (${reachedVisits(range, goal, visits, params)}) AS reached
+      ON a.visitor_id = reached.visitor_id AND a.occurred_at >= reached.started_at`;
 }
 
 export async function topPages(
@@ -364,19 +443,22 @@ export async function topPages(
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
   { offset, search }: ListOptions = {},
+  goal?: GoalFilter,
 ): Promise<PageRow[]> {
   const params = new QueryParams();
   const visits = countedVisits(range, visitsSource, params, { firstEventColumns: false });
   const filtered = hasFilters(range);
   const engagedMs = "JSONExtractRaw(e.properties, 'engagedMs')";
+  const withGoal = goal !== undefined;
   const rows = await queryRows<Record<string, unknown>>(
     reader,
     `SELECT views.path AS path, views.pageviews AS pageviews, views.visitors AS visitors,
+            ${withGoal ? "views.converted AS converted," : ""}
             engagement.avg_engaged_ms AS avg_engaged_ms
      FROM (
        SELECT path, count() AS pageviews, uniqExact(visitor_id) AS visitors
-       FROM (${activity(range, visits, params)})
-       WHERE name = '${PAGEVIEW}' AND ${nameContains("path", search, params)}
+              ${withGoal ? ", uniqExactIf(visitor_id, converted) AS converted" : ""}
+       FROM (${pageviewsSql(range, visits, params, search, goal)})
        GROUP BY path
      ) AS views
      LEFT JOIN (
@@ -398,7 +480,7 @@ export async function topPages(
          }
        GROUP BY path
      ) AS engagement USING (path)
-     ORDER BY visitors DESC, pageviews DESC, path
+     ORDER BY ${withGoal ? "converted DESC," : ""} visitors DESC, pageviews DESC, path
      LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
     params,
   );
@@ -407,6 +489,7 @@ export async function topPages(
     pageviews: count(row.pageviews),
     visitors: count(row.visitors),
     avgEngagedMs: average(row.avg_engaged_ms),
+    ...(withGoal ? { converted: count(row.converted) } : {}),
   }));
 }
 
@@ -442,14 +525,7 @@ const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
   utmSource: "utm_source",
   utmMedium: "utm_medium",
   utmCampaign: "utm_campaign",
-  country: "country",
-  // Region and city names repeat across countries ("Springfield"), so the country is kept.
-  region: "if(region IS NULL, NULL, concat(region, ', ', ifNull(country, '?')))",
-  city: "if(city IS NULL, NULL, concat(city, ', ', ifNull(country, '?')))",
-  deviceType: "device_type",
-  browser: "browser",
-  os: "os",
-  release: "release",
+  ...COLUMN_DIMENSIONS,
 };
 
 /**
@@ -532,9 +608,14 @@ export interface BreakdownRow {
   visitors: number;
   visits: number;
   bounceRate: number | null;
+  /** With a goal: the row's visitors with a visit of this value that reached the goal. */
+  converted?: number;
 }
 
-/** Visits grouped by one dimension (see dimensionSql), most visitors first. */
+/**
+ * Visits grouped by one dimension (see dimensionSql), most visitors first;
+ * with a goal, most converted first.
+ */
 export async function breakdown(
   reader: Reader,
   range: ReportRange,
@@ -542,6 +623,7 @@ export async function breakdown(
   limit = DEFAULT_LIMIT,
   visitsSource?: VisitsSource,
   { offset, search }: ListOptions = {},
+  goal?: GoalFilter,
 ): Promise<BreakdownRow[]> {
   // Validate JavaScript callers and untrusted input at runtime.
   if (!isVisitDimension(dimension)) throw new Error("Unknown breakdown dimension");
@@ -552,14 +634,20 @@ export async function breakdown(
     dimension === "country" && search !== undefined && search !== ""
       ? `has(${params.add(countryCodesMatching(search), "Array(String)")}, ${value})`
       : nameContains(value, search, params);
+  const converted =
+    goal === undefined
+      ? ""
+      : `, uniqExactIf(visitor_id, (visitor_id, started_at) IN (
+           SELECT visitor_id, started_at FROM (${reachedVisits(range, goal, visits, params)})
+         )) AS converted`;
   const rows = await queryRows<Record<string, unknown>>(
     reader,
     `SELECT ${value} AS value, uniqExact(visitor_id) AS visitors, count() AS visits,
-            countIf(bounce) AS bounces
+            countIf(bounce) AS bounces ${converted}
      FROM (${visits})
      WHERE ${matches}
      GROUP BY value
-     ORDER BY visitors DESC, visits DESC, value ASC NULLS LAST
+     ORDER BY ${goal === undefined ? "" : "converted DESC,"} visitors DESC, visits DESC, value ASC NULLS LAST
      LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
     params,
   );
@@ -570,6 +658,7 @@ export async function breakdown(
       visitors: count(row.visitors),
       visits: visitCount,
       bounceRate: ratio(count(row.bounces), visitCount),
+      ...(goal === undefined ? {} : { converted: count(row.converted) }),
     };
   });
 }

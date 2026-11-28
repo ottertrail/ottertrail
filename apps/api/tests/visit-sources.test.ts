@@ -142,28 +142,66 @@ describe("GET /api/projects/:id/funnel/breakdown by source and campaign", () => 
   });
 });
 
-describe("GET /api/projects/:id/events/:name/sources", () => {
+describe("GET /api/projects/:id/events/:name/breakdowns", () => {
   test("counts the events by their visit's source and campaign, without a visit as null", async () => {
-    const response = await get(projectId, "/events/signup/sources?period=today");
+    const response = await get(projectId, "/events/signup/breakdowns?period=today");
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.source).toEqual([
-      { value: "Direct / none", events: 2 },
-      { value: "google.com", events: 1 },
-      { value: "newsletter", events: 1 },
-      { value: null, events: 1 },
+      { value: "Direct / none", visitors: 2, events: 2 },
+      { value: "google.com", visitors: 1, events: 1 },
+      { value: "newsletter", visitors: 1, events: 1 },
+      { value: null, visitors: 0, events: 1 },
     ]);
     expect(body.utmCampaign).toEqual([
-      { value: "", events: 3 },
-      { value: "launch", events: 1 },
-      { value: null, events: 1 },
+      { value: "", visitors: 3, events: 3 },
+      { value: "launch", visitors: 1, events: 1 },
+      { value: null, visitors: 0, events: 1 },
     ]);
+    // The events' own location and device: none recorded here.
+    expect(body.country).toEqual([{ value: null, visitors: 4, events: 5 }]);
+    expect(Object.keys(body)).toEqual(
+      expect.arrayContaining(["region", "city", "deviceType", "browser", "os", "release"]),
+    );
   });
 
   test("applies the page's property filters, and refuses a bad one", async () => {
-    const none = (await get(projectId, "/events/signup/sources?period=today&p.plan=team")).json();
+    const none = (
+      await get(projectId, "/events/signup/breakdowns?period=today&p.plan=team")
+    ).json();
     expect(none).toMatchObject({ source: [], utmCampaign: [], filters: [{ key: "plan" }] });
-    expect((await get(projectId, "/events/signup/sources?period=today&p.=x")).statusCode).toBe(400);
+    expect((await get(projectId, "/events/signup/breakdowns?period=today&p.=x")).statusCode).toBe(
+      400,
+    );
+  });
+
+  test("narrows the event's page to a visit's source, its lists and totals alike", async () => {
+    const lists = (
+      await get(projectId, "/events/signup/breakdowns?period=today&source=google.com")
+    ).json();
+    expect(lists.source).toEqual([{ value: "google.com", visitors: 1, events: 1 }]);
+    const detail = (await get(projectId, "/events/signup?period=today&source=google.com")).json();
+    expect(detail).toMatchObject({ events: 1, visitors: 1 });
+    expect(detail.days.at(-1)).toEqual({ day: "2026-11-17", events: 1 });
+    // "" is unknown, as on the Analytics page: here, the server's event without a visit.
+    const unknown = (await get(projectId, "/events/signup?period=today&source=")).json();
+    expect(unknown).toMatchObject({ events: 1, visitors: 0, users: 1 });
+    // A visit without a campaign.
+    const noCampaign = (await get(projectId, "/events/signup?period=today&utmCampaign=")).json();
+    expect(noCampaign).toMatchObject({ events: 3, visitors: 3 });
+  });
+
+  test("narrows by the event's own columns, and refuses a NUL", async () => {
+    const located = (await get(projectId, "/events/signup?period=today&country=DE")).json();
+    expect(located).toMatchObject({ events: 0 });
+    const unknown = (await get(projectId, "/events/signup?period=today&country=")).json();
+    expect(unknown).toMatchObject({ events: 5 });
+    expect((await get(projectId, "/events/signup?period=today&country=%00")).statusCode).toBe(400);
+  });
+
+  test("reads only the project's own events", async () => {
+    const body = (await get(otherProject, "/events/signup/breakdowns?period=today")).json();
+    expect(body.source).toEqual([{ value: "bing.com", visitors: 1, events: 1 }]);
   });
 });
 

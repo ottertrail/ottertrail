@@ -829,6 +829,7 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
+      limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(serverLogRoutes, {

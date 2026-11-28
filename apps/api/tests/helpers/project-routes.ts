@@ -106,7 +106,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("DELETE", "/users/:userId", "/users/user-42"),
   request("GET", "/events", "/events?period=7d"),
   request("GET", "/events/:name", "/events/signup?period=7d"),
-  request("GET", "/events/:name/sources", "/events/signup/sources?period=7d"),
+  request("GET", "/events/:name/breakdowns", "/events/signup/breakdowns?period=7d"),
   request("GET", "/funnel", `/funnel?period=7d&steps=${FUNNEL_STEPS}`),
   request(
     "GET",

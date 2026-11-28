@@ -98,9 +98,13 @@ export async function runCommand(
   query: string,
   params: QueryParams = new QueryParams(),
 ): Promise<void> {
-  await reader.client.command({
-    query,
-    query_params: params.values,
-    ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
-  });
+  const run = async () => {
+    await reader.client.command({
+      query,
+      query_params: params.values,
+      ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
+      ...(reader.signal === undefined ? {} : { abort_signal: reader.signal }),
+    });
+  };
+  await (reader.gate === undefined ? run() : reader.gate(run));
 }
