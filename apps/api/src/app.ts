@@ -51,6 +51,7 @@ import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-routes.ts";
 import { replayCollectionRoutes } from "./replays/routes.ts";
+import { reportExportRoutes } from "./reports/export-routes.ts";
 import { nowRoutes } from "./reports/now-routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
@@ -845,6 +846,14 @@ export function buildApp({
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(reportRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      limiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(reportExportRoutes, {
       prefix: "/api",
       db,
       clickhouse: dashboard.clickhouse,

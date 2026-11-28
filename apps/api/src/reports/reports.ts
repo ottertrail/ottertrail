@@ -49,6 +49,8 @@ const hasFilters = (range: ReportRange) => (range.filters?.length ?? 0) > 0;
 
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
+/** Rows a CSV export holds at most (reports/export.ts); a query reads one more, to tell it was cut. */
+export const MAX_EXPORT_ROWS = 10_000;
 
 const MAX_OFFSET = 100_000;
 
@@ -71,9 +73,10 @@ function clampOffset(offset: number | undefined): number {
     : Math.min(offset, MAX_OFFSET);
 }
 
+/** The routes' schemas keep pages to MAX_LIMIT; only an export reads more. */
 function clampLimit(limit: number): number {
   if (!Number.isInteger(limit) || limit < 1) return DEFAULT_LIMIT;
-  return Math.min(limit, MAX_LIMIT);
+  return Math.min(limit, MAX_EXPORT_ROWS + 1);
 }
 
 /** Search English country names while storing codes. */

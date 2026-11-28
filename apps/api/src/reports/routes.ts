@@ -496,20 +496,34 @@ const LIST_PROPERTIES = {
  * the environment for the dashboard, and without it where the scope fixes
  * it (a shared link), so a request cannot name another.
  */
-export function analyticsQueryChecks({ environment }: { environment: boolean }) {
-  const properties = environment
-    ? { ...ANALYTICS_PROPERTIES, environment: RANGE_PROPERTIES.environment }
-    : ANALYTICS_PROPERTIES;
+export function analyticsQueryChecks({
+  environment,
+  limit = true,
+}: {
+  environment: boolean;
+  /** Whether `limit` is taken: a CSV export of the summary or the chart has no lists. */
+  limit?: boolean;
+}) {
+  const { limit: _limit, ...unlimited } = ANALYTICS_PROPERTIES;
+  const base = limit ? ANALYTICS_PROPERTIES : unlimited;
+  const properties = environment ? { ...base, environment: RANGE_PROPERTIES.environment } : base;
   return {
     preValidation: refuseUnknownParameters(Object.keys(properties)),
     querystring: { type: "object", additionalProperties: false, properties },
   };
 }
 
-export function listQueryChecks({ environment }: { environment: boolean }) {
-  const properties = environment
-    ? { ...LIST_PROPERTIES, environment: RANGE_PROPERTIES.environment }
-    : LIST_PROPERTIES;
+export function listQueryChecks({
+  environment,
+  paged = true,
+}: {
+  environment: boolean;
+  /** Whether `offset` and `limit` are taken: a CSV export holds the list from its first row. */
+  paged?: boolean;
+}) {
+  const { offset: _offset, limit: _limit, ...whole } = LIST_PROPERTIES;
+  const base = paged ? LIST_PROPERTIES : whole;
+  const properties = environment ? { ...base, environment: RANGE_PROPERTIES.environment } : base;
   return {
     preValidation: refuseUnknownParameters(Object.keys(properties)),
     querystring: {
@@ -572,7 +586,9 @@ export async function listAnswer(
   scope: ReportScope,
   query: ListQuery,
   { now, reader: base }: { now: Date; reader: Reader },
-): Promise<{ list: Awaited<ReturnType<typeof projectList>> } | Refusal> {
+): Promise<
+  { list: Awaited<ReturnType<typeof projectList>>; firstDay: string; lastDay: string } | Refusal
+> {
   const goal = await requestGoal(db, scope, query);
   if ("status" in goal) return goal;
   const reader = readerFor(base, query.period);
@@ -594,11 +610,11 @@ export async function listAnswer(
     reader,
     ...(search === undefined ? {} : { search }),
   });
-  return { list };
+  return { list, firstDay: days.from, lastDay: days.to };
 }
 
 /** The scope of a dashboard request, after requireProjectAccess. */
-function dashboardScope(request: {
+export function dashboardScope(request: {
   projectAccess: ProjectAccess | null;
   query: { environment?: string };
 }): ReportScope {
