@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { DEFAULT_ENVIRONMENT, isPeriod, PERIODS, type PageRange } from "@/lib/analytics-api";
+import { DEFAULT_ENVIRONMENT, type PageRange, type Period, PERIODS } from "@/lib/analytics-api";
 import { loadChunk, PageLoadError } from "@/lib/lazy-page";
 import { reloadPage } from "@/lib/reload";
 
@@ -70,27 +70,32 @@ export interface Answered {
 }
 
 /** `answered` supplies the displayed days as the custom range default. */
-export function PeriodSelect({
+export function PeriodSelect<P extends string = Period>({
   range,
   answered,
   onRange,
-  periods = PERIODS,
+  periods,
 }: {
-  range: PageRange;
+  range: PageRange<P>;
   answered: Answered | undefined;
-  onRange: (range: PageRange) => void;
-  /** The presets offered; a page that needs longer periods leaves the short ones out. */
-  periods?: readonly PeriodItem[];
+  onRange: (range: PageRange<P>) => void;
+  /**
+   * The presets offered, PERIODS when left out: fewer for a page that
+   * needs longer periods, more on Web analytics.
+   */
+  periods?: readonly { value: P; label: string }[];
 }) {
   const [choosingDays, setChoosingDays] = React.useState(false);
-  const PERIOD_ITEMS = [...periods, { value: CUSTOM, label: "Custom range" }];
+  const presets: readonly { value: string; label: string }[] = periods ?? PERIODS;
+  const isPreset = (value: unknown): value is P => presets.some((item) => item.value === value);
+  const PERIOD_ITEMS = [...presets, { value: CUSTOM, label: "Custom range" }];
   return (
     <>
       <Select
         items={PERIOD_ITEMS}
         value={"period" in range ? range.period : CUSTOM}
         onValueChange={(value) => {
-          if (isPeriod(value)) {
+          if (isPreset(value)) {
             onRange({ period: value });
           } else if (value === CUSTOM) {
             setChoosingDays(true);

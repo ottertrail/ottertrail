@@ -20,7 +20,13 @@ import { formatWhole } from "@/features/analytics/format";
 import { type PageSearch, searchOf } from "@/features/analytics/list-rows";
 import { LiveDot } from "@/features/analytics/now-indicator";
 import { type AnalyticsScope, AnalyticsScopeContext } from "@/features/analytics/scope";
-import { filtersFrom, rangeFrom } from "@/lib/analytics-api";
+import {
+  analyticsRangeFrom,
+  DEFAULT_COMPARISON,
+  filtersFrom,
+  isChartInterval,
+  isComparison,
+} from "@/lib/analytics-api";
 import { type ReportSource, sharedReports } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
 import { initialOf } from "@/lib/initials";
@@ -219,10 +225,12 @@ export function ShareApp({ token, history }: { token: string; history: RouterHis
         actions={<LiveCount source={source} environment={environment} />}
       >
         <AnalyticsView
-          range={rangeFrom(raw)}
+          range={analyticsRangeFrom(raw)}
           filters={filtersFrom(lists)}
           environment={environment}
           goalSearch={{ goal: raw.goal, goalEvent: raw.goalEvent }}
+          interval={isChartInterval(raw.interval) ? raw.interval : undefined}
+          comparison={isComparison(raw.compare) ? raw.compare : DEFAULT_COMPARISON}
         />
       </Frame>
     </AnalyticsScopeContext>

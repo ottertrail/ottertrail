@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
-import { analyticsFixture, installFakeApi, PROJECT } from "./fake-api.ts";
+import { analyticsFixture, installFakeApi, previousOf, PROJECT } from "./fake-api.ts";
 import { currentPath, renderApp } from "./render.tsx";
 
 /*
@@ -172,8 +172,8 @@ describe("the change rule's minimum", () => {
         ...week,
         summary: { ...week.summary, visitors: 9, visits: 12, pageviews: 40 },
         previous: {
-          ...week.previous,
-          summary: { ...week.previous.summary, visitors: 8, visits: 10, pageviews: 30 },
+          ...previousOf(week),
+          summary: { ...previousOf(week).summary, visitors: 8, visits: 10, pageviews: 30 },
         },
       }),
     });

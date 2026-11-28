@@ -1,6 +1,11 @@
 import type * as React from "react";
 
 import {
+  type AnalyticsRange,
+  type ChartInterval,
+  chartViewParams,
+  type Comparison,
+  DEFAULT_COMPARISON,
   type BreakdownRow,
   type CustomEventRow,
   DEFAULT_ENVIRONMENT,
@@ -82,15 +87,29 @@ export const rowRate = (row: RankedRow) =>
   formatConversion(row.primary === 0 ? 0 : (row.converted ?? 0) / row.primary);
 
 export interface PageSearch {
-  range: PageRange;
+  range: AnalyticsRange;
   filters: Filters;
   environment: string;
   /** The goal the page is filtered by (docs/web-analytics.md, "The goal filter"). */
   goal?: GoalChoice | undefined;
+  /** The chart's interval; the range's default when left out. */
+  interval?: ChartInterval | undefined;
+  /** The comparison; the previous period when left out. */
+  comparison?: Comparison | undefined;
 }
 
-/** Omit the default period and environment from the query. */
-export const searchOf = ({ range, filters, environment, goal }: PageSearch) => ({
+/** The page's address for a link to another page, with a range that page takes (pageRangeOf). */
+export type OtherPageSearch = Omit<PageSearch, "range"> & { range: PageRange };
+
+/** Omit the default period, environment, interval, and comparison from the query. */
+export const searchOf = ({
+  range,
+  filters,
+  environment,
+  goal,
+  interval,
+  comparison,
+}: PageSearch) => ({
   ...("period" in range
     ? range.period === DEFAULT_PERIOD
       ? {}
@@ -99,6 +118,7 @@ export const searchOf = ({ range, filters, environment, goal }: PageSearch) => (
   ...(environment === DEFAULT_ENVIRONMENT ? {} : { env: environment }),
   ...filterParams(filters),
   ...goalParams(goal),
+  ...chartViewParams({ interval, comparison: comparison ?? DEFAULT_COMPARISON }),
 });
 
 /** The filter a list's rows set (FILTERS). Custom event rows set the goal instead (eventLink). */

@@ -13,7 +13,8 @@ import {
   type Analytics,
   BREAKDOWNS,
   type BreakdownRow,
-  type DayPoint,
+  type ChartPoint,
+  type PreviousPeriod,
 } from "../../src/lib/analytics-api.ts";
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
 import type {
@@ -821,7 +822,7 @@ export function fakeError(
     lastDay: "2026-11-16",
     group,
     days: DAYS.map((day, i) => ({
-      day: day.day,
+      day: day.start,
       occurrences: [0, 120, 300, 90, 0, 400, 324][i] ?? 0,
     })),
     breakdowns: {
@@ -2873,15 +2874,67 @@ export const OTHER_PROJECT: Project = {
   secretKey: "sk_00000000000000000000000000000002",
 };
 
-const DAYS: DayPoint[] = [
-  { day: "2026-11-10", visitors: 120, visits: 131, pageviews: 290 },
-  { day: "2026-11-11", visitors: 138, visits: 150, pageviews: 333 },
-  { day: "2026-11-12", visitors: 96, visits: 101, pageviews: 210 },
-  { day: "2026-11-13", visitors: 129, visits: 140, pageviews: 301 },
-  { day: "2026-11-14", visitors: 109, visits: 118, pageviews: 278 },
-  { day: "2026-11-15", visitors: 103, visits: 110, pageviews: 239 },
-  { day: "2026-11-16", visitors: 70, visits: 74, pageviews: 169 },
+/** A day of the fixture's week, with the week before's counts on the same weekday. */
+const dayPoint = (
+  day: string,
+  [visitors, visits, pageviews]: [number, number, number],
+  [beforeVisitors, beforeVisits, beforePageviews]: [number, number, number],
+): ChartPoint => ({
+  start: day,
+  end: day,
+  // The 16th is today.
+  partial: day === "2026-11-16",
+  visitors,
+  visits,
+  pageviews,
+  previous: { visitors: beforeVisitors, visits: beforeVisits, pageviews: beforePageviews },
+});
+
+const DAYS: ChartPoint[] = [
+  dayPoint("2026-11-10", [120, 131, 290], [101, 110, 270]),
+  dayPoint("2026-11-11", [138, 150, 333], [117, 128, 310]),
+  dayPoint("2026-11-12", [96, 101, 210], [92, 99, 240]),
+  dayPoint("2026-11-13", [129, 140, 301], [111, 120, 290]),
+  dayPoint("2026-11-14", [109, 118, 278], [99, 108, 280]),
+  dayPoint("2026-11-15", [103, 110, 239], [95, 101, 230]),
+  dayPoint("2026-11-16", [70, 74, 169], [68, 72, 180]),
 ];
+
+/**
+ * The answer with the query's interval and comparison, as the API shapes
+ * them: an interval that does not fit gives way to the range's own, "off"
+ * leaves the comparison out, and "year" compares with the same days of
+ * 2025.
+ */
+export function withView(analytics: Analytics, query: URLSearchParams): Analytics {
+  const asked = query.get("interval");
+  const interval = analytics.intervals.find((item) => item === asked) ?? analytics.interval;
+  const compare = query.get("compare");
+  if (compare === "off") {
+    return {
+      ...analytics,
+      interval,
+      comparison: "off",
+      previous: null,
+      chart: analytics.chart.map((point) => ({ ...point, previous: null })),
+      ...(analytics.goal === null ? {} : { goal: { ...analytics.goal, previous: null } }),
+    };
+  }
+  if (compare === "year" && analytics.previous !== null) {
+    return {
+      ...analytics,
+      interval,
+      comparison: "year",
+      previous: {
+        ...analytics.previous,
+        firstDay: analytics.firstDay.replace(/^2026/u, "2025"),
+        lastDay: analytics.lastDay.replace(/^2026/u, "2025"),
+        until: "2025-11-16T07:00:00.000Z",
+      },
+    };
+  }
+  return { ...analytics, interval };
+}
 
 const row = (value: string | null, visitors: number, visits: number): BreakdownRow => ({
   value,
@@ -3010,6 +3063,11 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
     environments: ["production"],
     firstDay: "2026-11-10",
     lastDay: "2026-11-16",
+    from: "2026-11-09T16:00:00.000Z",
+    to: "2026-11-16T16:00:00.000Z",
+    interval: "day",
+    intervals: ["hour", "day"],
+    comparison: "previous",
     summary: {
       visitors: 765,
       visits: 824,
@@ -3019,7 +3077,7 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       avgDurationMs: 263_000,
       avgEngagedMs: 110_000,
     },
-    days: DAYS,
+    chart: DAYS,
     pages: [
       { path: "/", pageviews: 420, visitors: 322, avgEngagedMs: 30_000 },
       { path: "/pricing", pageviews: 260, visitors: 201, avgEngagedMs: 45_000 },
@@ -3163,7 +3221,7 @@ export function withGoal(
   // Visitor IDs are daily, so the days add up to the period's converted visitors.
   const perDay = splitTotal(
     converted,
-    analytics.days.map((day) => day.visitors * rowShare(day.day)),
+    analytics.chart.map((point) => point.visitors * rowShare(point.start)),
   );
   return {
     ...analytics,
@@ -3174,15 +3232,31 @@ export function withGoal(
       converted,
       events,
       conversionRate: rate,
-      previous: { converted: Math.round(converted * 0.8), events: Math.round(events * 0.8) },
+      previous:
+        analytics.previous === null
+          ? null
+          : { converted: Math.round(converted * 0.8), events: Math.round(events * 0.8) },
     },
-    days: analytics.days.map((day, index) => ({ ...day, converted: perDay[index] ?? 0 })),
+    chart: analytics.chart.map((point, index) => ({
+      ...point,
+      converted: perDay[index] ?? 0,
+      previous:
+        point.previous === null
+          ? null
+          : { ...point.previous, converted: Math.round((perDay[index] ?? 0) * 0.8) },
+    })),
     pages: rows(analytics.pages, (item) => item.path),
     outboundLinks: rows(analytics.outboundLinks, (item) => item.value),
     fileDownloads: rows(analytics.fileDownloads, (item) => item.value),
     notFoundPages: rows(analytics.notFoundPages, (item) => item.value),
     breakdowns,
   };
+}
+
+/** The fixture's comparison, which a test changes: there is one unless the query turns it off. */
+export function previousOf(analytics: Analytics): PreviousPeriod {
+  if (analytics.previous === null) throw new Error("This answer has no comparison");
+  return analytics.previous;
 }
 
 /** The same days and lists with nothing in them, as for a period without events. */
@@ -3200,7 +3274,13 @@ export function emptyAnalytics(): Analytics {
   return {
     ...fixture,
     summary: empty,
-    days: fixture.days.map((day) => ({ ...day, visitors: 0, visits: 0, pageviews: 0 })),
+    chart: fixture.chart.map((point) => ({
+      ...point,
+      visitors: 0,
+      visits: 0,
+      pageviews: 0,
+      previous: { visitors: 0, visits: 0, pageviews: 0 },
+    })),
     pages: [],
     breakdowns: {
       source: [],
@@ -3220,7 +3300,7 @@ export function emptyAnalytics(): Analytics {
     fileDownloads: [],
     notFoundPages: [],
     goals: [],
-    previous: { ...fixture.previous, summary: empty },
+    previous: fixture.previous === null ? null : { ...fixture.previous, summary: empty },
   };
 }
 
@@ -3540,7 +3620,7 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
       visitors: Math.round(events.length * 0.9),
       users: 0,
     },
-    days: DAYS.map(({ day }) => ({
+    days: DAYS.map(({ start: day }) => ({
       day,
       events: events.filter((event) => event.day === day).length,
     })),
@@ -5588,7 +5668,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     projects: [PROJECT],
     starred: [],
     analytics: (_projectId, _period, query, api) =>
-      withGoal(analyticsFixture({ goals: api.goals }), query, api.goals),
+      withGoal(withView(analyticsFixture({ goals: api.goals }), query), query, api.goals),
     goals: fakeGoals(),
     savedFunnels: fakeSavedFunnels(),
     list: fakeList,
@@ -6114,7 +6194,7 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
         received: true,
         summary: { visitors: 765, visits: 824, pageviews: 1820 },
         previousSummary: { visitors: 683, visits: 824, pageviews: 2000 },
-        days: analytics.days.map(({ day, visitors }) => ({ day, visitors })),
+        days: analytics.chart.map(({ start, visitors }) => ({ day: start, visitors })),
       };
     case "goals":
       return {

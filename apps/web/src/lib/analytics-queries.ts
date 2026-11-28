@@ -6,7 +6,13 @@ import {
   BREAKDOWNS,
   type BreakdownRow,
   type CustomEventRow,
-  type DayPoint,
+  type ChartCounts,
+  type ChartPoint,
+  type ChartView,
+  chartViewParams,
+  isChartInterval,
+  isComparison,
+  DEFAULT_COMPARISON,
   DEFAULT_ENVIRONMENT,
   type EventList,
   type EventValueRow,
@@ -49,13 +55,20 @@ const isSummary = (value: unknown): value is Summary =>
   isNumberOrNull(value.avgDurationMs) &&
   isNumberOrNull(value.avgEngagedMs);
 
-const isDayPoint = (value: unknown): value is DayPoint =>
+const isChartCounts = (value: unknown): value is ChartCounts =>
   isRecord(value) &&
-  typeof value.day === "string" &&
   isNumber(value.visitors) &&
   isNumber(value.pageviews) &&
   isNumber(value.visits) &&
   hasConverted(value);
+
+const isChartPoint = (value: unknown): value is ChartPoint =>
+  isChartCounts(value) &&
+  isRecord(value) &&
+  typeof value.start === "string" &&
+  typeof value.end === "string" &&
+  typeof value.partial === "boolean" &&
+  (value.previous === null || isChartCounts(value.previous));
 
 const isPageRow = (value: unknown): value is PageRow =>
   isRecord(value) &&
@@ -111,9 +124,10 @@ const isPageGoal = (value: unknown): value is PageGoalResult =>
   isNumber(value.converted) &&
   isNumber(value.events) &&
   isNumber(value.conversionRate) &&
-  isRecord(value.previous) &&
-  isNumber(value.previous.converted) &&
-  isNumber(value.previous.events);
+  (value.previous === null ||
+    (isRecord(value.previous) &&
+      isNumber(value.previous.converted) &&
+      isNumber(value.previous.events)));
 
 export const isAnalytics = (value: unknown): value is Analytics =>
   isRecord(value) &&
@@ -123,13 +137,18 @@ export const isAnalytics = (value: unknown): value is Analytics =>
   typeof value.firstDay === "string" &&
   typeof value.lastDay === "string" &&
   isSummary(value.summary) &&
-  isListOf(value.days, isDayPoint) &&
+  typeof value.from === "string" &&
+  typeof value.to === "string" &&
+  isChartInterval(value.interval) &&
+  isListOf(value.intervals, isChartInterval) &&
+  isComparison(value.comparison) &&
+  isListOf(value.chart, isChartPoint) &&
   isListOf(value.pages, isPageRow) &&
   isListOf(value.customEvents, isCustomEventRow) &&
   EVENT_LISTS.every((list) => isListOf(value[list], isEventValueRow)) &&
   isListOf(value.goals, isReportGoal) &&
   (value.goal === null || isPageGoal(value.goal)) &&
-  isPreviousPeriod(value.previous) &&
+  (value.previous === null || isPreviousPeriod(value.previous)) &&
   isRecord(value.breakdowns) &&
   BREAKDOWNS.every((name) =>
     isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),
@@ -212,18 +231,28 @@ export const environmentParams = (
 
 export const analyticsQuery = (
   source: ReportSource,
-  range: PageRange,
+  range: PageRange<string>,
   filters: Filters = [],
   environment = DEFAULT_ENVIRONMENT,
   goal?: GoalChoice,
+  view: ChartView = { comparison: DEFAULT_COMPARISON },
 ) =>
   queryOptions({
-    queryKey: ["analytics", source.key, range, filters, environment, goalParams(goal)],
+    queryKey: [
+      "analytics",
+      source.key,
+      range,
+      filters,
+      environment,
+      goalParams(goal),
+      chartViewParams(view),
+    ],
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
         ...environmentParams(source, environment),
         ...goalParams(goal),
+        ...chartViewParams(view),
       });
       appendFilters(query, filters);
       return expectShape(
@@ -328,7 +357,7 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
  */
 export const listPreviewQuery = (
   source: ReportSource,
-  range: PageRange,
+  range: PageRange<string>,
   filters: Filters,
   environment: string,
   report: ListReport,
@@ -371,7 +400,7 @@ export const listPreviewQuery = (
 /** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period, environment, filters, and goal. */
 export const listQuery = (
   source: ReportSource,
-  range: PageRange,
+  range: PageRange<string>,
   filters: Filters,
   environment: string,
   report: ListReport,

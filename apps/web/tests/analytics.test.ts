@@ -174,7 +174,22 @@ describe("isAnalytics", () => {
       avgDurationMs: 0,
       avgEngagedMs: null,
     },
-    days: [{ day: "2026-11-18", visitors: 1, pageviews: 1, visits: 1 }],
+    from: "2026-11-12T00:00:00.000Z",
+    to: "2026-11-19T00:00:00.000Z",
+    interval: "day",
+    intervals: ["hour", "day"],
+    comparison: "previous",
+    chart: [
+      {
+        start: "2026-11-18",
+        end: "2026-11-18",
+        partial: true,
+        visitors: 1,
+        pageviews: 1,
+        visits: 1,
+        previous: { visitors: 0, pageviews: 0, visits: 0 },
+      },
+    ],
     pages: [{ path: "/", pageviews: 1, visitors: 1, avgEngagedMs: null }],
     breakdowns: { ...empty, source: [{ value: null, visitors: 1, visits: 1, bounceRate: 1 }] },
     customEvents: [],
@@ -224,6 +239,19 @@ describe("isAnalytics", () => {
       false,
     );
     expect(isAnalytics({ ...valid, previous: { ...valid.previous, until: 5 } })).toBe(false);
+    // Without a comparison, previous is null, in the answer and on every point.
+    expect(
+      isAnalytics({
+        ...valid,
+        comparison: "off",
+        previous: null,
+        chart: [{ ...valid.chart[0], previous: null }],
+      }),
+    ).toBe(true);
+    expect(isAnalytics({ ...valid, interval: "year" })).toBe(false);
+    expect(isAnalytics({ ...valid, comparison: "lastyear" })).toBe(false);
+    expect(isAnalytics({ ...valid, chart: [{ ...valid.chart[0], partial: "yes" }] })).toBe(false);
+    expect(isAnalytics({ ...valid, days: valid.chart, chart: undefined })).toBe(false);
   });
 
   test("accepts a goal's counts, and refuses a missing goal or a bad count", () => {
@@ -239,7 +267,7 @@ describe("isAnalytics", () => {
     const withGoal = {
       ...valid,
       goal,
-      days: [{ ...valid.days[0], converted: 1 }],
+      chart: [{ ...valid.chart[0], converted: 1 }],
       pages: [{ ...valid.pages[0], converted: 1 }],
     };
     expect(isAnalytics(withGoal)).toBe(true);

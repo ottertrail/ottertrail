@@ -45,11 +45,19 @@ import {
 import { firstPage, meQuery, type PageAccess } from "@/lib/access";
 import { isRuleKind, type RuleKind } from "@/lib/alerts-api";
 import {
+  type AnalyticsPeriod,
+  analyticsRangeFrom,
+  type ChartInterval,
+  type Comparison,
+  DEFAULT_COMPARISON,
   DEFAULT_ENVIRONMENT,
   environmentFrom,
   filterParams,
   type FilterParameter,
   filtersFrom,
+  isAnalyticsPeriod,
+  isChartInterval,
+  isComparison,
   isPeriod,
   type Period,
   rangeFrom,
@@ -415,40 +423,53 @@ const webAnalyticsRoute = createRoute({
       env?: unknown;
       goal?: unknown;
       goalEvent?: unknown;
+      interval?: unknown;
+      compare?: unknown;
     } & Record<string, unknown> &
       SearchSchemaInput,
   ): {
-    period: Period | undefined;
+    period: AnalyticsPeriod | undefined;
     from: string | undefined;
     to: string | undefined;
     env: string | undefined;
     // The goal filter; the page checks it (goalChoiceFrom).
     goal: string | undefined;
     goalEvent: string | undefined;
+    // The chart's interval; the API answers the range's own when it does not fit.
+    interval: ChartInterval | undefined;
+    compare: Comparison | undefined;
   } & { [Parameter in FilterParameter]?: string[] | undefined } => {
-    const range = rangeFrom(search);
+    const range = analyticsRangeFrom(search);
     const environment = environmentFrom(search.env);
     return {
-      period: "period" in range && isPeriod(search.period) ? range.period : undefined,
+      period: "period" in range && isAnalyticsPeriod(search.period) ? range.period : undefined,
       from: "from" in range ? range.from : undefined,
       to: "to" in range ? range.to : undefined,
       env: environment === DEFAULT_ENVIRONMENT ? undefined : environment,
       goal: selectionFrom(search.goal),
       goalEvent: selectionFrom(search.goalEvent),
+      interval: isChartInterval(search.interval) ? search.interval : undefined,
+      compare:
+        isComparison(search.compare) && search.compare !== DEFAULT_COMPARISON
+          ? search.compare
+          : undefined,
       // Each filter as its own parameter, repeated for several values: country=DE&country=FR.
       ...filterParams(filtersFrom(search), { every: true }),
     };
   },
   component: withPage(AnalyticsPage, function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
-    const { period, from, to, env, goal, goalEvent, ...filters } = webAnalyticsRoute.useSearch();
+    const { period, from, to, env, goal, goalEvent, interval, compare, ...filters } =
+      webAnalyticsRoute.useSearch();
     return (
       <AnalyticsPage
         projectId={projectId}
-        range={rangeFrom({ period, from, to })}
+        range={analyticsRangeFrom({ period, from, to })}
         filters={filtersFrom(filters)}
         environment={env ?? DEFAULT_ENVIRONMENT}
         goalSearch={{ goal, goalEvent }}
+        interval={interval}
+        comparison={compare ?? DEFAULT_COMPARISON}
       />
     );
   }),

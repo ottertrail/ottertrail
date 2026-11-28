@@ -4,7 +4,7 @@ import * as React from "react";
 import type { buttonVariants } from "@/components/ui/button";
 import type { ReportSource } from "@/lib/analytics-queries";
 
-import type { PageSearch } from "./list-rows";
+import type { OtherPageSearch, PageSearch } from "./list-rows";
 
 /*
  * Where the Web analytics page runs: in the signed-in dashboard, or on a
@@ -41,9 +41,9 @@ export interface DashboardExtras {
   /** The project's settings page, where the snippet is. */
   installLink: React.ReactNode;
   /** A page's heatmap, at the end of its row. */
-  renderHeatmapLink: (search: PageSearch, path: string) => React.ReactNode;
+  renderHeatmapLink: (search: OtherPageSearch, path: string) => React.ReactNode;
   /** A custom event's own page, at the end of its row; null without product analytics. */
-  renderEventLink: ((search: PageSearch, name: string) => React.ReactNode) | null;
+  renderEventLink: ((search: OtherPageSearch, name: string) => React.ReactNode) | null;
 }
 
 export interface AnalyticsScope {

@@ -6,7 +6,14 @@ import * as React from "react";
 import { ButtonLink } from "@/components/button-link";
 import { PageActions } from "@/components/page-header";
 import { useAccess } from "@/lib/access";
-import { DEFAULT_ENVIRONMENT, type Filters, type PageRange } from "@/lib/analytics-api";
+import {
+  type AnalyticsRange,
+  type ChartInterval,
+  type Comparison,
+  DEFAULT_COMPARISON,
+  DEFAULT_ENVIRONMENT,
+  type Filters,
+} from "@/lib/analytics-api";
 import { projectReports } from "@/lib/analytics-queries";
 import { projectQuery } from "@/lib/projects-api";
 
@@ -14,7 +21,7 @@ import { heatmapsSearchOf } from "../heatmaps/search";
 import { productSearchOf } from "../product/search";
 import { NoSuchProject } from "../projects/no-such-project";
 import { AnalyticsView } from "./analytics-page";
-import { type PageSearch, searchOf } from "./list-rows";
+import { type OtherPageSearch, searchOf } from "./list-rows";
 import { NowIndicator } from "./now-indicator";
 import { type AnalyticsScope, AnalyticsScopeContext, type PageLinkProps } from "./scope";
 
@@ -27,7 +34,7 @@ function HeatmapLink({
   path,
 }: {
   projectId: string;
-  search: PageSearch;
+  search: OtherPageSearch;
   path: string;
 }) {
   return (
@@ -56,7 +63,7 @@ function EventPageLink({
   name,
 }: {
   projectId: string;
-  search: PageSearch;
+  search: OtherPageSearch;
   name: string;
 }) {
   return (
@@ -161,13 +168,17 @@ export function AnalyticsPage({
   filters,
   environment = DEFAULT_ENVIRONMENT,
   goalSearch = {},
+  interval,
+  comparison = DEFAULT_COMPARISON,
 }: {
   projectId: string;
-  range: PageRange;
+  range: AnalyticsRange;
   filters: Filters;
   environment?: string;
   /** The goal filter in the address (docs/web-analytics.md, "The goal filter"), unchecked. */
   goalSearch?: { goal?: string | undefined; goalEvent?: string | undefined };
+  interval?: ChartInterval | undefined;
+  comparison?: Comparison;
 }) {
   return (
     <DashboardAnalyticsScope projectId={projectId}>
@@ -176,6 +187,8 @@ export function AnalyticsPage({
         filters={filters}
         environment={environment}
         goalSearch={goalSearch}
+        interval={interval}
+        comparison={comparison}
       />
     </DashboardAnalyticsScope>
   );

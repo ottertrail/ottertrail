@@ -19,7 +19,105 @@ export const DEFAULT_PERIOD: Period = "7d";
 export const MAX_RANGE_DAYS = 366;
 
 /** The days the page shows: a period that ends today, or chosen days (both included). */
-export type PageRange = { period: Period } | { from: string; to: string };
+export type PageRange<P extends string = Period> = { period: P } | { from: string; to: string };
+
+/**
+ * The Web analytics page's ranges: the shared periods, and ranges only it
+ * offers. "Last 24 hours" ends now; "All time" starts on the day of the
+ * first event.
+ */
+export const ANALYTICS_PERIODS = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "24h", label: "Last 24 hours" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "mtd", label: "Month to date" },
+  { value: "90d", label: "Last 90 days" },
+  { value: "ytd", label: "Year to date" },
+  { value: "12m", label: "Last 12 months" },
+  { value: "all", label: "All time" },
+] as const;
+
+export type AnalyticsPeriod = (typeof ANALYTICS_PERIODS)[number]["value"];
+export type AnalyticsRange = PageRange<AnalyticsPeriod>;
+
+export const isAnalyticsPeriod = (value: unknown): value is AnalyticsPeriod =>
+  ANALYTICS_PERIODS.some((period) => period.value === value);
+
+/** rangeFrom for the Web analytics page, with its own ranges. */
+export function analyticsRangeFrom(search: {
+  period?: unknown;
+  from?: unknown;
+  to?: unknown;
+}): AnalyticsRange {
+  const { from, to } = search;
+  if (isDay(from) && isDay(to) && rangeProblem(from, to) === null) {
+    return { from, to };
+  }
+  return { period: isAnalyticsPeriod(search.period) ? search.period : DEFAULT_PERIOD };
+}
+
+/**
+ * A Web analytics range as the other pages take it: their own periods as
+ * they are, the others as the days the answer covered, at most the last
+ * MAX_RANGE_DAYS of them.
+ */
+export function pageRangeOf(
+  range: AnalyticsRange,
+  answered: { firstDay: string; lastDay: string },
+): PageRange {
+  if ("from" in range) return range;
+  if (isPeriod(range.period)) return { period: range.period };
+  const earliest = new Date(
+    Date.parse(`${answered.lastDay}T00:00:00Z`) - (MAX_RANGE_DAYS - 1) * 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  return {
+    from: answered.firstDay < earliest ? earliest : answered.firstDay,
+    to: answered.lastDay,
+  };
+}
+
+/** The chart's intervals, as the API names them; it answers the ones that fit the range. */
+export const CHART_INTERVALS = [
+  { value: "hour", label: "Hour" },
+  { value: "day", label: "Day" },
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" },
+] as const;
+
+export type ChartInterval = (typeof CHART_INTERVALS)[number]["value"];
+
+export const isChartInterval = (value: unknown): value is ChartInterval =>
+  CHART_INTERVALS.some((interval) => interval.value === value);
+
+/** What the summary and the chart compare with. */
+export const COMPARISONS = [
+  { value: "previous", label: "Previous period" },
+  { value: "year", label: "Same period last year" },
+  { value: "off", label: "No comparison" },
+] as const;
+
+export type Comparison = (typeof COMPARISONS)[number]["value"];
+
+export const DEFAULT_COMPARISON: Comparison = "previous";
+
+export const isComparison = (value: unknown): value is Comparison =>
+  COMPARISONS.some((comparison) => comparison.value === value);
+
+/** The chart's view: its interval (the range's default when left out) and the comparison. */
+export interface ChartView {
+  interval?: ChartInterval | undefined;
+  comparison: Comparison;
+}
+
+/** The API's parameters for a chart view; the defaults are left out. */
+export const chartViewParams = ({ interval, comparison }: ChartView): Record<string, string> => ({
+  ...(interval === undefined ? {} : { interval }),
+  ...(comparison === DEFAULT_COMPARISON ? {} : { compare: comparison }),
+});
 
 /** "YYYY-MM-DD" that names a real calendar day. */
 export function isDay(value: unknown): value is string {
@@ -55,7 +153,7 @@ export function rangeFrom(search: { period?: unknown; from?: unknown; to?: unkno
   return { period: isPeriod(search.period) ? search.period : DEFAULT_PERIOD };
 }
 
-export const rangeParams = (range: PageRange): Record<string, string> =>
+export const rangeParams = (range: PageRange<string>): Record<string, string> =>
   "period" in range ? { period: range.period } : { from: range.from, to: range.to };
 
 export const isPeriod = (value: unknown): value is Period =>
@@ -71,13 +169,24 @@ export interface Summary {
   avgEngagedMs: number | null;
 }
 
-export interface DayPoint {
-  day: string;
+export interface ChartCounts {
   visitors: number;
   pageviews: number;
   visits: number;
-  /** With a goal: the visitors with a goal event that day. */
+  /** With a goal: the visitors with a goal event in the point. */
   converted?: number;
+}
+
+/** One point of the chart: an hour, a day, a week, or a month in the instance's timezone. */
+export interface ChartPoint extends ChartCounts {
+  /** "YYYY-MM-DDTHH:mm" for an hour, else its first day in the range, "YYYY-MM-DD". */
+  start: string;
+  /** Its last day in the range. */
+  end: string;
+  /** Cut by the range, or still running. */
+  partial: boolean;
+  /** The comparison's counts at the same place; null without a comparison. */
+  previous: ChartCounts | null;
 }
 
 export interface PageRow {
@@ -182,8 +291,15 @@ export interface Analytics {
   environments: string[];
   firstDay: string;
   lastDay: string;
+  /** The range's first moment and its end, ISO: the last 24 hours start mid-day. */
+  from: string;
+  to: string;
   summary: Summary;
-  days: DayPoint[];
+  interval: ChartInterval;
+  /** The intervals that fit the range. */
+  intervals: ChartInterval[];
+  comparison: Comparison;
+  chart: ChartPoint[];
   pages: PageRow[];
   breakdowns: Record<Breakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
@@ -194,7 +310,8 @@ export interface Analytics {
   goals: ReportGoal[];
   /** The goal the page is filtered by, with its counts; null without one. */
   goal: PageGoalResult | null;
-  previous: PreviousPeriod;
+  /** Null without a comparison. */
+  previous: PreviousPeriod | null;
 }
 
 /** A saved goal (`id`) or a custom event by name (`id` null), with its conversions. */
@@ -208,7 +325,8 @@ export interface PageGoalResult {
   events: number;
   /** converted / the summary's visitors: 0 to 1. */
   conversionRate: number;
-  previous: { converted: number; events: number };
+  /** Null without a comparison. */
+  previous: { converted: number; events: number } | null;
 }
 
 /** Every list of the analytics page; each can be read in full (analytics-queries.ts). */

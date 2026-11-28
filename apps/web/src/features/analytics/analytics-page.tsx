@@ -26,19 +26,38 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   type Analytics,
+  ANALYTICS_PERIODS,
+  type AnalyticsRange,
   type Breakdown,
-  type DayPoint,
+  CHART_INTERVALS,
+  type ChartCounts,
+  type ChartInterval,
+  type ChartPoint,
+  type Comparison,
+  COMPARISONS,
+  DEFAULT_COMPARISON,
   DEFAULT_ENVIRONMENT,
   type EventList,
   type FilterName,
   type Filters,
+  isChartInterval,
+  isComparison,
   type ListReport,
   type PageGoalResult,
-  type PageRange,
+  pageRangeOf,
+  type Summary,
 } from "@/lib/analytics-api";
 import {
   analyticsQuery,
@@ -55,7 +74,7 @@ import { MISSING } from "@/lib/missing";
 
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
-import { DayChart } from "./day-chart";
+import { COMPARISON_COLOR, DayChart } from "./day-chart";
 import { AddFilter, FilterChip } from "./filter-editor";
 import { FilterLink, GoalLink, PageLink } from "./filter-link";
 import {
@@ -74,6 +93,7 @@ import {
 import { GoalsCard } from "./goals-card";
 import {
   type FilterLinkFor,
+  type OtherPageSearch,
   fromBreakdown,
   fromEvents,
   fromEventValues,
@@ -92,7 +112,7 @@ const METRICS = [
   { key: "visitors", label: "Visitors" },
   { key: "visits", label: "Visits" },
   { key: "pageviews", label: "Pageviews" },
-] as const satisfies readonly { key: keyof DayPoint; label: string }[];
+] as const satisfies readonly { key: keyof ChartCounts; label: string }[];
 
 /** With a goal, the chart opens on its converted visitors. */
 const GOAL_METRICS = [{ key: "converted", label: "Converted" } as const, ...METRICS];
@@ -101,8 +121,6 @@ type Metric = (typeof GOAL_METRICS)[number]["key"];
 
 const isMetric = (value: unknown): value is Metric =>
   GOAL_METRICS.some((metric) => metric.key === value);
-
-const dayValue = (day: DayPoint, metric: Metric) => day[metric] ?? 0;
 
 /** A goal's name: a saved goal's, or the custom event's. */
 function goalName(goal: GoalChoice, analytics: Analytics | undefined): string {
@@ -352,24 +370,39 @@ function BreakdownSection({
 }
 
 function comparisonNote({ previous, timeZone }: Analytics): string {
+  if (previous === null) return "";
   const days = formatDayRange(previous.firstDay, previous.lastDay);
   const before = previous.summary;
   if (before.visits === 0 && before.pageviews === 0) {
-    return `No visits in ${days} to compare with.`;
+    return `No visits in ${days} to compare with. `;
   }
   if (previous.until === null) {
-    return `Changes compare with ${days}.`;
+    return `Changes compare with ${days}. `;
   }
   const time = formatTimeOfDay(previous.until, timeZone);
   return previous.firstDay === previous.lastDay
-    ? `Changes compare with ${days}, up to ${time}.`
-    : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}.`;
+    ? `Changes compare with ${days}, up to ${time}. `
+    : `Changes compare with ${days}, up to ${time} on ${formatDay(previous.lastDay)}. `;
 }
 
+/** Without a comparison, the figures stand alone. */
+const withoutChange = (stats: Stat[]): Stat[] =>
+  stats.map(({ change: _change, before: _before, counts: _counts, ...stat }) => stat);
+
+const EMPTY_SUMMARY: Summary = {
+  visitors: 0,
+  pageviews: 0,
+  visits: 0,
+  viewsPerVisit: null,
+  bounceRate: null,
+  avgDurationMs: null,
+  avgEngagedMs: null,
+};
+
 /** Use the minimum in lib/change.ts. Per-visit metrics and bounce rate use visit counts. */
-function Summary({ analytics }: { analytics: Analytics }) {
+function SummaryStrip({ analytics }: { analytics: Analytics }) {
   const { summary } = analytics;
-  const before = analytics.previous.summary;
+  const before = analytics.previous?.summary ?? EMPTY_SUMMARY;
   const visits = { current: summary.visits, previous: before.visits };
   const stats: Stat[] = [
     {
@@ -425,9 +458,13 @@ function Summary({ analytics }: { analytics: Analytics }) {
   ];
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
-      <StatStrip label="Figures" stats={stats} minCount={MIN_LOADS_FOR_CHANGE} />
+      <StatStrip
+        label="Figures"
+        stats={analytics.previous === null ? withoutChange(stats) : stats}
+        minCount={MIN_LOADS_FOR_CHANGE}
+      />
       <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-        {comparisonNote(analytics)} Without cookies, visitors are recognized for only one day. A
+        {comparisonNote(analytics)}Without cookies, visitors are recognized for only one day. A
         person who returns on another day counts again. Durations are averages per visit.
       </p>
     </section>
@@ -436,13 +473,14 @@ function Summary({ analytics }: { analytics: Analytics }) {
 
 /**
  * With a goal: the visitors, those who reached it, their share, and the
- * goal's events, each compared with the period before.
+ * goal's events, each compared with the period compared with.
  */
 function GoalSummary({ analytics, goal }: { analytics: Analytics; goal: PageGoalResult }) {
   const visitors = analytics.summary.visitors;
-  const before = analytics.previous.summary.visitors;
-  const converted = { current: goal.converted, previous: goal.previous.converted };
-  const rateBefore = before === 0 ? null : goal.previous.converted / before;
+  const before = analytics.previous?.summary.visitors ?? 0;
+  const then = goal.previous ?? { converted: 0, events: 0 };
+  const converted = { current: goal.converted, previous: then.converted };
+  const rateBefore = before === 0 ? null : then.converted / before;
   const stats: Stat[] = [
     {
       label: "Visitors",
@@ -454,8 +492,8 @@ function GoalSummary({ analytics, goal }: { analytics: Analytics; goal: PageGoal
     {
       label: "Converted",
       value: formatCount(goal.converted),
-      change: relativeChange(goal.converted, goal.previous.converted),
-      before: formatWhole(goal.previous.converted),
+      change: relativeChange(goal.converted, then.converted),
+      before: formatWhole(then.converted),
       counts: converted,
     },
     {
@@ -469,21 +507,21 @@ function GoalSummary({ analytics, goal }: { analytics: Analytics; goal: PageGoal
     {
       label: "Events",
       value: formatCount(goal.events),
-      change: relativeChange(goal.events, goal.previous.events),
-      before: formatWhole(goal.previous.events),
-      counts: { current: goal.events, previous: goal.previous.events },
+      change: relativeChange(goal.events, then.events),
+      before: formatWhole(then.events),
+      counts: { current: goal.events, previous: then.events },
     },
   ];
   return (
     <section aria-label="Summary" className="flex flex-col gap-3">
       <StatStrip
         label="Figures"
-        stats={stats}
+        stats={analytics.previous === null ? withoutChange(stats) : stats}
         minCount={MIN_LOADS_FOR_CHANGE}
         className="lg:max-w-3xl"
       />
       <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-        {comparisonNote(analytics)} Converted visitors reached the goal in this period. Your
+        {comparisonNote(analytics)}Converted visitors reached the goal in this period. Your
         server&apos;s events have no visitor, so they are not counted. A person who returns on
         another day counts again.
       </p>
@@ -491,20 +529,103 @@ function GoalSummary({ analytics, goal }: { analytics: Analytics; goal: PageGoal
   );
 }
 
-function Trend({ days, goal = false }: { days: DayPoint[]; goal?: boolean }) {
+const pointValue = (point: ChartCounts, metric: Metric) => point[metric] ?? 0;
+
+const INTERVAL_NOUNS: Record<ChartInterval, string> = {
+  hour: "hour",
+  day: "day",
+  week: "week",
+  month: "month",
+};
+
+/** "14:00" from "2026-11-28T14:00". */
+const hourOf = (start: string) => start.slice(11, 16);
+
+/**
+ * A point's name under the axis and in its tooltip, by the chart's
+ * interval. Points are keyed by their index: the day daylight saving ends
+ * starts two hours at 01:00.
+ */
+function pointNames(chart: ChartPoint[], interval: ChartInterval) {
+  const oneDay = chart.length > 0 && chart.every((point) => point.end === chart[0]?.end);
+  const tick = (key: string): string => {
+    const start = chart[Number(key)]?.start ?? "";
+    if (interval === "hour") {
+      return oneDay ? hourOf(start) : `${formatDay(start.slice(0, 10))}, ${hourOf(start)}`;
+    }
+    return interval === "month" ? formatMonth(start) : formatDay(start);
+  };
+  const title = (key: string): string => {
+    const point = chart[Number(key)];
+    const start = point?.start ?? "";
+    const end = point?.end ?? start;
+    const name =
+      interval === "hour"
+        ? `${formatDay(start.slice(0, 10), { weekday: true })}, ${hourOf(start)}`
+        : interval === "day"
+          ? formatDay(start, { weekday: true })
+          : start === end
+            ? formatDay(start)
+            : interval === "month" && start.endsWith("-01") && !point?.partial
+              ? formatMonth(start)
+              : `${formatDay(start)} to ${formatDay(end)}`;
+    return point?.partial ? `${name} (partial)` : name;
+  };
+  return { tick, title };
+}
+
+/** "Nov 2026". */
+const formatMonth = (day: string) =>
+  new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric", timeZone: "UTC" }).format(
+    new Date(`${day}T00:00:00Z`),
+  );
+
+const COMPARISON_LABELS: Record<Comparison, string> = {
+  previous: "Previous period",
+  year: "Same period last year",
+  off: "",
+};
+
+function Trend({
+  analytics,
+  goal = false,
+  onInterval,
+}: {
+  analytics: Analytics;
+  goal?: boolean;
+  onInterval: (interval: ChartInterval) => void;
+}) {
+  const { chart, interval, intervals, comparison } = analytics;
   const metrics = goal ? GOAL_METRICS : METRICS;
   const [metric, setMetric] = React.useState<Metric>(goal ? "converted" : "visitors");
   const [showTable, setShowTable] = React.useState(false);
   const tableId = React.useId();
   const headingId = React.useId();
+  const compared = analytics.previous !== null;
+  const comparedLabel = COMPARISON_LABELS[comparison];
+  const names = pointNames(chart, interval);
+  const per = INTERVAL_NOUNS[interval];
 
   const tooltipRows = (plotted: Metric) => (index: number) => {
-    const day = days[index];
-    return metrics.map((item) => ({
-      label: item.label,
-      value: day === undefined ? MISSING : formatWhole(dayValue(day, item.key)),
-      plotted: item.key === plotted,
-    }));
+    const point = chart[index];
+    return metrics.flatMap((item) => {
+      const row = {
+        label: item.label,
+        value: point === undefined ? MISSING : formatWhole(pointValue(point, item.key)),
+        plotted: item.key === plotted,
+      };
+      if (item.key !== plotted || !compared) return [row];
+      const before = point?.previous;
+      return [
+        row,
+        {
+          label: `${item.label}, ${comparedLabel.toLowerCase()}`,
+          value: before == null ? MISSING : formatWhole(pointValue(before, item.key)),
+          plotted: false,
+          color: COMPARISON_COLOR,
+        },
+      ];
+    });
   };
 
   return (
@@ -520,10 +641,29 @@ function Trend({ days, goal = false }: { days: DayPoint[]; goal?: boolean }) {
       >
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <h2 id={headingId} className="text-sm font-medium text-ink">
-            {metrics.find((item) => item.key === metric)?.label} per day
+            {metrics.find((item) => item.key === metric)?.label} per {per}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            {days.length >= 2 && (
+            {intervals.length > 1 && (
+              <ToggleGroup
+                value={[interval]}
+                onValueChange={(value) => {
+                  const [next] = value;
+                  if (isChartInterval(next) && next !== interval) onInterval(next);
+                }}
+                aria-label="Chart interval"
+                variant="outline"
+                size="sm"
+                spacing={0}
+              >
+                {CHART_INTERVALS.filter((item) => intervals.includes(item.value)).map((item) => (
+                  <ToggleGroupItem key={item.value} value={item.value}>
+                    {item.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            )}
+            {chart.length >= 2 && (
               <TabsList aria-label="Metric to chart">
                 {metrics.map((item) => (
                   <TabsTrigger key={item.key} value={item.key}>
@@ -545,50 +685,83 @@ function Trend({ days, goal = false }: { days: DayPoint[]; goal?: boolean }) {
         </div>
         {metrics.map((item) => (
           <TabsContent key={item.key} value={item.key}>
-            {days.length < 2 ? (
+            {chart.length < 2 ? (
               <p className="py-8 text-center text-sm text-ink-subtle">
-                A trend needs at least two days. Choose a longer period to see one.
+                A trend needs at least two points. Choose a longer period to see one.
               </p>
             ) : (
               <DayChart
-                points={days.map((day) => ({ day: day.day, value: dayValue(day, item.key) }))}
-                label={`${item.label} per day`}
+                points={chart.map((point, index) => ({
+                  day: String(index),
+                  value: pointValue(point, item.key),
+                }))}
+                label={`${item.label} per ${per}`}
                 tooltipRows={tooltipRows(item.key)}
                 plotHeight={140}
+                pointLabel={names.title}
+                tickLabel={names.tick}
+                comparison={
+                  compared
+                    ? {
+                        values: chart.map((point) =>
+                          point.previous === null ? null : pointValue(point.previous, item.key),
+                        ),
+                        label: comparedLabel,
+                        currentLabel: "This period",
+                      }
+                    : undefined
+                }
               />
             )}
           </TabsContent>
         ))}
       </Tabs>
-      <div id={tableId} hidden={!showTable} className="max-h-80 max-w-xl overflow-y-auto">
+      <div id={tableId} hidden={!showTable} className="max-h-80 max-w-3xl overflow-auto">
         {showTable && (
           <table className="w-full text-sm">
             <caption className="sr-only">
               {goal ? "Converted visitors, visitors, visits," : "Visitors, visits,"} and pageviews
-              per day
+              per {per}
+              {compared ? `, with the ${comparedLabel.toLowerCase()}` : ""}
             </caption>
             <thead className="sticky top-0 bg-[var(--block-surface,var(--background))]">
               <tr className="text-xs text-ink-subtle">
                 <th scope="col" className="pb-2 text-left font-normal">
-                  Day
+                  {per.charAt(0).toUpperCase() + per.slice(1)}
                 </th>
                 {metrics.map((item) => (
-                  <th key={item.key} scope="col" className="pb-2 text-right font-normal">
-                    {item.label}
-                  </th>
+                  <React.Fragment key={item.key}>
+                    <th scope="col" className="pb-2 pl-3 text-right font-normal">
+                      {item.label}
+                    </th>
+                    {compared && (
+                      <th scope="col" className="pb-2 pl-3 text-right font-normal">
+                        Before
+                      </th>
+                    )}
+                  </React.Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {days.map((day) => (
-                <tr key={day.day} className="border-t border-hairline">
+              {chart.map((point, index) => (
+                <tr key={index} className="border-t border-hairline">
                   <th scope="row" className="py-1.5 text-left font-normal text-ink">
-                    {formatDay(day.day, { weekday: true })}
+                    {names.title(String(index))}
                   </th>
                   {metrics.map((item) => (
-                    <td key={item.key} className="py-1.5 text-right text-ink tabular-nums">
-                      {formatWhole(dayValue(day, item.key))}
-                    </td>
+                    <React.Fragment key={item.key}>
+                      <td className="py-1.5 pl-3 text-right text-ink tabular-nums">
+                        {formatWhole(pointValue(point, item.key))}
+                      </td>
+                      {compared && (
+                        <td className="py-1.5 pl-3 text-right text-ink-subtle tabular-nums">
+                          {point.previous === null
+                            ? MISSING
+                            : formatWhole(pointValue(point.previous, item.key))}
+                        </td>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tr>
               ))}
@@ -605,7 +778,9 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
   // The answer's goal, not the address's: while a new one loads, the old numbers stay.
   const goal = analytics.goal;
   // Links into the dashboard's other pages: never on a shared link.
-  const { dashboard, source: reportSource } = useAnalyticsScope();
+  const { dashboard, show, source: reportSource } = useAnalyticsScope();
+  // Other pages take their own periods: the others go as the days shown.
+  const otherPages: OtherPageSearch = { ...search, range: pageRangeOf(search.range, analytics) };
   const link: FilterLinkFor = (name, value) => (
     <FilterLink search={search} name={name} value={value} />
   );
@@ -624,7 +799,7 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
       ? list
       : list.map((row) =>
           row.key.startsWith("/")
-            ? { ...row, action: dashboard.renderHeatmapLink(search, row.key) }
+            ? { ...row, action: dashboard.renderHeatmapLink(otherPages, row.key) }
             : row,
         );
   const chosenEvent =
@@ -645,7 +820,7 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
               Goal
             </Badge>
           )}
-          {dashboard?.renderEventLink?.(search, name)}
+          {dashboard?.renderEventLink?.(otherPages, name)}
         </>
       ),
     };
@@ -703,11 +878,16 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
   return (
     <>
       {goal === null ? (
-        <Summary analytics={analytics} />
+        <SummaryStrip analytics={analytics} />
       ) : (
         <GoalSummary analytics={analytics} goal={goal} />
       )}
-      <Trend key={goal === null ? "visits" : "goal"} days={analytics.days} goal={goal !== null} />
+      <Trend
+        key={goal === null ? "visits" : "goal"}
+        analytics={analytics}
+        goal={goal !== null}
+        onInterval={(interval) => show({ ...search, interval })}
+      />
       {/* Use content width; the sidebar takes 16rem. Three figures need half of it. */}
       <div className="@container border-t pt-5">
         <div
@@ -1034,7 +1214,7 @@ function NoData({ search, otherEnvironments }: { search: PageSearch; otherEnviro
         <EmptyContent>
           <PageLink
             button={{ variant: "outline" }}
-            search={{ ...search, range: { period: "12m" }, filters: [] }}
+            search={{ ...search, range: { period: "12m" }, filters: [], interval: undefined }}
           >
             Show the last 12 months
           </PageLink>
@@ -1063,17 +1243,29 @@ export function AnalyticsView({
   filters,
   environment = DEFAULT_ENVIRONMENT,
   goalSearch = {},
+  interval,
+  comparison = DEFAULT_COMPARISON,
 }: {
-  range: PageRange;
+  range: AnalyticsRange;
   filters: Filters;
   environment?: string;
   /** The goal filter in the address (docs/web-analytics.md, "The goal filter"), unchecked. */
   goalSearch?: { goal?: string | undefined; goalEvent?: string | undefined };
+  /** The chart's interval in the address; the range's default when left out. */
+  interval?: ChartInterval | undefined;
+  comparison?: Comparison;
 }) {
   const scope = useAnalyticsScope();
   const goal = goalChoiceFrom(goalSearch);
-  const analytics = useQuery(analyticsQuery(scope.source, range, filters, environment, goal));
-  const search: PageSearch = { range, filters, environment, goal };
+  const allTime = "period" in range && range.period === "all";
+  const analytics = useQuery(
+    analyticsQuery(scope.source, range, filters, environment, goal, {
+      interval,
+      // All time has nothing before it to compare with.
+      comparison: allTime ? DEFAULT_COMPARISON : comparison,
+    }),
+  );
+  const search: PageSearch = { range, filters, environment, goal, interval, comparison };
   // Preserve other filters when changing dates or environment.
   const show = (next: Partial<PageSearch>) => scope.show({ ...search, ...next });
 
@@ -1090,7 +1282,35 @@ export function AnalyticsView({
       <FilterBar
         label="Period, environment, and filters"
         period={
-          <PeriodSelect range={range} answered={data} onRange={(next) => show({ range: next })} />
+          <>
+            <PeriodSelect
+              range={range}
+              answered={data}
+              periods={ANALYTICS_PERIODS}
+              // Another range has intervals of its own.
+              onRange={(next) => show({ range: next, interval: undefined })}
+            />
+            {!allTime && (
+              <Select
+                items={COMPARISONS}
+                value={comparison}
+                onValueChange={(value) => {
+                  if (isComparison(value)) show({ comparison: value });
+                }}
+              >
+                <SelectTrigger aria-label="Compare with" className="w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMPARISONS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </>
         }
         environment={
           // Keep the picker visible for a selected environment so the user can switch back.

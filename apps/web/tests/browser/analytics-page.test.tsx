@@ -8,6 +8,7 @@ import {
   emptyAnalytics,
   installFakeApi,
   json,
+  previousOf,
   PROJECT,
 } from "./fake-api.ts";
 import { currentPath, renderApp } from "./render.tsx";
@@ -226,7 +227,9 @@ describe("comparison with the previous period", () => {
 
   test("compares whole days without a time", async () => {
     const week = analyticsFixture();
-    installFakeApi({ analytics: () => ({ ...week, previous: { ...week.previous, until: null } }) });
+    installFakeApi({
+      analytics: () => ({ ...week, previous: { ...previousOf(week), until: null } }),
+    });
     renderApp(ANALYTICS);
 
     await expect.poll(note).toContain("Changes compare with 3 to 9 Nov 2026.");
@@ -235,7 +238,7 @@ describe("comparison with the previous period", () => {
   test("shows each figure as new when nothing came before", async () => {
     const week = analyticsFixture();
     installFakeApi({
-      analytics: () => ({ ...week, previous: { ...emptyAnalytics().previous } }),
+      analytics: () => ({ ...week, previous: previousOf(emptyAnalytics()) }),
     });
     renderApp(ANALYTICS);
     await expect.poll(() => summaryValue("Visitors")).toBe("765");
@@ -277,16 +280,25 @@ describe("the daily chart", () => {
     await expect.element(chart).toHaveFocus();
     await expect
       .element(chart)
-      .toHaveAttribute("aria-valuetext", "Mon 16 Nov: 70 Visitors, 74 Visits, 169 Pageviews");
+      .toHaveAttribute(
+        "aria-valuetext",
+        "Mon 16 Nov (partial): 70 Visitors, 68 Visitors, previous period, 74 Visits, 169 Pageviews",
+      );
 
     await userEvent.keyboard("{ArrowLeft}");
     await expect
       .element(chart)
-      .toHaveAttribute("aria-valuetext", "Sun 15 Nov: 103 Visitors, 110 Visits, 239 Pageviews");
+      .toHaveAttribute(
+        "aria-valuetext",
+        "Sun 15 Nov: 103 Visitors, 95 Visitors, previous period, 110 Visits, 239 Pageviews",
+      );
     await userEvent.keyboard("{Home}");
     await expect
       .element(chart)
-      .toHaveAttribute("aria-valuetext", "Tue 10 Nov: 120 Visitors, 131 Visits, 290 Pageviews");
+      .toHaveAttribute(
+        "aria-valuetext",
+        "Tue 10 Nov: 120 Visitors, 101 Visitors, previous period, 131 Visits, 290 Pageviews",
+      );
     // The readout also shows on screen for the chosen day.
     await expect.element(page.getByText("Tue 10 Nov", { exact: true })).toBeVisible();
   });
@@ -306,10 +318,12 @@ describe("the daily chart", () => {
     await userEvent.hover(page.elementLocator(chart), {
       position: { x: chart.clientWidth - 20, y: 100 },
     });
-    await expect.element(page.getByText("Mon 16 Nov", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Mon 16 Nov (partial)", { exact: true })).toBeVisible();
 
     await userEvent.unhover(page.elementLocator(chart));
-    await expect.element(page.getByText("Mon 16 Nov", { exact: true })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("Mon 16 Nov (partial)", { exact: true }))
+      .not.toBeInTheDocument();
   });
 
   test("shows the same numbers as a table", async () => {
@@ -322,19 +336,19 @@ describe("the daily chart", () => {
     await expect
       .element(page.getByRole("button", { name: "Hide the numbers" }))
       .toHaveAttribute("aria-expanded", "true");
-    const rows = tableRows("Visitors, visits, and pageviews per day");
+    const rows = tableRows("Visitors, visits, and pageviews per day, with the previous period");
     expect(rows).toHaveLength(7);
-    expect(rows[0]).toEqual(["Tue 10 Nov", "120", "131", "290"]);
+    expect(rows[0]).toEqual(["Tue 10 Nov", "120", "101", "131", "110", "290", "270"]);
   });
 
   test("draws no line for a single day", async () => {
     const week = analyticsFixture();
     installFakeApi({
-      analytics: () => ({ ...week, firstDay: "2026-11-16", days: week.days.slice(-1) }),
+      analytics: () => ({ ...week, firstDay: "2026-11-16", chart: week.chart.slice(-1) }),
     });
     renderApp(`${ANALYTICS}?period=today`);
 
-    await expect.element(page.getByText(/A trend needs at least two days/)).toBeVisible();
+    await expect.element(page.getByText(/A trend needs at least two points/)).toBeVisible();
     await expect.element(page.getByRole("slider")).not.toBeInTheDocument();
     await expect
       .element(page.getByRole("tablist", { name: "Metric to chart" }))

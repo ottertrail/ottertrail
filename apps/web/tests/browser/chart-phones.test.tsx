@@ -39,7 +39,9 @@ describe("a line chart on a phone", () => {
     expectOnScreen(chart);
 
     dragAcross(chart, [0.1, 0.5, 1]);
-    await expect.poll(() => tooltipOf(chart)?.textContent).toMatch(/^Mon 16 Nov70Visitors/);
+    await expect
+      .poll(() => tooltipOf(chart)?.textContent)
+      .toMatch(/^Mon 16 Nov \(partial\)70Visitors/);
     expectOnScreen(chart);
   });
 });
