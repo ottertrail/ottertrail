@@ -1,4 +1,4 @@
-import type { GoalResult } from "./goals-api";
+import type { ReportGoal } from "./goals-api";
 import type { Step } from "./steps";
 
 /** Ranges the analytics page offers; each ends today in the timezone set in Settings. */
@@ -170,7 +170,7 @@ export interface Analytics {
   fileDownloads: EventValueRow[];
   notFoundPages: EventValueRow[];
   /** The project's saved goals, in the order added, counted in the same visits. */
-  goals: GoalResult[];
+  goals: ReportGoal[];
   /** The goal the page is filtered by, with its counts; null without one. */
   goal: PageGoalResult | null;
   previous: PreviousPeriod;
@@ -180,7 +180,8 @@ export interface Analytics {
 export interface PageGoalResult {
   id: string | null;
   name: string;
-  step: Step;
+  /** What it matches; left out on a shared link. */
+  step?: Step;
   /** Daily visitor IDs that reached it. */
   converted: number;
   events: number;

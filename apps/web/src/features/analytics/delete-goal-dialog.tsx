@@ -23,7 +23,7 @@ export function DeleteGoalDialog({
   returnFocus,
 }: {
   projectId: string;
-  goal: Goal;
+  goal: Pick<Goal, "id" | "name">;
   /** Focus here on close because deletion removes the trigger. */
   returnFocus: React.RefObject<HTMLElement | null>;
 }) {

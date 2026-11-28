@@ -26,6 +26,28 @@ export interface GoalResult extends Goal {
   conversionRate: number;
 }
 
+/**
+ * A goal as the Web analytics page counts it. A shared link's answers
+ * leave out what the goal matches (`step`) and when it was added: that is
+ * Product analytics' setup, not the page's numbers (docs/web-analytics.md,
+ * "Shared links").
+ */
+export type ReportGoal = Pick<
+  GoalResult,
+  "id" | "name" | "visitors" | "events" | "conversionRate"
+> &
+  Partial<Pick<GoalResult, "step" | "createdAt">>;
+
+export const isReportGoal = (value: unknown): value is ReportGoal =>
+  isRecord(value) &&
+  isText(value.id) &&
+  isText(value.name) &&
+  isNumber(value.visitors) &&
+  isNumber(value.events) &&
+  isNumber(value.conversionRate) &&
+  (value.step === undefined || isGoalStep(value.step)) &&
+  (value.createdAt === undefined || isText(value.createdAt));
+
 /** Goals a project may have, as the API allows. */
 export const MAX_GOALS = 20;
 

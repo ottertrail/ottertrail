@@ -15,6 +15,7 @@ import {
   TokenBucketLimiter,
 } from "../collection/rate-limiter.ts";
 import type { Database } from "../db/schema.ts";
+import type { Analytics, GoalResult, PageGoalResult } from "../reports/analytics.ts";
 import { nowAnswer } from "../reports/now-routes.ts";
 import {
   accessOf,
@@ -33,8 +34,7 @@ import type { ObjectStore } from "../storage/object-store.ts";
 import {
   DashboardQueryLimiter,
   dashboardReader,
-  liveQueryLimiter,
-  liveReader,
+  LIVE_QUEUE_WAIT_MS,
 } from "../telemetry/dashboard-limit.ts";
 import {
   createShareLink,
@@ -171,6 +171,44 @@ export const SHARE_IP_LIMIT: RateLimit = { capacity: 60, refillPerSecond: 1 };
 /** Requests per link, from every address together: a link may be open in many browsers. */
 export const SHARE_LINK_LIMIT: RateLimit = { capacity: 300, refillPerSecond: 5 };
 
+/**
+ * Shared links' own query limits, apart from the dashboard's, so public
+ * traffic never takes the slots signed-in users read with: one report
+ * query at a time per process, and one Right now.
+ */
+export const shareReportLimiter = () => new DashboardQueryLimiter({ max: 1 });
+export const shareLiveLimiter = () =>
+  new DashboardQueryLimiter({ max: 1, waitMs: LIVE_QUEUE_WAIT_MS });
+
+/**
+ * A shared link's goals: their names and counts only. What a goal matches
+ * (its step, with any event property filter) is Product analytics' setup,
+ * which a link does not show; the goal filter still takes the goal's ID.
+ */
+function publicGoals(report: Analytics): SharedAnalytics {
+  const { goals, goal, ...rest } = report;
+  return {
+    ...rest,
+    goals: goals.map(({ id, name, visitors, events, conversionRate }) => ({
+      id,
+      name,
+      visitors,
+      events,
+      conversionRate,
+    })),
+    goal: goal === null ? null : withoutStep(goal),
+  };
+}
+
+const withoutStep = ({ step: _step, ...goal }: PageGoalResult): Omit<PageGoalResult, "step"> =>
+  goal;
+
+/** The Web analytics page as a shared link answers it. */
+type SharedAnalytics = Omit<Analytics, "goals" | "goal"> & {
+  goals: Pick<GoalResult, "id" | "name" | "visitors" | "events" | "conversionRate">[];
+  goal: Omit<PageGoalResult, "step"> | null;
+};
+
 /** One answer for a malformed, unknown, or revoked token, so none can be told apart. */
 export const LINK_NOT_FOUND = problem(
   "not_found",
@@ -209,7 +247,9 @@ export const shareRoutes: FastifyPluginCallback<{
   db: Kysely<Database>;
   clickhouse: ClickHouseClient;
   store: ObjectStore | null;
-  limiter?: DashboardQueryLimiter;
+  /** The reports' query limit, apart from the dashboard's: by default, shareReportLimiter(). */
+  reportLimiter?: DashboardQueryLimiter;
+  /** Right now's, apart from the dashboard's: by default, shareLiveLimiter(). */
   liveLimiter?: DashboardQueryLimiter;
   ipLimit?: RateLimit;
   linkLimit?: RateLimit;
@@ -220,8 +260,8 @@ export const shareRoutes: FastifyPluginCallback<{
     db,
     clickhouse,
     store,
-    limiter = new DashboardQueryLimiter(),
-    liveLimiter = liveQueryLimiter(),
+    reportLimiter = shareReportLimiter(),
+    liveLimiter = shareLiveLimiter(),
     ipLimit = SHARE_IP_LIMIT,
     linkLimit = SHARE_LINK_LIMIT,
     now = () => new Date(),
@@ -259,7 +299,7 @@ export const shareRoutes: FastifyPluginCallback<{
   async function scopeOf(request: FastifyRequest): Promise<ReportScope> {
     const { projectId, environment } = linkOf(request);
     const { timeZone } = await readInstanceSettings(db);
-    // A link is made by the owner or an admin, who see the goals.
+    // A link is made by the owner or an admin, who see the goals; publicGoals strips their setup.
     return { projectId, environment, timeZone, savedGoals: true };
   }
 
@@ -338,11 +378,11 @@ export const shareRoutes: FastifyPluginCallback<{
       const scope = await scopeOf(request);
       const answer = await analyticsAnswer(db, clickhouse, scope, request.query, {
         now: now(),
-        reader: dashboardReader(clickhouse, limiter, reply),
+        reader: dashboardReader(clickhouse, reportLimiter, reply),
       });
       if ("status" in answer) return reply.code(answer.status).send(answer.body);
       // The link's environment is the only one it shows.
-      return { ...answer.report, environments: [scope.environment] };
+      return { ...publicGoals(answer.report), environments: [scope.environment] };
     },
   );
 
@@ -357,7 +397,7 @@ export const shareRoutes: FastifyPluginCallback<{
     async (request, reply) => {
       const answer = await listAnswer(db, clickhouse, await scopeOf(request), request.query, {
         now: now(),
-        reader: dashboardReader(clickhouse, limiter, reply),
+        reader: dashboardReader(clickhouse, reportLimiter, reply),
       });
       return "status" in answer ? reply.code(answer.status).send(answer.body) : answer.list;
     },
@@ -371,12 +411,7 @@ export const shareRoutes: FastifyPluginCallback<{
       schema: { params: tokenParams },
     },
     async (request, reply) =>
-      nowAnswer(
-        db,
-        liveReader(clickhouse, limiter, liveLimiter, reply),
-        await scopeOf(request),
-        now(),
-      ),
+      nowAnswer(db, dashboardReader(clickhouse, liveLimiter, reply), await scopeOf(request), now()),
   );
 
   done();

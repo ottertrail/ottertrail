@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { type GoalResult, goalStepText, MAX_GOALS } from "@/lib/goals-api";
+import { goalStepText, MAX_GOALS, type ReportGoal } from "@/lib/goals-api";
 
 import { AddGoalDialog } from "./add-goal-dialog";
 import { DeleteGoalDialog } from "./delete-goal-dialog";
@@ -65,7 +65,7 @@ function GoalTable({
   search,
   selected,
 }: {
-  goals: GoalResult[];
+  goals: ReportGoal[];
   projectId: string;
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
   canManage: boolean;
@@ -98,7 +98,8 @@ function GoalTable({
       </TableHeader>
       <TableBody className="max-sm:block">
         {goals.map((goal) => {
-          const reached = goalStepText(goal.step);
+          // A shared link's goals come without what they match.
+          const reached = goal.step === undefined ? undefined : goalStepText(goal.step);
           return (
             <TableRow
               key={goal.id}
@@ -122,11 +123,13 @@ function GoalTable({
                     </Badge>
                   )}
                 </div>
-                <TruncatedText
-                  text={reached}
-                  className="text-xs text-ink-subtle"
-                  render={<div />}
-                />
+                {reached !== undefined && (
+                  <TruncatedText
+                    text={reached}
+                    className="text-xs text-ink-subtle"
+                    render={<div />}
+                  />
+                )}
 
                 <div aria-hidden="true" className="mt-1 h-1.5 max-w-xs">
                   <div
@@ -176,7 +179,7 @@ export function GoalsCard({
   eventNames,
   search,
 }: {
-  goals: GoalResult[];
+  goals: ReportGoal[];
   projectId: string;
   eventNames: readonly string[];
   search?: PageSearch;

@@ -199,7 +199,12 @@ export interface AppOptions extends Omit<FastifyServerOptions, "logger"> {
    */
   uptime?: { allowPrivateAddresses?: boolean; denyAddresses?: string[]; lookup?: Lookup };
   /** Shared links' limits per client address and per link (share/routes.ts), which tests lower. */
-  shareLinks?: { ipLimit?: RateLimit; linkLimit?: RateLimit };
+  shareLinks?: {
+    ipLimit?: RateLimit;
+    linkLimit?: RateLimit;
+    reportLimiter?: DashboardQueryLimiter;
+    liveLimiter?: DashboardQueryLimiter;
+  };
   /** Heartbeat pings' limits per client address and per heartbeat (uptime/heartbeat-routes.ts), which tests lower. */
   heartbeats?: { ipLimit?: RateLimit; checkLimit?: RateLimit };
   /**
@@ -862,8 +867,7 @@ export function buildApp({
       db,
       clickhouse: dashboard.clickhouse,
       store: objectStore,
-      limiter,
-      liveLimiter,
+      // Its own query limits (share/routes.ts), never the dashboard's.
       ...shareLinks,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });

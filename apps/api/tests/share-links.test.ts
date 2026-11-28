@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { LIST_REPORTS } from "../src/reports/analytics.ts";
 import { MAX_LINKS } from "../src/share/links.ts";
+import { DashboardQueryLimiter } from "../src/telemetry/dashboard-limit.ts";
 import { PUBLIC_URL, signedInDashboard, signedInUser } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
@@ -426,7 +427,40 @@ describe("the public routes", () => {
     const goalId = goal.json().goal.id;
     const answer = (await share(production.token, `/analytics?period=today&goal=${goalId}`)).json();
     expect(answer.goal).toMatchObject({ id: goalId, name: "Pricing", converted: 1 });
-    expect(answer.goals).toEqual([expect.objectContaining({ id: goalId, visitors: 1 })]);
+    expect(answer.goals).toEqual([
+      { id: goalId, name: "Pricing", visitors: 1, events: 1, conversionRate: 0.5 },
+    ]);
+
+    // What a goal matches is Product analytics' setup: never in a link's answers.
+    const secret = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/goals`,
+      headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+      payload: {
+        name: "Big deal",
+        step: { type: "event", name: "signup", filter: { key: "plan", value: "enterprise" } },
+      },
+    });
+    const secretId = secret.json().goal.id;
+    for (const path of [
+      "/analytics?period=today",
+      `/analytics?period=today&goal=${secretId}`,
+      `/analytics?period=today&goal=${goalId}`,
+      `/analytics/list?report=pages&period=today&goal=${secretId}`,
+    ]) {
+      const response = await share(production.token, path);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toMatch(/"step"|"createdAt"|enterprise|"plan"|\/pricing"\}/u);
+    }
+    expect(
+      (await share(production.token, `/analytics?period=today&goal=${secretId}`)).json().goal,
+    ).toMatchObject({ id: secretId, name: "Big deal", converted: 0 });
+    // The dashboard still answers each goal's setup.
+    const own = await dashboard.app.inject({
+      url: `/api/projects/${projectId}/analytics?period=today`,
+      headers: { cookie: dashboard.cookie },
+    });
+    expect(own.body).toContain("enterprise");
 
     // Another project's goal is unknown here.
     const other = await dashboard.app.inject({
@@ -444,6 +478,11 @@ describe("the public routes", () => {
   });
 });
 
+/** The shared links' report limit in the limits' app: one slot, a short wait. */
+const shareReports = new DashboardQueryLimiter({ max: 1, waitMs: 100 });
+/** Frees the slot a test holds. */
+let release: () => void = () => undefined;
+
 describe("limits", () => {
   let limited: Awaited<ReturnType<typeof signedInDashboard>>;
   let token = "";
@@ -455,6 +494,7 @@ describe("limits", () => {
       shareLinks: {
         ipLimit: { capacity: 3, refillPerSecond: 0.001 },
         linkLimit: { capacity: 5, refillPerSecond: 0.001 },
+        reportLimiter: shareReports,
       },
     });
     project = (await insertProject(limited.db, { name: "Limited" })).id;
@@ -468,6 +508,7 @@ describe("limits", () => {
   });
 
   afterAll(async () => {
+    release();
     await limited?.close();
   });
 
@@ -489,5 +530,35 @@ describe("limits", () => {
     expect((await from("192.0.2.50")).statusCode).toBe(429);
     // An unknown token is not limited by the link's.
     expect((await from("192.0.2.51", "b".repeat(43))).statusCode).toBe(404);
+  });
+
+  test("a busy shared link never takes the dashboard's report slots", async () => {
+    const other = await limited.app.inject({
+      method: "POST",
+      url: `/api/projects/${project}/share-links`,
+      headers: { cookie: limited.cookie, origin: PUBLIC_URL },
+      payload: { name: "Busy" },
+    });
+    const busyToken = new URL(other.json().url).pathname.slice("/share/".length);
+    // Hold the shared links' one slot, as a heavy public report would.
+    const held = new Promise<void>((done) => {
+      release = done;
+    });
+    void shareReports.run(() => held);
+    const refused = await limited.app.inject({
+      url: `/api/share/${busyToken}/analytics?period=12m`,
+      remoteAddress: "198.51.100.200",
+    });
+    expect(refused.statusCode).toBe(503);
+    expect(refused.json().error).toBe("reports_busy");
+    // The signed-in dashboard reads on.
+    for (let index = 0; index < 5; index += 1) {
+      const own = await limited.app.inject({
+        url: `/api/projects/${project}/analytics?period=12m`,
+        headers: { cookie: limited.cookie },
+      });
+      expect(own.statusCode).toBe(200);
+    }
+    release();
   });
 });

@@ -20,7 +20,7 @@ import {
   type Summary,
 } from "./analytics-api";
 import { ApiError, apiRequest, expectShape } from "./api";
-import { isGoalResult } from "./goals-api";
+import { isReportGoal } from "./goals-api";
 import { isStep } from "./steps";
 
 /*
@@ -106,7 +106,7 @@ const isPageGoal = (value: unknown): value is PageGoalResult =>
   isRecord(value) &&
   (value.id === null || typeof value.id === "string") &&
   typeof value.name === "string" &&
-  isStep(value.step) &&
+  (value.step === undefined || isStep(value.step)) &&
   isNumber(value.converted) &&
   isNumber(value.events) &&
   isNumber(value.conversionRate) &&
@@ -126,7 +126,7 @@ export const isAnalytics = (value: unknown): value is Analytics =>
   isListOf(value.pages, isPageRow) &&
   isListOf(value.customEvents, isCustomEventRow) &&
   EVENT_LISTS.every((list) => isListOf(value[list], isEventValueRow)) &&
-  isListOf(value.goals, isGoalResult) &&
+  isListOf(value.goals, isReportGoal) &&
   (value.goal === null || isPageGoal(value.goal)) &&
   isPreviousPeriod(value.previous) &&
   isRecord(value.breakdowns) &&

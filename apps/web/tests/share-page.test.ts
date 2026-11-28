@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { expect, test } from "vite-plus/test";
 
+import { projectReports, sharedReports } from "../src/lib/analytics-queries.ts";
+import { nowQuery } from "../src/lib/now-api.ts";
+
 /*
  * A shared link's page (share.html; docs/web-analytics.md, "Shared links"):
  * its own entry, never indexed, and without the dashboard's code.
@@ -28,4 +31,15 @@ test("share.html loads its own app, not the dashboard's", () => {
       /from "@\/(router|lib\/auth-client|lib\/access|components\/app-shell)/u,
     );
   }
+});
+
+/** A query's refresh interval, in milliseconds. */
+const interval = (options: ReturnType<typeof nowQuery>) =>
+  typeof options.refetchInterval === "function"
+    ? options.refetchInterval(undefined as never)
+    : options.refetchInterval;
+
+test("a shared link's page asks for Right now once a minute; the dashboard every 15 seconds", () => {
+  expect(interval(nowQuery(sharedReports("a-token"), "production"))).toBe(60_000);
+  expect(interval(nowQuery(projectReports("a-project"), "production"))).toBe(15_000);
 });

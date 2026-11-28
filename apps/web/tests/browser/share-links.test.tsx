@@ -134,6 +134,18 @@ describe("a shared link's page", () => {
     }
   });
 
+  test("names the goals without what they match", async () => {
+    installFakeApi({ signedIn: false });
+    renderShare(SHARED);
+    await expect
+      .element(page.getByRole("link", { name: "Filter by Goal: Saw pricing" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "Filter by Goal: Team signup" }))
+      .toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Viewed \/pricing|plan = team/u);
+  });
+
   test("filters, the goal filter, and the period work within the link", async () => {
     const api = installFakeApi({ signedIn: false });
     const history = renderShare(SHARED);

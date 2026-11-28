@@ -35,7 +35,14 @@ export interface RightNow {
 }
 
 /** How often the numbers are asked for while the tab shows. A test may shorten it. */
-export const NOW_TIMING = { refreshMs: 15_000 };
+export const NOW_TIMING = { refreshMs: 15_000, sharedRefreshMs: 60_000 };
+
+/**
+ * A shared link's page asks once a minute: its requests count against the
+ * link's own limit, from every browser that has it open (docs/web-analytics.md, "Shared links").
+ */
+const refreshOf = (source: ReportSource) =>
+  source.shared ? NOW_TIMING.sharedRefreshMs : NOW_TIMING.refreshMs;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -82,8 +89,8 @@ export const nowQuery = (source: ReportSource, environment: string) =>
         isRightNow,
       );
     },
-    refetchInterval: () => NOW_TIMING.refreshMs,
-    staleTime: () => NOW_TIMING.refreshMs,
+    refetchInterval: () => refreshOf(source),
+    staleTime: () => refreshOf(source),
     // While another environment loads, keep showing this one, dimmed.
     placeholderData: keepPreviousData,
   });

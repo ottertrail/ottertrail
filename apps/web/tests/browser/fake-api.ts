@@ -502,10 +502,22 @@ async function answerShareLinks(
     url.searchParams,
     api,
   );
-  // As the API answers: the link's environment, and no other.
-  return result instanceof Response
-    ? result
-    : json({ ...result, environment: page.environment, environments: [page.environment] });
+  // As the API answers: the link's environment, and no other, and goals without their setup.
+  if (result instanceof Response) return result;
+  const { goal } = result;
+  return json({
+    ...result,
+    environment: page.environment,
+    environments: [page.environment],
+    goals: result.goals.map(({ id, name, visitors, events, conversionRate }) => ({
+      id,
+      name,
+      visitors,
+      events,
+      conversionRate,
+    })),
+    goal: goal === null ? null : { ...goal, step: undefined },
+  });
 }
 
 /** When the fake API says a pending deletion of a user's data was asked for. */

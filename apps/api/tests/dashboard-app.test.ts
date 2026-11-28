@@ -78,16 +78,20 @@ describe("the built dashboard", () => {
     expect(response.body).toBe(INDEX_HTML);
   });
 
-  test("answers a shared link's page with its own page, never indexed, never framed", async () => {
+  test("answers a shared link's page with its own page: never stored, indexed, framed, or sent on", async () => {
     const response = await app.inject({ url: `/share/${"a".repeat(43)}?period=30d` });
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe(SHARE_HTML);
-    expect(response.headers["cache-control"]).toBe("no-cache");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
     expect(response.headers["x-robots-tag"]).toBe("noindex, nofollow");
     expect(response.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
-    expect(response.headers["referrer-policy"]).toBe("same-origin");
-    // The dashboard's own paths never get the shared page.
-    expect((await app.inject({ url: "/projects" })).body).toBe(INDEX_HTML);
+    // The dashboard's own pages keep their headers, and never get the shared page.
+    const dashboardPage = await app.inject({ url: "/projects" });
+    expect(dashboardPage.body).toBe(INDEX_HTML);
+    expect(dashboardPage.headers["cache-control"]).toBe("no-cache");
+    expect(dashboardPage.headers["referrer-policy"]).toBe("same-origin");
+    expect(dashboardPage.headers["x-robots-tag"]).toBeUndefined();
   });
 
   test("caches hashed build files for a year, and other files for an hour", async () => {

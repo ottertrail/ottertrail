@@ -53,9 +53,10 @@ export const dashboardAppRoutes: FastifyPluginAsync<{
     reply
       .header("content-security-policy", DASHBOARD_CONTENT_SECURITY_POLICY)
       .header("x-frame-options", "DENY")
-      .header("x-content-type-options", "nosniff")
-      // Keep project IDs and filters out of cross-origin referrers.
-      .header("referrer-policy", "same-origin");
+      .header("x-content-type-options", "nosniff");
+    // Keep project IDs and filters out of cross-origin referrers. A shared
+    // link's page sets its own, stricter one.
+    if (!reply.hasHeader("referrer-policy")) reply.header("referrer-policy", "same-origin");
     if (hsts) {
       reply.header("strict-transport-security", "max-age=31536000");
     }
@@ -95,7 +96,11 @@ export const dashboardAppRoutes: FastifyPluginAsync<{
     if (isSharePath(request.url)) {
       // A shared link's page is its own small app, without the signed-in dashboard's code.
       if (!sharePage) return reply.callNotFound();
-      return reply.header("x-robots-tag", "noindex, nofollow").sendFile(SHARE_PAGE);
+      // The address holds the link's token: never cached, never sent on as a referrer.
+      return reply
+        .header("x-robots-tag", "noindex, nofollow")
+        .header("referrer-policy", "no-referrer")
+        .sendFile(SHARE_PAGE);
     }
     return reply.sendFile("index.html");
   });
@@ -111,9 +116,9 @@ function isSharePath(url: string): boolean {
 }
 
 function cacheControlFor(path: string, hashedPrefix: string): string {
-  if (basename(path) === "index.html" || basename(path) === SHARE_PAGE) {
-    return "no-cache";
-  }
+  // A shared link's page is asked for at an address that holds its token.
+  if (basename(path) === SHARE_PAGE) return "no-store";
+  if (basename(path) === "index.html") return "no-cache";
   if (path.startsWith(hashedPrefix)) {
     return "public, max-age=31536000, immutable";
   }
