@@ -110,7 +110,7 @@ Fastify checks a route's parameters and body before the access check runs, so a 
 | `…/analytics`, `…/analytics/list`, `…/speed`, `…/heatmaps`, `…/heatmaps/pages`, `POST …/heatmaps/overlay-link`, `…/heatmaps/snapshots`, `GET …/heatmaps/snapshots/:device`, `…/player`, `…/heatmap` | `web_analytics` view                |
 | `GET /api/heatmap-overlay/:projectId/heatmap` (an overlay session token, no cookie)                                                                                                                 | `web_analytics` view                |
 | `POST /api/heatmap-overlay/:projectId/snapshot` (an overlay session token, no cookie)                                                                                                               | `projects`                          |
-| `…/events`, `…/events/:name`, `…/events/:name/sources`, `…/funnel`, `…/funnel/breakdown`, `…/funnel/trend`, `…/funnel/times`, `…/retention`, `GET …/goals`, `GET …/funnels`, `…/funnels/results`    | `product_analytics` view            |
+| `…/events`, `…/events/:name`, `…/events/:name/breakdowns`, `…/funnel`, `…/funnel/breakdown`, `…/funnel/trend`, `…/funnel/times`, `…/retention`, `GET …/goals`, `GET …/funnels`, `…/funnels/results` | `product_analytics` view            |
 | `…/funnel/people` (the users who dropped off at a step, [product analytics](product-analytics.md#who-dropped-off)); the handler also needs `users` view, and answers 403 without it                 | `product_analytics` view            |
 | `POST`, `DELETE …/goals`, `POST`, `PUT`, `DELETE …/funnels`                                                                                                                                         | `product_analytics` manage          |
 | `GET …/errors`, `GET …/errors/:fingerprint`, `GET …/source-maps`, `…/source-maps/files`                                                                                                             | `errors` view                       |
@@ -154,7 +154,7 @@ A rule shows what it watches: an error rule shows error groups and messages, a t
 Some answers show less to a user without another area:
 
 - `GET /api/projects` and `GET /api/projects/:id` answer only the ID, name, creation time, and last event to users without the `projects` permission: no keys and no settings, among them the blocked addresses and blocked referrers ([web analytics](web-analytics.md#blocked-addresses)). The list holds only the projects the user may reach.
-- The analytics page's answer has no goals without `product_analytics`.
+- The analytics page's answer has no goals without `product_analytics`. Its goal filter takes a custom event (`goalEvent`) with `web_analytics` alone, but a saved goal (`goal`) only with `product_analytics` (403 otherwise).
 - The heatmap reports answer the project's allowed hostnames (`siteHostnames`) to users with Web analytics, for "Open on your site": the addresses of the project's own sites, not its keys or other settings.
 - The AI page's breakdown by user, and the user of each of its latest calls, go only to users with `users`: otherwise `users` is null and `usersHidden` true ([AI usage](ai-usage.md#the-report)). The AI routes' `user` filter needs `users` too, and is refused with 403 without it.
 - A funnel's list of who dropped off (`…/funnel/people`) needs `users` view as well as `product_analytics` view, since it lists user IDs: without `users` it answers 403, and the Funnel page shows each step's count without the link to its list.

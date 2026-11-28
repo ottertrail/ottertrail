@@ -839,6 +839,25 @@ A filter narrows every report to the visits that match it, and to those visits' 
 
 Filter values are compared, never parsed or run: each name maps to a fixed expression and the value is a query parameter.
 
+### The goal filter
+
+A goal, a saved goal or a custom event by name, does not narrow the visits, as a filter does: it adds how many of them reached it. Code: `apps/api/src/reports/reports.ts` (`goalVisitsSql`, `GoalFilter`), `analytics.ts`; the dashboard: [dashboard](dashboard.md#the-goal-filter). A custom event as a goal is the event by its name, as a goal step without a filter is. Matching is the goals' and funnels' own (`stepSql` in `product/steps.ts`), so a goal matches the same events here as in the Goals table and in funnels: a path pattern such as `/docs/*`, and a property filter that equals, does not equal, or contains.
+
+**The unit is the daily visitor ID**, as for Visitors. A server's events have no visitor, so they are never counted.
+
+- **Summary:** Visitors as before; Converted, the visitors with a goal event in the period, among the page's visits (the Goals table's visitors for that goal); Conversion rate, Converted of Visitors; Events, the goal events. Each is compared with the period before, as the summary is.
+- **Chart:** converted visitors per day: those with a goal event that day.
+- **A visit-level list** (Entry, Exit, Sources, Campaigns, Countries, Regions, Cities, Devices, Browsers, Systems, Releases): a row's Converted counts its visitors with a visit of that value **in which the goal was reached**: a goal event from the visit's start to its end, anywhere in the visit. A visitor who came from a search, left, and signed up in a later direct visit counts under Direct / none only. A visit has one value of each, so a whole list's Converted add up to the summary's, or more when one visitor converted in two visits of different values.
+- **Pages:** a page's Converted counts its visitors who viewed it in a visit that reached the goal, before or after viewing it. A visit views many pages, so these add up to more than the summary.
+- **In both,** a row's Converted is exactly what the Goals table shows for that goal when the page is filtered by the row, and a test checks it on every row of Sources, Countries, and Pages. Visitors is the row's visitors as before, under the other filters, and Rate is Converted of them. Rows are sorted by Converted, then visitors.
+- **Custom events** keep their own numbers.
+
+**How:** with a goal, the request's session holds a second temporary table beside the visits (section 8.3 of [dashboard](dashboard.md#visits-worked-out-once)): the visits with a goal event, found by joining the goal's events of the range (`project_id` first, then environment and time, all values as parameters) to the visits. Each list then counts its visitors and its converted in one query, `uniqExactIf(visitor_id, (visitor_id, started_at) IN goal visits)`; Pages finds each pageview's goal visit with an `ASOF LEFT JOIN` (the goal visit that started last at or before it, if it had not ended). Both endpoints run within the dashboard's query limit.
+
+**Measured** on the seeded Demo shop (`vp run seed`: 46,000 events, 30 days, the development stack on an Apple M4 Max), goal "Signed up": the goal visits table read 51,429 rows in 8 ms; each list then read 6,081 rows (5,934 visits and 147 goal visits) in 1 to 2 ms and 5 MB; the whole page took 224 ms with the goal and 245 ms without (the difference is noise). A large project has not been measured: the development machine is too small ([storage-benchmark.md](storage-benchmark.md)).
+
+**Limits:** the period before compares the summary only, as without a goal. The Goal picker lists the period's top 10 custom events. A goal by signed-in user, rather than visitor, is not offered.
+
 ### Comparison with the previous period
 
 Each number of the summary is compared with the period right before: as many days, in the same timezone, with the same filters. A period that is still running (it ends today, or later) only has data up to now, so it is compared up to the same moment of its earlier counterpart: now, moved back by the period's length. At 15:00, the last 7 days are compared with the 7 days before them up to 15:00 on their last day. Compared with whole days instead, a day in progress would always look down. A range that ends after today stops earlier still: on 16 November, all of November is compared with 2 to 17 October, and the comparison's last day says so. Past ranges that are over compare whole days.
@@ -917,7 +936,7 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ### Not done yet
 
-- Goals and funnels; a filter for custom events (visits that signed up); comparison for the chart and the lists (only the summary is compared).
+- Comparison for the chart and the lists (only the summary is compared); a filter that narrows the page to the visits that reached a goal (the goal filter adds conversions instead).
 
 ## Heatmaps
 

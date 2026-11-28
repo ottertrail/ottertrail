@@ -77,7 +77,7 @@ POST   /api/projects/:id/goals           { "name": "Signed up", "step": { "type"
 DELETE /api/projects/:id/goals/:goalId
 ```
 
-The analytics answer carries them as `goals`, with their counts. Adding or deleting needs the dashboard's origin, as every change does; a name already taken or a 21st goal answers 409.
+The analytics answer carries them as `goals`, with their counts. A goal, or a custom event by name, can also be the page's goal filter (`goal=<id>`, `goalEvent=<name>`): it leaves the visits as they are and adds each list's converted visitors and rate ([web analytics](web-analytics.md#the-goal-filter)). Adding or deleting needs the dashboard's origin, as every change does; a name already taken or a 21st goal answers 409.
 
 ## Events
 
@@ -89,7 +89,9 @@ The list takes `search`: only the names that contain it, in any case (`positionC
 
 There is no trend line per event in the list: the only small line the dashboard has is the Metrics page's, which loads one request per row; a line per event would need a second query by name and day, and the change already answers which events grew.
 
-The event's page also counts it by its visit's source and campaign (`GET /api/projects/:id/events/:name/sources`, the same range and filters): the 10 values of each with the most events, `{ value, events }`, where `null` is an event without a visit and `""` a visit without a campaign. See [Source and campaign](#source-and-campaign). It is its own request, so the rest of the page does not wait for it, and its query runs through the dashboard's query limit.
+The event's page also counts it by the lists of the Analytics page (`GET /api/projects/:id/events/:name/breakdowns`, the same range and filters): its visit's source and campaign (see [Source and campaign](#source-and-campaign)), and its own country, region, city, device type, browser, operating system, and release, the columns every event has, named and written as on that page (`Munich, DE`). For each, the 10 values with the most visitors, `{ value, visitors, events }`, where `null` is no value (an event without a visit, no location) and a campaign of `""` a visit without one. One query reads the matching events once and counts each under every dimension (`ARRAY JOIN`). It is its own request, so the rest of the page does not wait for it.
+
+**Its filters:** the event's page, and its lists, take the same names as filters (`source`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, `release`; at most 2,048 characters, no NUL), beside `p.<property>`; several must all hold. `""` is unknown, as on the Analytics page, except for `utmCampaign`, where it is a visit without a campaign. A filter by a source or campaign works out the visits of the visitors who sent the event, as the lists do; the others compare the event's own column. Both requests run within the dashboard's query limit.
 
 Properties are stored as each event's JSON (`properties`), so a breakdown reads every event of the range with that name and splits its properties (`JSONExtractKeysAndValuesRaw`), once for names and values together. A property that is an ID, different on every event, makes that count as large as the event count. Fine for what a small team sends; a project with millions of one event a month will want the properties in columns of their own, not built.
 
@@ -182,7 +184,6 @@ Like every project route, each runs the access check first. Saving, changing, or
 - Matching a literal `*` in a path, and case-insensitive filters.
 - A distribution of the time between funnel steps, beyond the median and 75th percentile.
 - A funnel's breakdown by more than one dimension, or by the visit's medium.
-- Filtering the Events page by a source or campaign.
 - Retention by a chosen event instead of any event, and by day or month.
 - Property filters on the web analytics page, and other comparisons than "equals".
 - A time limit for report queries, and stopping a query when the browser stops waiting: a long range on a large project runs to its end.
