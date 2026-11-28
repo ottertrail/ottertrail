@@ -12,6 +12,7 @@ import {
   PLOT_FRAME,
   useWidth,
   X_AXIS,
+  useYAxisWidth,
   Y_AXIS,
 } from "@/lib/chart-axis";
 
@@ -120,6 +121,7 @@ export function DayChart({
   const ticks = niceTicks(
     Math.max(0, ...points.map((point) => point.value ?? 0), ...compared.map((value) => value ?? 0)),
   );
+  const yWidth = useYAxisWidth(ticks.map(formatValue));
   const data = points.map((point, index) => ({
     index,
     value: point.value,
@@ -192,6 +194,7 @@ export function DayChart({
           />
           <YAxis
             {...Y_AXIS}
+            width={yWidth}
             ticks={ticks}
             domain={[0, ticks.at(-1) ?? 1]}
             tickFormatter={formatValue}

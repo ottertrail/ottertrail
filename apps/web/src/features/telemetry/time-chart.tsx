@@ -12,6 +12,7 @@ import {
   PLOT_FRAME,
   useWidth,
   X_AXIS,
+  useYAxisWidth,
   Y_AXIS,
 } from "@/lib/chart-axis";
 import { MISSING } from "@/lib/missing";
@@ -105,6 +106,7 @@ export function TimeChart({
   };
   const all = lines.flatMap((line) => line.values.filter((value) => value !== null));
   const ticks = ticksFor(Math.min(domain?.min ?? 0, ...all), Math.max(domain?.max ?? 0, ...all));
+  const yWidth = useYAxisWidth(ticks.map(formatValue));
   const axis = timeTicks(times, timeZone, stepSeconds);
   const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);
   // Series keys can hold dots (model names), which Recharts would read as paths, so each line
@@ -170,6 +172,7 @@ export function TimeChart({
             />
             <YAxis
               {...Y_AXIS}
+              width={yWidth}
               ticks={ticks}
               domain={[ticks[0] ?? 0, ticks.at(-1) ?? 1]}
               tickFormatter={formatValue}

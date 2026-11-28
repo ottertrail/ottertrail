@@ -20,21 +20,61 @@ export const X_AXIS = {
   tickLine: false,
   tickMargin: 8,
   height: 28,
-  // The charts pass evenly spaced ticks (evenTicks); Recharts still drops a label that would
-  // touch the next one, counting from the end, should a label run longer than measured.
-  interval: "preserveEnd",
-  minTickGap: 4,
+  // The charts pass evenly spaced ticks (evenTicks), so every one is drawn. Recharts' own
+  // thinning ("preserveEnd") took the first label for centered, though EdgeTick starts it at
+  // the plot's edge, and dropped it beside a narrow y axis: "10 Nov" went missing.
+  interval: 0,
   tick: { fontSize: 11 },
 } satisfies Partial<XAxisProps>;
 
-/** The y axis: as wide as its longest label. */
+const Y_TICK_MARGIN = 8;
+/** Recharts keeps room for the tick mark even with tickLine off. */
+const Y_TICK_SIZE = 6;
+const Y_FONT_SIZE = 11;
+
+/** The y axis: 11px labels, no axis line or tick marks. Its width comes from useYAxisWidth. */
 export const Y_AXIS = {
   axisLine: false,
   tickLine: false,
-  tickMargin: 8,
-  width: "auto",
-  tick: { fontSize: 11 },
+  tickSize: Y_TICK_SIZE,
+  tickMargin: Y_TICK_MARGIN,
+  tick: { fontSize: Y_FONT_SIZE },
 } satisfies Partial<YAxisProps>;
+
+let measuring: CanvasRenderingContext2D | null | undefined;
+
+/** The widest label's width at the y axis's font, in pixels; null without a canvas. */
+function widestLabel(labels: readonly string[]): number | null {
+  measuring ??= document.createElement("canvas").getContext("2d");
+  if (measuring === null) return null;
+  measuring.font = `${Y_FONT_SIZE}px ${getComputedStyle(document.body).fontFamily}`;
+  return Math.max(0, ...labels.map((label) => measuring?.measureText(label).width ?? 0));
+}
+
+/**
+ * The y axis's width for its labels: the widest one, measured on a canvas at the axis's font,
+ * plus the tick mark's room and the margin. Recharts' `width: "auto"` measures the rendered labels once, and a
+ * measure taken before the layout settles stuck too narrow, cutting "150" to "0". This one is
+ * worked out from the text, and again once the web fonts have loaded.
+ */
+export function useYAxisWidth(labels: readonly string[]): number {
+  const [fontsLoaded, setFontsLoaded] = React.useState(() => document.fonts.status === "loaded");
+  React.useEffect(() => {
+    if (fontsLoaded) return undefined;
+    let current = true;
+    void document.fonts.ready.then(() => {
+      if (current) setFontsLoaded(true);
+    });
+    return () => {
+      current = false;
+    };
+  }, [fontsLoaded]);
+  // Measured on every render, a few labels at a time: the render after the fonts load measures
+  // the web font instead of the fallback.
+  const widest = widestLabel(labels) ?? Math.max(0, ...labels.map((label) => label.length)) * 6.5;
+  // A pixel of slack for rounding between the canvas and the SVG.
+  return Math.ceil(widest) + Y_TICK_SIZE + Y_TICK_MARGIN + 1;
+}
 
 /** The plot's margin inside the chart. */
 export const MARGIN = { top: 12, right: 16, bottom: 0, left: 0 };

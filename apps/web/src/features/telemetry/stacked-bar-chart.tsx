@@ -11,6 +11,7 @@ import {
   PLOT_FRAME,
   useWidth,
   X_AXIS,
+  useYAxisWidth,
   Y_AXIS,
 } from "@/lib/chart-axis";
 
@@ -172,6 +173,7 @@ export function StackedBarChart({
   );
   // The bars count things (records, traces, visitors): no half steps.
   const ticks = ticksFor(0, Math.max(0, ...totals), 4, 1);
+  const yWidth = useYAxisWidth(ticks.map(formatValue));
   const times = Array.from({ length: buckets }, (_, index) => bucketStart(frame, index));
   const axis = timeTicks(times, timeZone, stepSeconds);
   const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);
@@ -255,6 +257,7 @@ export function StackedBarChart({
             />
             <YAxis
               {...Y_AXIS}
+              width={yWidth}
               ticks={ticks}
               domain={[0, ticks.at(-1) ?? 1]}
               tickFormatter={formatValue}
