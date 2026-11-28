@@ -99,7 +99,8 @@ function Frame({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-svh flex-col">
+    // The dashboard's surface, as its inset has: pinned cells and the filter bar paint it too.
+    <div className="flex min-h-svh flex-col bg-background">
       <header className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 px-gutter py-3">
         {icon}
         <h1 className="min-w-0 text-base font-semibold text-pretty text-ink">{title}</h1>

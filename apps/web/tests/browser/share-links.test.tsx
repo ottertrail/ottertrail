@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser/context";
 
+import { resetThemeForTests } from "../../src/lib/theme.ts";
+import { emulateColorScheme } from "./color-scheme.ts";
 import {
   analyticsFixture,
   FAKE_SHARE_TOKEN,
@@ -190,6 +192,58 @@ describe("a shared link's page", () => {
     await expect.element(page.getByRole("heading", { level: 1 })).toMatchTextContent(/Main site/);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
   });
+
+  test("shows the outbound links, file downloads, and not found pages, read-only", async () => {
+    installFakeApi({ signedIn: false });
+    const history = renderShare(SHARED);
+    for (const title of ["Outbound links", "File downloads", "Not found pages"]) {
+      await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
+    }
+    await expect
+      .element(
+        page.getByRole("link", {
+          name: "Filter by File download: acme.example/files/price-list.pdf",
+        }),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("link", { name: "Filter by Not found page: /old-pricing" }))
+      .toBeVisible();
+    // A row filters the shared page, as on the dashboard; none leads off it.
+    expect(document.querySelector('a[href^="http"]')).toBeNull();
+    await page
+      .getByRole("link", { name: "Filter by Outbound link: github.com/acme/shop-sdk" })
+      .click();
+    expect(history.location.pathname).toBe(SHARED);
+    expect(history.location.search).toBe("?outbound=https%3A%2F%2Fgithub.com%2Facme%2Fshop-sdk");
+  });
+
+  test.each([
+    [390, "dark"],
+    [390, "light"],
+    [1440, "dark"],
+    [1440, "light"],
+  ] as const)(
+    "at %i wide, %s, no list cell paints a band of another surface",
+    async (width, scheme) => {
+      await page.viewport(width, 900);
+      await emulateColorScheme(scheme);
+      resetThemeForTests();
+      installFakeApi({ signedIn: false });
+      renderShare(SHARED);
+      await expect.element(page.getByRole("heading", { name: "Not found pages" })).toBeVisible();
+      const surface = getComputedStyle(
+        document.querySelector("main")?.parentElement ?? document.body,
+      ).backgroundColor;
+      expect(surface).not.toBe("rgba(0, 0, 0, 0)");
+      const cells = [...document.querySelectorAll("main table th, main table td")];
+      expect(cells.length).toBeGreaterThan(50);
+      for (const cell of cells) {
+        const color = getComputedStyle(cell).backgroundColor;
+        expect([surface, "rgba(0, 0, 0, 0)"]).toContain(color);
+      }
+    },
+  );
 
   test("a revoked or unknown link says it does not work", async () => {
     installFakeApi({ signedIn: false, sharedPages: {} });

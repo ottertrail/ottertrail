@@ -81,6 +81,25 @@ beforeAll(async () => {
     pageview("1", 200, { referrer: "https://www.google.com/" }),
     pageview("1", 198, { path: "/pricing", userId: SITE_USER }),
     pageview("2", 3, { path: "/docs" }),
+    // The tracker's link and page events, which the link and not found lists count.
+    pageview("2", 2, {
+      name: "outbound_link",
+      path: "/docs",
+      properties: { url: "https://partner.example/signup" },
+    }),
+    pageview("1", 197, {
+      name: "file_download",
+      path: "/pricing",
+      properties: { url: "https://shop.example/prices.pdf" },
+      userId: SITE_USER,
+    }),
+    pageview("2", 1, { name: "not_found", path: "/old-page" }),
+    pageview("3", 1, {
+      name: "outbound_link",
+      environment: "staging",
+      path: "/staging-now",
+      properties: { url: "https://staging-only.example/" },
+    }),
     // Staging: counted only by a link made for it.
     pageview("3", 100, { environment: "staging", path: "/staging-only" }),
     pageview("3", 2, { environment: "staging", path: "/staging-now" }),
@@ -296,6 +315,36 @@ describe("the public routes", () => {
     const now = (await share(staging.token, "/analytics/now")).json();
     expect(now.environment).toBe("staging");
     expect(now.pages).toEqual([{ path: "/staging-now", visitors: 1, pageviews: 1 }]);
+  });
+
+  test("the link and not found lists show as on the dashboard, in the link's environment", async () => {
+    const lists = ["outboundLinks", "fileDownloads", "notFoundPages"] as const;
+    const shared = (await share(production.token, "/analytics?period=today")).json();
+    const dashboardPage = (
+      await dashboard.app.inject({
+        url: `/api/projects/${projectId}/analytics?period=today`,
+        headers: { cookie: dashboard.cookie },
+      })
+    ).json();
+    for (const list of lists) {
+      expect(shared[list]).toEqual(dashboardPage[list]);
+      const full = (
+        await share(production.token, `/analytics/list?report=${list}&period=today`)
+      ).json();
+      expect(full.rows).toEqual(dashboardPage[list]);
+    }
+    expect(shared.outboundLinks).toEqual([
+      { value: "https://partner.example/signup", visitors: 1, events: 1 },
+    ]);
+    expect(shared.fileDownloads).toEqual([
+      { value: "https://shop.example/prices.pdf", visitors: 1, events: 1 },
+    ]);
+    expect(shared.notFoundPages).toEqual([{ value: "/old-page", visitors: 1, events: 1 }]);
+    const onStaging = (await share(staging.token, "/analytics?period=today")).json();
+    expect(onStaging.outboundLinks).toEqual([
+      { value: "https://staging-only.example/", visitors: 1, events: 1 },
+    ]);
+    expect(onStaging.fileDownloads).toEqual([]);
   });
 
   test("a request cannot name another project or environment", async () => {
