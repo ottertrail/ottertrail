@@ -68,6 +68,17 @@ const EVENTS: NewEvent[] = [
 /** A value as it looks after a round trip through JSON, like an API response. */
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as unknown;
 
+/** A day chart's points as timeseries gives them. */
+const dayPoints = (
+  chart: { start: string; visitors: number; pageviews: number; visits: number }[],
+) =>
+  chart.map(({ start, visitors, pageviews, visits }) => ({
+    day: start,
+    visitors,
+    pageviews,
+    visits,
+  }));
+
 const DIMENSIONS = [
   "source",
   "utmCampaign",
@@ -134,7 +145,7 @@ describe("GET /api/projects/:id/analytics", () => {
       lastDay: "2026-11-17",
     });
     expect(body.summary).toEqual(json(await summary(dashboard.reader, range)));
-    expect(body.days).toEqual(json(await timeseries(dashboard.reader, range)));
+    expect(dayPoints(body.chart)).toEqual(json(await timeseries(dashboard.reader, range)));
     expect(body.pages).toEqual(json(await topPages(dashboard.reader, range)));
     expect(body.customEvents).toEqual(json(await customEvents(dashboard.reader, range)));
     for (const dimension of DIMENSIONS) {
@@ -144,7 +155,7 @@ describe("GET /api/projects/:id/analytics", () => {
     }
 
     expect(body.summary).toMatchObject({ visitors: 5, pageviews: 7, visits: 6 });
-    expect(body.days.map((day: { visits: number }) => day.visits)).toEqual([3, 3]);
+    expect(body.chart.map((day: { visits: number }) => day.visits)).toEqual([3, 3]);
   });
 
   test("works out a period's days from today in the instance's timezone", async () => {
@@ -229,7 +240,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
     const body = (await filtered({ country: "DE" })).json();
 
     expect(body.summary).toMatchObject({ visits: 3, visitors: 2, pageviews: 4 });
-    expect(body.days.map((day: { visits: number }) => day.visits)).toEqual([1, 2]);
+    expect(body.chart.map((day: { visits: number }) => day.visits)).toEqual([1, 2]);
     expect(body.pages).toEqual([
       { path: "/", pageviews: 2, visitors: 2, avgEngagedMs: null },
       { path: "/docs", pageviews: 1, visitors: 1, avgEngagedMs: null },
@@ -345,7 +356,7 @@ describe("GET /api/projects/:id/analytics with filters", () => {
       ...(await localDays(db, "2026-11-16", "2026-11-17", TIME_ZONE)),
     };
     expect(body.summary).toEqual(json(await summary(dashboard.reader, range)));
-    expect(body.days).toEqual(json(await timeseries(dashboard.reader, range)));
+    expect(dayPoints(body.chart)).toEqual(json(await timeseries(dashboard.reader, range)));
     expect(body.pages).toEqual(json(await topPages(dashboard.reader, range)));
     expect(body.customEvents).toEqual(json(await customEvents(dashboard.reader, range)));
     for (const dimension of DIMENSIONS) {

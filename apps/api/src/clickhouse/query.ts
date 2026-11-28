@@ -99,9 +99,12 @@ export async function runCommand(
   params: QueryParams = new QueryParams(),
 ): Promise<void> {
   const run = async () => {
+    // Only the deadline: a command may write, which DASHBOARD_SETTINGS' read-only mode refuses.
+    const limited = withinDeadline(reader, undefined);
     await reader.client.command({
       query,
       query_params: params.values,
+      ...(limited === undefined ? {} : { clickhouse_settings: limited }),
       ...(reader.sessionId === undefined ? {} : { session_id: reader.sessionId }),
       ...(reader.signal === undefined ? {} : { abort_signal: reader.signal }),
     });

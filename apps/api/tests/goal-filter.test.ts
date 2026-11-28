@@ -135,9 +135,11 @@ describe("a saved goal on the Analytics page", () => {
       conversionRate: 0.75,
       previous: { converted: 0, events: 0 },
     });
-    expect(body.days.at(-1)).toMatchObject({ day: "2026-11-17", visitors: 4, converted: 3 });
+    // Today goes by the hour: the goal events of all its hours.
+    const converted = body.chart.map((point: { converted: number }) => point.converted);
+    expect(converted.reduce((sum: number, value: number) => sum + value, 0)).toBe(3);
     expect(plain.goal).toBeNull();
-    expect(plain.days.at(-1).converted).toBeUndefined();
+    expect(plain.chart.at(-1).converted).toBeUndefined();
   });
 
   test("counts a visit-level row's visitors whose visit of that value reached it", async () => {

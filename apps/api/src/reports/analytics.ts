@@ -8,13 +8,23 @@ import { DEFAULT_ENVIRONMENT } from "../collection/environment.ts";
 import type { Database } from "../db/schema.ts";
 import { type Goal, listGoals } from "../goals/goals.ts";
 import type { Step } from "../product/steps.ts";
+import { dayIn } from "../visitors/visitor-ids.ts";
 import { analyticsEvent, visitsSql } from "../visits/visits.ts";
+import {
+  type ChartPoint,
+  type ChartShift,
+  type ChartInterval,
+  chartBuckets,
+  chartCounts,
+  chartPoints,
+  defaultInterval,
+  intervalsFor,
+} from "./chart.ts";
 import {
   type BreakdownRow,
   breakdown,
   type CustomEventRow,
   customEvents,
-  type DayPoint,
   DEFAULT_LIMIT,
   EVENT_LISTS,
   type EventList,
@@ -31,13 +41,21 @@ import {
   type PageRow,
   type ReportFilter,
   type ReportRange,
+  shiftedDays,
   type Summary,
   summary,
-  timeseries,
   topPages,
   type VisitDimension,
   type VisitsSource,
+  yearsBefore,
 } from "./reports.ts";
+
+/**
+ * What the summary and the chart compare with: nothing, the period right
+ * before (as long), or the same days a year before.
+ */
+export const COMPARISONS = ["off", "previous", "year"] as const;
+export type Comparison = (typeof COMPARISONS)[number];
 
 /** The lists the page's answer holds: those its cards show first. */
 export const ANALYTICS_BREAKDOWNS = [
@@ -102,8 +120,16 @@ export interface Analytics {
   /** First and last day of the range, "YYYY-MM-DD", both included. */
   firstDay: string;
   lastDay: string;
+  /** The range's first moment and its end (exclusive), ISO: a rolling window starts mid-day. */
+  from: string;
+  to: string;
   summary: Summary;
-  days: DayPoint[];
+  /** The chart's interval, and the intervals that fit the range (chart.ts). */
+  interval: ChartInterval;
+  intervals: ChartInterval[];
+  comparison: Comparison;
+  /** One point per interval, each with the comparison's counts at the same place. */
+  chart: ChartPoint[];
   pages: PageRow[];
   breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]>;
   customEvents: CustomEventRow[];
@@ -117,7 +143,8 @@ export interface Analytics {
   goals: GoalResult[];
   /** The goal the page is filtered by, with its counts; null without one. */
   goal: PageGoalResult | null;
-  previous: PreviousPeriod;
+  /** Null when the comparison is off. */
+  previous: PreviousPeriod | null;
 }
 
 export interface GoalResult extends Goal, GoalCount {
@@ -142,8 +169,8 @@ export interface PageGoalResult extends PageGoal {
   events: number;
   /** converted of the summary's visitors: 0 to 1; 0 without visitors. */
   conversionRate: number;
-  /** The same counts in the period before. */
-  previous: { converted: number; events: number };
+  /** The same counts in the period compared with; null when the comparison is off. */
+  previous: { converted: number; events: number } | null;
 }
 
 async function goalResults(
@@ -182,11 +209,13 @@ async function dayRange(
     lastDay: string;
     timeZone: string;
     filters: readonly ReportFilter[];
+    /** A rolling window, in place of whole days. */
+    window?: { from: Date; to: Date } | undefined;
   },
 ): Promise<ReportRange> {
-  const { projectId, environment, firstDay, lastDay, timeZone, filters } = options;
+  const { projectId, environment, firstDay, lastDay, timeZone, filters, window } = options;
   const [days, project] = await Promise.all([
-    localDays(db, firstDay, lastDay, timeZone),
+    window ?? localDays(db, firstDay, lastDay, timeZone),
     db
       .selectFrom("projects")
       .select("allowed_hostnames")
@@ -230,17 +259,28 @@ async function environmentsIn(reader: Reader, range: ReportRange): Promise<strin
 
 const VISITS_TABLE = "analytics_visits";
 const GOAL_VISITS_TABLE = "analytics_goal_visits";
+const COMPARED_VISITS_TABLE = "analytics_compared_visits";
+
+/** The visit tables of a request's session (withVisitTables). */
+interface VisitTables {
+  visits: VisitsSource;
+  reached: GoalFilter | undefined;
+  /** The compared range's visits; undefined without a comparison. */
+  compared: VisitsSource;
+}
 
 /**
  * Work out the range's filtered visits once, into a temporary table of a
- * ClickHouse session, and with a goal the visits that reached it, then run
- * `work` on them and drop the tables. The session runs one query at a time.
+ * ClickHouse session, with a goal the visits that reached it, and with a
+ * comparison the compared range's visits, then run `work` on them and drop
+ * the tables. The session runs one query at a time.
  */
 async function withVisitTables<T>(
   base: Reader,
   range: ReportRange,
   goal: Step | undefined,
-  work: (reader: Reader, visits: VisitsSource, reached: GoalFilter | undefined) => Promise<T>,
+  work: (reader: Reader, tables: VisitTables) => Promise<T>,
+  compared?: ReportRange,
 ): Promise<T> {
   const reader: Reader = { ...base, sessionId: randomUUID() };
   const params = new QueryParams();
@@ -261,19 +301,86 @@ async function withVisitTables<T>(
         goalParams,
       );
     }
-    return await work(
-      reader,
-      { table: VISITS_TABLE, filters: range.filters ?? [] },
-      goal === undefined ? undefined : { step: goal, table: GOAL_VISITS_TABLE },
-    );
+    if (compared !== undefined) {
+      const comparedParams = new QueryParams();
+      // Its reports only count, so the first event's columns are read only to filter.
+      const columns = (compared.filters?.length ?? 0) > 0 ? "together" : false;
+      const comparedVisits = visitsSql(compared, comparedParams, { firstEventColumns: columns });
+      await runCommand(
+        reader,
+        `CREATE TEMPORARY TABLE ${COMPARED_VISITS_TABLE} ENGINE = MergeTree ORDER BY tuple()
+         AS ${filterVisits(compared, comparedVisits, comparedParams)}`,
+        comparedParams,
+      );
+    }
+    return await work(reader, {
+      visits: { table: VISITS_TABLE, filters: range.filters ?? [] },
+      reached: goal === undefined ? undefined : { step: goal, table: GOAL_VISITS_TABLE },
+      compared:
+        compared === undefined
+          ? undefined
+          : { table: COMPARED_VISITS_TABLE, filters: compared.filters ?? [] },
+    });
   } finally {
     // Free the tables before session expiry without hiding the report error. Not
     // gated: a closed request has aborted its gate.
     const dropper: Reader = { client: reader.client, sessionId: reader.sessionId };
-    for (const table of [GOAL_VISITS_TABLE, VISITS_TABLE]) {
+    for (const table of [COMPARED_VISITS_TABLE, GOAL_VISITS_TABLE, VISITS_TABLE]) {
       await runCommand(dropper, `DROP TEMPORARY TABLE IF EXISTS ${table}`).catch(() => undefined);
     }
   }
+}
+
+/** The range compared with, and how its events move onto the chart's points. */
+interface Compared {
+  days: PreviousDays;
+  shift: ChartShift;
+}
+
+const daysBetween = (first: string, last: string) =>
+  (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000;
+
+/**
+ * Where the comparison reads: as many days right before, or the same days
+ * a year before, each up to the same moment while the range runs. A
+ * rolling window moves back by its length in hours, or by a year.
+ */
+async function comparedRange(
+  db: Kysely<Database>,
+  options: {
+    firstDay: string;
+    lastDay: string;
+    timeZone: string;
+    now: Date;
+    window: { from: Date; to: Date } | undefined;
+    comparison: Exclude<Comparison, "off">;
+  },
+): Promise<Compared> {
+  const { firstDay, lastDay, timeZone, now, window, comparison } = options;
+  if (window === undefined) {
+    if (comparison === "year") {
+      return {
+        days: await shiftedDays(db, firstDay, lastDay, timeZone, now, { years: 1, days: 0 }),
+        shift: { unit: "year", amount: 1 },
+      };
+    }
+    const days = await previousDays(db, firstDay, lastDay, timeZone, now);
+    return { days, shift: { unit: "day", amount: daysBetween(days.firstDay, firstDay) } };
+  }
+  const hours = Math.round((window.to.getTime() - window.from.getTime()) / 3_600_000);
+  const [from, to] =
+    comparison === "year"
+      ? await yearsBefore(db, [window.from, window.to], timeZone, 1)
+      : [
+          new Date(window.from.getTime() - hours * 3_600_000),
+          new Date(window.to.getTime() - hours * 3_600_000),
+        ];
+  if (from === undefined || to === undefined) throw new Error("comparedRange lost a moment");
+  const day = dayIn(timeZone);
+  return {
+    days: { firstDay: day(from), lastDay: day(new Date(to.getTime() - 1)), from, to, until: to },
+    shift: comparison === "year" ? { unit: "year", amount: 1 } : { unit: "hour", amount: hours },
+  };
 }
 
 /**
@@ -292,11 +399,20 @@ export async function projectAnalytics(
     environment?: string;
     firstDay: string;
     lastDay: string;
+    /**
+     * A rolling window, such as the last 24 hours, in place of whole days;
+     * firstDay and lastDay are then its first and last day.
+     */
+    window?: { from: Date; to: Date } | undefined;
     timeZone: string;
     limit?: number;
     filters?: readonly ReportFilter[];
     /** The goal to count conversions for. */
     goal?: PageGoal | undefined;
+    /** The chart's interval; the range's default when left out or when it does not fit. */
+    interval?: ChartInterval | undefined;
+    /** "previous" when left out. */
+    comparison?: Comparison | undefined;
     /** The clock, for comparing a running period up to the same time of day. */
     now?: Date;
     /** Runs the queries, such as within the dashboard's query limit; a plain reader by default. */
@@ -308,19 +424,40 @@ export async function projectAnalytics(
     environment = DEFAULT_ENVIRONMENT,
     firstDay,
     lastDay,
+    window,
     timeZone,
     limit = DEFAULT_LIMIT,
     filters = [],
     goal,
+    comparison = "previous",
     now = new Date(),
     reader: base = { client: clickhouse },
   } = options;
-  const [range, previous, saved] = await Promise.all([
-    dayRange(db, { projectId, environment, firstDay, lastDay, timeZone, filters }),
-    previousDays(db, firstDay, lastDay, timeZone, now),
+  const days = daysBetween(firstDay, lastDay) + 1;
+  const rolling = window !== undefined;
+  const intervals = intervalsFor(days, rolling);
+  const interval =
+    options.interval !== undefined && intervals.includes(options.interval)
+      ? options.interval
+      : defaultInterval(days, rolling);
+  const [range, compared, saved] = await Promise.all([
+    dayRange(db, { projectId, environment, firstDay, lastDay, timeZone, filters, window }),
+    comparison === "off"
+      ? undefined
+      : comparedRange(db, { firstDay, lastDay, timeZone, now, window, comparison }),
     listGoals(db, projectId),
   ]);
-  return withVisitTables(base, range, goal?.step, async (reader, visits, reached) => {
+  const before: ReportRange | undefined =
+    compared === undefined
+      ? undefined
+      : {
+          ...range,
+          from: compared.days.from,
+          to: compared.days.to,
+          until: compared.days.until ?? undefined,
+        };
+  const work = async (reader: Reader, tables: VisitTables): Promise<Analytics> => {
+    const { visits, reached } = tables;
     const currentSummary = await summary(reader, range, visits);
     const by = (dimension: AnalyticsBreakdown) =>
       breakdown(reader, range, dimension, limit, visits, {}, reached);
@@ -338,28 +475,38 @@ export async function projectAnalytics(
       os: await by("os"),
       release: await by("release"),
     };
-    // Compare only the summary and the goal's counts, using the previous period visits.
-    const before: ReportRange = {
-      ...range,
-      from: previous.from,
-      to: previous.to,
-      until: previous.until ?? undefined,
-    };
-    const previousSummary = await summary(reader, before);
+    // Compare the summary, the chart, and the goal's counts; not the lists.
+    const previous =
+      before === undefined || compared === undefined
+        ? null
+        : {
+            firstDay: compared.days.firstDay,
+            lastDay: compared.days.lastDay,
+            until: compared.days.until,
+            summary: await summary(reader, before, tables.compared),
+          };
+    const chart = chartPoints(
+      chartBuckets(interval, range, now),
+      await chartCounts(reader, range, interval, visits, goal?.step),
+      before === undefined || compared === undefined
+        ? null
+        : await chartCounts(reader, before, interval, tables.compared, goal?.step, compared.shift),
+      goal !== undefined,
+    );
     return {
       timeZone,
       environment,
       environments: await environmentsIn(reader, range),
       firstDay,
       lastDay,
-      previous: {
-        firstDay: previous.firstDay,
-        lastDay: previous.lastDay,
-        until: previous.until,
-        summary: previousSummary,
-      },
+      from: range.from.toISOString(),
+      to: range.to.toISOString(),
+      previous,
       summary: currentSummary,
-      days: await timeseries(reader, range, visits, goal?.step),
+      interval,
+      intervals,
+      comparison,
+      chart,
       pages: await topPages(reader, range, limit, visits, {}, reached),
       breakdowns,
       customEvents: await customEvents(reader, range, limit, visits),
@@ -370,27 +517,37 @@ export async function projectAnalytics(
       goal:
         goal === undefined
           ? null
-          : await pageGoalResult(reader, range, before, goal, visits, currentSummary.visitors),
+          : await pageGoalResult(
+              reader,
+              range,
+              before === undefined ? undefined : { range: before, visits: tables.compared },
+              goal,
+              visits,
+              currentSummary.visitors,
+            ),
     };
-  });
+  };
+  return withVisitTables(base, range, goal?.step, work, before);
 }
 
 async function pageGoalResult(
   reader: Reader,
   range: ReportRange,
-  before: ReportRange,
+  before: { range: ReportRange; visits: VisitsSource } | undefined,
   goal: PageGoal,
   visits: VisitsSource,
   visitors: number,
 ): Promise<PageGoalResult> {
-  const [now = { visitors: 0, events: 0 }] = await goalCounts(reader, range, [goal.step], visits);
-  const [then = { visitors: 0, events: 0 }] = await goalCounts(reader, before, [goal.step]);
+  const none = { visitors: 0, events: 0 };
+  const [now = none] = await goalCounts(reader, range, [goal.step], visits);
+  const [then = none] =
+    before === undefined ? [] : await goalCounts(reader, before.range, [goal.step], before.visits);
   return {
     ...goal,
     converted: now.visitors,
     events: now.events,
     conversionRate: visitors === 0 ? 0 : now.visitors / visitors,
-    previous: { converted: then.visitors, events: then.events },
+    previous: before === undefined ? null : { converted: then.visitors, events: then.events },
   };
 }
 
@@ -409,6 +566,8 @@ export async function projectList(
     environment?: string;
     firstDay: string;
     lastDay: string;
+    /** A rolling window in place of whole days, as for projectAnalytics. */
+    window?: { from: Date; to: Date } | undefined;
     timeZone: string;
     filters?: readonly ReportFilter[];
     report: ListReport;
@@ -427,6 +586,7 @@ export async function projectList(
     environment = DEFAULT_ENVIRONMENT,
     firstDay,
     lastDay,
+    window,
     timeZone,
     filters = [],
     report,
@@ -441,6 +601,7 @@ export async function projectList(
     lastDay,
     timeZone,
     filters,
+    window,
   });
   const page = { offset: options.offset, search: options.search };
   const list = (
@@ -466,6 +627,8 @@ export async function projectList(
   const rows =
     goal === undefined || report === "customEvents"
       ? await list(base, undefined, undefined)
-      : await withVisitTables(base, range, goal.step, list);
+      : await withVisitTables(base, range, goal.step, (reader, tables) =>
+          list(reader, tables.visits, tables.reached),
+        );
   return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
 }

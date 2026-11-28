@@ -135,6 +135,25 @@ export async function previousDays(
   timeZone: string,
   now: Date,
 ): Promise<PreviousDays> {
+  const length =
+    (Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / 86_400_000 + 1;
+  return shiftedDays(db, firstDay, lastDay, timeZone, now, { years: 0, days: length });
+}
+
+/**
+ * The days `firstDay` to `lastDay` moved back on the calendar by `shift`:
+ * as many days before (previousDays), or a year before, where 29 February
+ * becomes the 28th. A running period stops at now, moved back the same way.
+ */
+export async function shiftedDays(
+  db: Kysely<Database>,
+  firstDay: string,
+  lastDay: string,
+  timeZone: string,
+  now: Date,
+  shift: { years: number; days: number },
+): Promise<PreviousDays> {
+  const back = sql`make_interval(years => ${shift.years}::int, days => ${shift.days}::int)`;
   const { rows } = await sql<{
     first_day: string;
     last_day: string;
@@ -143,17 +162,16 @@ export async function previousDays(
     running: boolean;
   }>`
     with span as (
-      select ${firstDay}::date - (${lastDay}::date - ${firstDay}::date + 1) as first,
-             ${lastDay}::date - (${lastDay}::date - ${firstDay}::date + 1) as last,
-             ${lastDay}::date - ${firstDay}::date + 1 as length,
+      select (${firstDay}::date - ${back})::date as first,
+             (${lastDay}::date - ${back})::date as last,
              ${now}::timestamptz < ((${lastDay}::date + 1)::timestamp at time zone ${timeZone}) as running
     ),
-    -- The cut-off in local time: now moved back by the length, on the calendar.
+    -- The cut-off in local time: now moved back on the calendar.
     cut as (
       select span.*,
              greatest(
                first::timestamp,
-               (${now}::timestamptz at time zone ${timeZone}) - make_interval(days => length)
+               (${now}::timestamptz at time zone ${timeZone}) - ${back}
              ) as local_cut
       from span
     )
@@ -168,7 +186,7 @@ export async function previousDays(
     from cut
   `.execute(db);
   const [row] = rows;
-  if (row === undefined) throw new Error("previousDays returned no row");
+  if (row === undefined) throw new Error("shiftedDays returned no row");
   return {
     firstDay: row.first_day,
     lastDay: row.last_day,
@@ -176,6 +194,25 @@ export async function previousDays(
     to: row.to,
     until: row.running ? row.to : null,
   };
+}
+
+/**
+ * A moment moved back a whole number of years on the calendar in
+ * `timeZone`, keeping its local time of day.
+ */
+export async function yearsBefore(
+  db: Kysely<Database>,
+  moments: readonly Date[],
+  timeZone: string,
+  years: number,
+): Promise<Date[]> {
+  if (moments.length === 0) return [];
+  const { rows } = await sql<{ moment: Date }>`
+    select ((m at time zone ${timeZone}) - make_interval(years => ${years}::int)) at time zone ${timeZone} as moment
+    from unnest(${moments.map((moment) => moment.toISOString())}::timestamptz[]) with ordinality as t(m, n)
+    order by n
+  `.execute(db);
+  return rows.map((row) => row.moment);
 }
 
 const count = (value: unknown) => Number(value ?? 0);
@@ -273,6 +310,17 @@ function reachedVisits(
     ? goalVisitsSql(range, visits, goal.step, params)
     : `SELECT visitor_id, started_at, ended_at FROM ${goal.table}`;
 }
+
+/** The visits a report counts, for a query of its own (chart.ts). */
+export const countedVisitsSql = (
+  range: ReportRange,
+  visitsSource: VisitsSource,
+  params: QueryParams,
+): string => countedVisits(range, visitsSource, params, { firstEventColumns: false });
+
+/** The events a report counts in `visits` (chart.ts). */
+export const activitySql = (range: ReportRange, visits: string, params: QueryParams): string =>
+  activity(range, visits, params);
 
 /**
  * Count pageviews and custom events within the selected visits. Exclude

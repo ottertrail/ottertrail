@@ -2,6 +2,7 @@ import { ClickHouseError } from "@clickhouse/client";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
 import { DashboardBusyError } from "../telemetry/dashboard-limit.ts";
+import { DeadlineError } from "./query.ts";
 
 /**
  * Keep database error details in logs because they can expose server details.
@@ -35,7 +36,10 @@ export function clickHouseErrorHandler(
         "This report exceeded its memory limit. Shorten the range, narrow the filters, or try again in a minute.",
     });
   }
-  if (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") {
+  if (
+    (error instanceof ClickHouseError && error.type === "TIMEOUT_EXCEEDED") ||
+    error instanceof DeadlineError
+  ) {
     request.log.warn({ err: error }, "a report took too long");
     return reply.code(503).header("retry-after", "60").send({
       error: "reports_busy",

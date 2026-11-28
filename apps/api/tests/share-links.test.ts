@@ -598,6 +598,13 @@ describe("limits", () => {
     });
     expect(refused.statusCode).toBe(503);
     expect(refused.json().error).toBe("reports_busy");
+    // All time's first query, for the first event's day, waits for the same slot.
+    const allTime = await limited.app.inject({
+      url: `/api/share/${busyToken}/analytics?period=all`,
+      remoteAddress: "198.51.100.201",
+    });
+    expect(allTime.statusCode).toBe(503);
+    expect(allTime.json().error).toBe("reports_busy");
     // The signed-in dashboard reads on.
     for (let index = 0; index < 5; index += 1) {
       const own = await limited.app.inject({

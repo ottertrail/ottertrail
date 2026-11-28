@@ -892,23 +892,72 @@ Reports turn events and visits into the numbers a dashboard shows. Code: `apps/a
 
 ### Days in the instance's timezone
 
-A report covers whole calendar days in the instance's timezone, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local day too, and days without data appear with zeros.
+A report covers whole calendar days in the instance's timezone, the timezone that also starts each visitor salt. `localDays` asks PostgreSQL where those days begin and end (`'2026-11-16'::date::timestamp at time zone 'Asia/Singapore'`), so a 23- or 25-hour day, when clocks change for daylight saving, comes out right. Charts count by local hour, day, week, or month too, and points without data appear with zeros. The one exception is the last 24 hours, below.
+
+### Ranges
+
+The page takes the periods every report page shares (`today`, `7d`, `30d`, `90d`, `12m`, or `from` and `to` days), and five of its own (`ANALYTICS_PERIODS` in `reports/routes.ts`, `analyticsDays`). The other pages keep the shared ones: they all work in whole days, and their own tables would need an All time of their own.
+
+| Period      | Covers                                                                                                   |
+| ----------- | -------------------------------------------------------------------------------------------------------- |
+| `yesterday` | The whole local day before today                                                                         |
+| `24h`       | A rolling window: the 24 hours before now, from mid-day yesterday; the only range that is not whole days |
+| `mtd`       | From the 1st of the current month to today                                                               |
+| `ytd`       | From 1 January to today                                                                                  |
+| `all`       | From the local day of the environment's first event that web analytics counts to today                   |
+
+Every range is still a day range in ClickHouse, since the events are sorted by project, then UTC day, then event ID: the last 24 hours read two days' granules, and their visits 25 hours before the window, as any range that does not start at midnight does (section 6). Under a filter, an event in the window that belongs to a visit started before it is left out, since that visit did not start in the range.
+
+**All time** never starts in 1970. `firstEventDay` finds the first day in one query: the inner part reads the project's rows in key order and stops at the first counted event (`ORDER BY project_id, toDate(occurred_at) LIMIT 1`), so it reads that day's granules only; the outer part takes the earliest moment of that UTC day. An environment without events starts today. All time reads at most 3,660 days back (`MAX_ALL_TIME_DAYS`, past the longest retention the API takes), and it has no comparison: nothing came before its first day. Its whole request runs within 30 seconds (`ALL_TIME_SECONDS`, a deadline on the reader, which caps each query's `max_execution_time` and, for this, the temporary tables' `CREATE` too); past it the page answers 503 and asks for a shorter range. The first-day query runs through the request's reader, so the dashboard's query limit covers it, and on a shared link the link's own limiter (`shareReportLimiter`): a test holds that limiter's one slot and sees All time answer 503 like any other report.
+
+Measured on the seeded Demo shop (`vp run seed`, the development stack on an Apple M4 Max, signed-in activity going back 64 days): the first-day query read 13,340 rows in 18 ms; the whole page, 21 queries, read 540,372 rows in 229 ms of ClickHouse time, 595 ms in all, at most 7 MB of memory for a query, by day or by week alike. For comparison, Last 30 days read 531,996 rows in 242 ms. All time costs what a range of the same days costs: on a site with years of events, the visits of all of them are worked out, which the deadline bounds. A large project has not been measured.
+
+### Chart intervals
+
+The chart counts by hour, day, week (from Monday), or month (`reports/chart.ts`). The answer names the interval used (`interval`) and the ones that fit the range (`intervals`); `interval=` asks for one, and one that does not fit gives way to the range's own:
+
+| Range length   | Intervals that fit | Default |
+| -------------- | ------------------ | ------- |
+| Last 24 hours  | hour               | hour    |
+| 1 day          | hour               | hour    |
+| 2 to 7 days    | hour, day          | day     |
+| 8 to 13 days   | day                | day     |
+| 14 to 59 days  | day, week          | day     |
+| 60 to 92 days  | day, week, month   | day     |
+| 93 to 366 days | day, week, month   | week    |
+| Over 366 days  | week, month        | month   |
+
+ClickHouse puts each event on its point in the instance's timezone (`toStartOfHour`, `toDate`, `toMonday`, `toStartOfMonth` of the event's time in that timezone), and a visit on the point it started in. The API lists the points itself (`chartBuckets`), so points without data are zeros: hours step through instants, so the day daylight saving ends has 25 points, 01:00 twice, and the day it starts 23, without 02:00; a timezone half an hour off UTC starts its hours on the half hour. Points stop at now: today by the hour ends with the current hour, not with 23:00. A week or month cut by the range starts on the range's first day or ends on its last (`start`, `end`), and such a point, or one still running, says `partial`; the page names it "(partial)".
+
+### Comparison
+
+`compare=` takes `previous` (the default), `year`, or `off`. Each number of the summary, the chart, and the goal's counts are compared, with the same filters and the same interval; the lists are not.
+
+- **The previous period:** as many days right before, in the same timezone. A period that is still running (it ends today, or later) only has data up to now, so it is compared up to the same moment of its earlier counterpart: now, moved back by the period's length. At 15:00, the last 7 days are compared with the 7 days before them up to 15:00 on their last day. Compared with whole days instead, a day in progress would always look down. A range that ends after today stops earlier still: on 16 November, all of November is compared with 2 to 17 October, and the comparison's last day says so. Past ranges that are over compare whole days. The last 24 hours compare with the 24 hours before them.
+- **The same period last year:** the same days a year before (`shiftedDays` with a year), up to now a year ago while the range runs. 29 February becomes the 28th, so a range from 29 February 2024 compares with one from 28 February 2023.
+- **Off:** no comparison is read, and `previous` is null.
+
+The earlier period is seen as it stood at that time: every report ignores events after the cut-off (`until`), so a visit in progress then counts what had happened by then, as today's visits do now, and its pageviews stop at the same moment as its visits. The days are shifted on the calendar by PostgreSQL (`shiftedDays`, `previousDays`), so a daylight saving change keeps the same time of day.
+
+**On the chart,** each point carries the comparison's counts at the same place (`previous`): the compared range's events are moved forward onto the chart's points in ClickHouse (`addDays` by the period's length, `addYears`, or `addHours` for the last 24 hours, all keeping the local time of day) and grouped by the same interval. A week before falls on the same weekday, a year before on the same date. 29 February has nothing a year before, so its point compares with 0, while the summary counts the 28th. The compared range's visits are worked out once, into a third temporary table of the request's session (`analytics_compared_visits`), which the summary, the chart, and the goal's counts read.
+
+Counts and averages change in percent, rounded; a change too small to round to 1% shows as "<1%", never as no change. The bounce rate, a share, changes in percentage points: from 24% to 30% is 6 points, where "25% more" would mislead. Points are worked out from the whole percentages shown, so the change always matches them. A number with nothing to compare with (nothing before, or 0) shows no change.
 
 ### The numbers
 
-| Report           | What it counts                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| Visitors         | Distinct visitor IDs. IDs change daily, so a person who came on 3 days counts 3 times (section 5) |
-| Pageviews        | `pageview` events                                                                                 |
-| Visits           | Visits that started in the range                                                                  |
-| Views per visit  | Pageviews in those visits, divided by visits                                                      |
-| Bounce rate      | Visits with one pageview and no custom event, divided by visits                                   |
-| Visit duration   | Average of `endedAt - startedAt`. A bounce is 0 seconds unless the page sent an engagement report |
-| Time engaged     | Average time pages were visible per visit, from engagement events                                 |
-| Visitors per day | Visitors, pageviews, and visits for each local day. A visit counts on the day it started          |
-| Top pages        | Pageviews and visitors per path, and the average time on page from that path's engagement reports |
-| Breakdowns       | Visits and visitors grouped by one property of the visit (below)                                  |
-| Custom events    | Each custom event name, how often it happened, and how many visitors sent it                      |
+| Report          | What it counts                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| Visitors        | Distinct visitor IDs. IDs change daily, so a person who came on 3 days counts 3 times (section 5)    |
+| Pageviews       | `pageview` events                                                                                    |
+| Visits          | Visits that started in the range                                                                     |
+| Views per visit | Pageviews in those visits, divided by visits                                                         |
+| Bounce rate     | Visits with one pageview and no custom event, divided by visits                                      |
+| Visit duration  | Average of `endedAt - startedAt`. A bounce is 0 seconds unless the page sent an engagement report    |
+| Time engaged    | Average time pages were visible per visit, from engagement events                                    |
+| The chart       | Visitors, pageviews, and visits per local hour, day, week, or month. A visit counts where it started |
+| Top pages       | Pageviews and visitors per path, and the average time on page from that path's engagement reports    |
+| Breakdowns      | Visits and visitors grouped by one property of the visit (below)                                     |
+| Custom events   | Each custom event name, how often it happened, and how many visitors sent it                         |
 
 Visitors and pageviews count events in the range. Visits, bounce rate, and durations count visits that started in it. A visit from 23:50 to 00:20 counts on the first day, while its 00:05 pageview counts on the second.
 
@@ -1007,7 +1056,7 @@ A goal, a saved goal or a custom event by name, does not narrow the visits, as a
 **The unit is the daily visitor ID**, as for Visitors. A server's events have no visitor, so they are never counted.
 
 - **Summary:** Visitors as before; Converted, the visitors with a goal event in the period, among the page's visits (the Goals table's visitors for that goal); Conversion rate, Converted of Visitors; Events, the goal events. Each is compared with the period before, as the summary is.
-- **Chart:** converted visitors per day: those with a goal event that day.
+- **Chart:** converted visitors per point: those with a goal event in that hour, day, week, or month.
 - **A visit-level list** (Entry, Exit, Hostnames, Sources, Channels, the UTM tags, Countries, Regions, Cities, Devices, Browsers, browser versions, Systems, Releases): a row's Converted counts its visitors with a visit of that value **in which the goal was reached**: a goal event from the visit's start to its end, anywhere in the visit. A visitor who came from a search, left, and signed up in a later direct visit counts under Direct / none only. A visit has one value of each, so a whole list's Converted add up to the summary's, or more when one visitor converted in two visits of different values.
 - **Pages:** a page's Converted counts its visitors who viewed it in a visit that reached the goal, before or after viewing it. A visit views many pages, so these add up to more than the summary.
 - **In both,** a row's Converted is exactly what the Goals table shows for that goal when the page is filtered by the row, and a test checks it on every row of Sources, Countries, and Pages. Visitors is the row's visitors as before, under the other filters, and Rate is Converted of them. Rows are sorted by Converted, then visitors, with Unknown last.
@@ -1017,21 +1066,13 @@ A goal, a saved goal or a custom event by name, does not narrow the visits, as a
 
 **Measured** on the seeded Demo shop (`vp run seed`: 46,000 events, 30 days, the development stack on an Apple M4 Max), goal "Signed up": the goal visits table read 51,429 rows in 8 ms; each list then read 6,081 rows (5,934 visits and 147 goal visits) in 1 to 2 ms and 5 MB; the whole page took 224 ms with the goal and 245 ms without (the difference is noise). A large project has not been measured: the development machine is too small ([storage-benchmark.md](storage-benchmark.md)).
 
-**Limits:** the period before compares the summary only, as without a goal. The Goal menu lists the period's top 10 custom events. A goal by signed-in user, rather than visitor, is not offered.
+**Limits:** the lists are not compared, as without a goal. The Goal menu lists the period's top 10 custom events. A goal by signed-in user, rather than visitor, is not offered.
 
 ### Links and not found pages in reports
 
 Code: `eventValues` in `apps/api/src/reports/reports.ts`. The answer has three lists, counted in the page's visits and filters as Pages is: `outboundLinks` and `fileDownloads` by `properties.url`, `notFoundPages` by path, each row `{ value, visitors, events }`, most visitors first, the top 10. `/analytics/list` takes them as `report=outboundLinks`, `fileDownloads`, or `notFoundPages`, with search and paging. With a goal, each row adds `converted`: its visitors who did it in a visit that reached the goal, as a page's Converted counts, most converted first.
 
 Three filters match them, as `page` matches a pageview: `outbound`, `download` (the stored URL), and `notFound` (the path) keep the visits with such an event of that value, with the same four operators, and the filter and the list read the same expression, so a row's filter keeps exactly the visits the row counted. The Custom events list leaves the three out.
-
-### Comparison with the previous period
-
-Each number of the summary is compared with the period right before: as many days, in the same timezone, with the same filters. A period that is still running (it ends today, or later) only has data up to now, so it is compared up to the same moment of its earlier counterpart: now, moved back by the period's length. At 15:00, the last 7 days are compared with the 7 days before them up to 15:00 on their last day. Compared with whole days instead, a day in progress would always look down. A range that ends after today stops earlier still: on 16 November, all of November is compared with 2 to 17 October, and the comparison's last day says so. Past ranges that are over compare whole days.
-
-The earlier period is seen as it stood at that time: every report ignores events after the cut-off (`until`), so a visit in progress then counts what had happened by then, as today's visits do now, and its pageviews stop at the same moment as its visits. The days are shifted on the calendar by PostgreSQL (`previousDays`), so a daylight saving change keeps the same time of day.
-
-Counts and averages change in percent, rounded; a change too small to round to 1% shows as "<1%", never as no change. The bounce rate, a share, changes in percentage points: from 24% to 30% is 6 points, where "25% more" would mislead. Points are worked out from the whole percentages shown, so the change always matches them. A number with nothing to compare with (nothing before, or 0) shows no change.
 
 ### Right now
 
@@ -1163,7 +1204,7 @@ Reports that only count events (top pages, custom events) read the range's event
 
 ### Not done yet
 
-- Comparison for the chart and the lists (only the summary is compared); a filter that narrows the page to the visits that reached a goal (the goal filter adds conversions instead).
+- Comparison for the lists (the summary, the chart, and the goal's counts are compared); a filter that narrows the page to the visits that reached a goal (the goal filter adds conversions instead).
 
 ## Heatmaps
 
