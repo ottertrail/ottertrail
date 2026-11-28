@@ -37,7 +37,7 @@ ClickHouse's `events` table holds them (`apps/api/src/clickhouse/migrations.ts`;
 | `utm_*` (5 columns) | Campaign tags from the page URL: source, medium, campaign, term, content    | Sender |
 | `properties`        | Custom details as a JSON object, such as `{ "plan": "free" }`, at most 8 KB | Sender |
 
-Later steps added columns: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Then came `environment` and `release` ([Environments and releases](#environments-and-releases)), `user_id` ([Known users](#known-users)), and five `error_*` columns that only an `error` event has ([errors](errors.md#2-storage)).
+Later steps added columns: browser, OS, device, country, region, and city (step 4), visitor (step 5), and session (step 6). Then came `environment` and `release` ([Environments and releases](#environments-and-releases)), `user_id` ([Known users](#known-users)), five `error_*` columns that only an `error` event has ([errors](errors.md#2-storage)), and `hostname`, the page's hostname in lower case, for the [Hostnames list](#breakdowns) (ClickHouse migration `0016_events_hostname`). Events stored before that migration, and a server's events, have no hostname.
 
 ### Two timestamps
 
@@ -634,7 +634,7 @@ Under GDPR an IP address is personal data. Not keeping it also means locations c
 
 [bowser](https://github.com/bowser-js/bowser) (MIT) parses the User-Agent. (`ua-parser-js` was not used: from version 2 it is licensed AGPL, which would bind Ottertrail's own license choice.)
 
-Browsers now freeze parts of the User-Agent so people are harder to fingerprint ("User-Agent reduction"). Every Mac reports macOS 10.15.7 and Windows 11 reports Windows NT 10.0, so OS versions would be wrong: only the OS name and the browser's major version are kept. iPads present themselves as Macs by default, so the User-Agent alone counts them as desktop Macs. Macs have no touchscreen, though, so when the tracker reports one (`touch` in the batch: `navigator.maxTouchPoints` over 1), a "Mac" is recorded as iOS on a tablet. The hint is one yes-or-no value, sent only when true, so it adds almost nothing to tell visitors apart. Touch on anything else changes nothing: many Windows laptops have touchscreens.
+Browsers now freeze parts of the User-Agent so people are harder to fingerprint ("User-Agent reduction"). Every Mac reports macOS 10.15.7, Windows 11 reports Windows NT 10.0, Chrome on Android reports Android 10 on every phone, and Safari on iOS 26 reports an iOS 18 version. OS versions would be wrong, so only the OS name and the browser's major version are kept. The browser's version stays true, so reports list browser versions but no OS versions. Real OS versions would need the browser's client hints (`navigator.userAgentData`), which only Chromium browsers offer and the tracker does not ask for. iPads present themselves as Macs by default, so the User-Agent alone counts them as desktop Macs. Macs have no touchscreen, though, so when the tracker reports one (`touch` in the batch: `navigator.maxTouchPoints` over 1), a "Mac" is recorded as iOS on a tablet. The hint is one yes-or-no value, sent only when true, so it adds almost nothing to tell visitors apart. Touch on anything else changes nothing: many Windows laptops have touchscreens.
 
 ### Location
 
@@ -914,7 +914,22 @@ Visitors and pageviews count events in the range. Visits, bounce rate, and durat
 
 ### Breakdowns
 
-A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, or `release`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, "(unknown)" in the report script, and always comes last, as on an event's page and in a funnel's breakdown. A visit without a campaign is "No campaign", a value, sorted by its count.
+A breakdown groups visits by one property: `source`, `sourceKind`, `referrer`, `channel`, `hostname`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `utmTerm`, `utmContent`, `country`, `region`, `city`, `deviceType`, `browser`, `browserVersion`, `os`, or `release`. All but the exit page come from the start of the visit, so each visit counts once, under where it began. Rows are sorted by visitors, then visits. A missing value (no location, an unknown browser) is a row of its own, "(unknown)" in the report script, and always comes last, as on an event's page and in a funnel's breakdown. A visit without a campaign is "No campaign", a value, sorted by its count; so are "No source", "No medium", "No term", "No content", and "No referrer".
+
+**Hostname** is the hostname of the visit's first event, such as `docs.example.com`, for a site on several hostnames. Collection checks every page's hostname against the project's allowed hostnames, and since migration `0016_events_hostname` it also stores it. Visits stored before then have none, and show as Unknown. Top pages still lists paths without their hostname, so `/` on two hostnames is one row; filter by a hostname to see its pages.
+
+**UTM source, medium, campaign, term, and content** are the visit's five tags alone, as typed in the link, case kept. The Sources list is not the same as UTM source: a visit's source is its `utm_source` tag (or `ref`), else its referrer's site, else Direct / none, so a Sources row such as `google.com` can mix tagged visits and visits from a referrer. The UTM source list shows the tag alone (a `ref` included), and "No source" for every visit without one.
+
+**One source's drill-down.** Filtered by a source, the page shows where its visits came from, with two more breakdowns:
+
+- `sourceKind`: how each visit got its source: `tag` (its `utm_source`, or a `ref` stored as one), shown as "Tagged (utm_source or ref)", `referrer` (another site's referrer), or `none` (Direct / none: no tag and no referrer from another site). Code: `visitSourceKindSql` in `apps/api/src/visits/visit-source.ts`, from the same columns as the source.
+- `referrer`: the visit's stored referrer, its origin and path (`cleanReferrer`). Browsers often send only the site (`https://www.google.com/`), as their default referrer policy cuts the path for other sites. A visit without one is "No referrer". A Direct / none visit can still list a referrer on the project's own hostnames.
+
+Both are filters too, as every breakdown is (`sourceKind=tag`, `referrer=https://news.ycombinator.com/item`). The tagged visits' medium and campaign are the `utmMedium` and `utmCampaign` breakdowns under the same filter.
+
+**Browser version** is the browser's name and major version, such as `Chrome 142`, so a row means one browser. A visit whose browser or version is unknown is Unknown.
+
+**Exit rate.** The exit pages list has one more figure: a page's exits (the visits that ended on it, the row's visits) divided by its pageviews in the same visits, the number Top pages shows for the page. So 30% means that 3 in 10 views of the page were a visit's last. It differs from the bounce rate, which counts visits that saw only one page. A visit lies within one local day and reports cover whole days, so a visit's exit pageview is always in the range, and the rate is at most 100%. With a goal, the list shows the goal's figures instead.
 
 **Source** is the first of these that exists:
 
@@ -928,6 +943,29 @@ A referrer on one of the project's own allowed hostnames is not a source. It mea
 
 **Region and city** keep their country (`Springfield, US`), because the same names exist in several countries.
 
+### Channels
+
+A channel groups visits by the kind of place they came from: Direct, Organic search, Paid search, Organic social, Paid social, Email, AI assistants, Display, Referral, or Other. Code: `apps/api/src/visits/channel.ts`; tests: `apps/api/tests/acquisition-channels.test.ts`.
+
+**From what.** The visit's first event: its `utm_medium`, its `utm_source`, and its referrer's host without `www.`. A referrer on one of the project's allowed hostnames counts as none, as for Sources. Tags are compared in lower case, with spaces around them and a leading `www.` removed, because people type them by hand. A source can be a name (`facebook`) or a domain (`chatgpt.com`).
+
+**The rules.** The first that matches wins:
+
+1. **Paid.** A paid medium (`cpc`, `ppc`, `paid`, `cpm`, `display`, `banner`, `retargeting` …): Paid social when the source or referrer is a social site, or the medium is `paid_social`; then Display for display mediums (`display`, `banner`, `cpm`, `cpv`, `programmatic`); then Paid search for `paid_search`, `sem`, `cpc`, and `ppc`, or a search engine; Display for any other paid medium.
+2. **Email.** An email medium (`email`, `newsletter` …), an email source, or a webmail site or mail app as referrer.
+3. **AI assistants.** An assistant's site as referrer or source, such as `chatgpt.com`, `perplexity.ai`, `claude.ai`, or `gemini.google.com`.
+4. **Organic social.** A social medium (`social`, `social-media`, `sm` …), or a social site as referrer or source.
+5. **Organic search.** `utm_medium=organic`, or a search engine as referrer or source. Google and Yandex count on any of their country domains (`google.co.uk`), but not their other sites: `docs.google.com` is a referral.
+6. **Referral.** `utm_medium=referral`, or any other site as referrer.
+7. **Other.** Campaign tags that match none of the above, such as `utm_medium=print`, or only a campaign.
+8. **Direct.** No tags and no referrer.
+
+The medium decides before the source and the referrer: `utm_source=linkedin&utm_medium=email` is Email, and a visit with `utm_medium=email` and no referrer is Email too. A host listed matches its subdomains as well, so `l.facebook.com` is Facebook's. Android apps send their package name as the referrer (`android-app://com.google.android.gm`, the Gmail app), and the lists name the common ones.
+
+**The lists** are short and Ottertrail's own: the search engines, social sites, AI assistants, and webmail sites that send most visits of each kind, with the short names people use as sources (`fb`, `ig`, `hn`). A site that is missing counts as Referral, which is still true. To add one, edit the list in `channel.ts` and add a test case.
+
+**Worked out when a report asks.** No column stores the channel. A report computes it from the visit's tags and referrer, which every visit already has, so visits stored before channels existed get one too, and a change to the rules or the lists applies to all past data at once. The cost is a few string comparisons per visit, in a query that already sorts the visit's events. A stored channel would be frozen with the rules of the day it arrived.
+
 ### One environment at a time
 
 Every report counts the events of one environment, `production` unless another is named ([section 2](#environments-and-releases)): its visitors, visits, pages, and lists. Other environments' events never mix in, filtered or not. An environment is not a filter of visits but where the reports look, as the project is.
@@ -936,7 +974,7 @@ Every report counts the events of one environment, `production` unless another i
 
 A filter narrows every report to the visits that match it, and to those visits' events. Two kinds:
 
-- **A breakdown's value** (`source`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `country`, `region`, `city`, `deviceType`, `browser`, `os`, `release`): the visit's own value, as its breakdown row shows it, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits.
+- **A breakdown's value** (`source`, `sourceKind`, `referrer`, `channel`, `hostname`, `entryPage`, `exitPage`, `utmSource`, `utmMedium`, `utmCampaign`, `utmTerm`, `utmContent`, `country`, `region`, `city`, `deviceType`, `browser`, `browserVersion`, `os`, `release`): the visit's own value, as its breakdown row shows it, such as `google.com`, `Direct / none`, or `Munich, DE`. The filter and the breakdown use the same SQL expression, so a row's filter keeps exactly the visits that row counted, and a test checks that filtering by each row of a breakdown adds up to all visits.
 - **An event of the visit** (`page`, and `outbound`, `download`, `notFound` below): visits with a pageview of that path. Every number then describes those visits, so the pageviews count all their pages, not only the filtered one: filtering by `/pricing` shows what else visitors who saw the pricing page looked at.
 
 **Operators.** Each filter has one of four:
@@ -952,7 +990,7 @@ For an event filter, "the value" is any of the visit's events: `page.not=/pricin
 
 - **Several values:** repeat the parameter, `country=DE&country=FR`. Any value matches (OR). Filters on different dimensions or operators must all match (AND): `page.contains=/blog&page.notContains=/blog/drafts`.
 - **Unknown:** with is and is not, an empty value is the unknown value, the "Unknown" row: `country=` keeps visits without a location, and `country.not=` those with one. An event always has a path, so `page=` matches nothing.
-- **Which take contains:** free text: pages, entry and exit pages, sources, the UTM fields, regions, cities, releases, outbound links, downloads, and not found pages. A fixed value takes is and is not only: country (a code), device type, browser, and operating system. `country.contains` is an unknown parameter, refused with 400.
+- **Which take contains:** free text: pages, entry and exit pages, hostnames, sources, referrers, the UTM fields, regions, cities, browser versions, releases, outbound links, downloads, and not found pages. A fixed value takes is and is not only: country (a code), channel, how a visit got its source (`sourceKind`), device type, browser, and operating system. `country.contains` is an unknown parameter, refused with 400.
 - **Contains** compares with `positionCaseInsensitiveUTF8`, never `LIKE`, so `%`, `_`, and `\` match themselves.
 - **Limits** (the route's schema, 400 past them): 10 values per filter; 2,048 characters per value of is and is not, the longest stored path; 1 to 200 characters per text of contains, which a person types. A limit on a request's size bounds the whole address too: Node's 16 KB for headers, or a proxy's, so very many long values are refused there first (431).
 
@@ -970,7 +1008,7 @@ A goal, a saved goal or a custom event by name, does not narrow the visits, as a
 
 - **Summary:** Visitors as before; Converted, the visitors with a goal event in the period, among the page's visits (the Goals table's visitors for that goal); Conversion rate, Converted of Visitors; Events, the goal events. Each is compared with the period before, as the summary is.
 - **Chart:** converted visitors per day: those with a goal event that day.
-- **A visit-level list** (Entry, Exit, Sources, Campaigns, Countries, Regions, Cities, Devices, Browsers, Systems, Releases): a row's Converted counts its visitors with a visit of that value **in which the goal was reached**: a goal event from the visit's start to its end, anywhere in the visit. A visitor who came from a search, left, and signed up in a later direct visit counts under Direct / none only. A visit has one value of each, so a whole list's Converted add up to the summary's, or more when one visitor converted in two visits of different values.
+- **A visit-level list** (Entry, Exit, Hostnames, Sources, Channels, the UTM tags, Countries, Regions, Cities, Devices, Browsers, browser versions, Systems, Releases): a row's Converted counts its visitors with a visit of that value **in which the goal was reached**: a goal event from the visit's start to its end, anywhere in the visit. A visitor who came from a search, left, and signed up in a later direct visit counts under Direct / none only. A visit has one value of each, so a whole list's Converted add up to the summary's, or more when one visitor converted in two visits of different values.
 - **Pages:** a page's Converted counts its visitors who viewed it in a visit that reached the goal, before or after viewing it. A visit views many pages, so these add up to more than the summary.
 - **In both,** a row's Converted is exactly what the Goals table shows for that goal when the page is filtered by the row, and a test checks it on every row of Sources, Countries, and Pages. Visitors is the row's visitors as before, under the other filters, and Rate is Converted of them. Rows are sorted by Converted, then visitors, with Unknown last.
 - **Custom events** keep their own numbers.
