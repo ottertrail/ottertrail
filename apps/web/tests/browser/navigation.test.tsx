@@ -201,8 +201,8 @@ describe("inside a project", () => {
       .poll(() => currentPath(router))
       .toBe(`/projects/${OTHER_PROJECT.id}/web-analytics?period=90d`);
     await expect
-      .poll(() => api.requests.at(-1))
-      .toBe(`/api/projects/${OTHER_PROJECT.id}/analytics?period=90d`);
+      .poll(() => api.requests)
+      .toContain(`/api/projects/${OTHER_PROJECT.id}/analytics?period=90d`);
     await expect.element(switcher("Docs")).toBeVisible();
     await expect.poll(pageTitle).toBe("Web analytics");
   });

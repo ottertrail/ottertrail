@@ -40,6 +40,7 @@ import { environmentSearch } from "@/features/telemetry/search";
 import { CAUSE_TEXT, formatMoment, formatMs, formatUptime } from "@/features/uptime/format";
 import { useAccess } from "@/lib/access";
 import { DEFAULT_PERIOD } from "@/lib/analytics-api";
+import { projectReports } from "@/lib/analytics-queries";
 import { AI_DOCS_URL } from "@/lib/docs";
 import { goalStepText } from "@/lib/goals-api";
 import { MISSING } from "@/lib/missing";
@@ -1062,7 +1063,7 @@ function MinuteBars({ minutes, timeZone }: { minutes: NowMinute[]; timeZone: str
 export function NowWidget(props: WidgetProps) {
   const { projectId, environment } = props;
   const query = useQuery({
-    ...nowQuery(projectId, environment),
+    ...nowQuery(projectReports(projectId), environment),
     enabled: props.arrange?.hidden !== true,
   });
   const title = widgetTitle("now");

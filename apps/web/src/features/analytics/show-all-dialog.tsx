@@ -14,6 +14,7 @@ import { listQuery } from "@/lib/analytics-queries";
 import { FilterLink, GoalLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
 import { RankedList } from "./ranked-list";
+import { useAnalyticsScope } from "./scope";
 
 export function ShowAllDialog({
   open,
@@ -22,7 +23,6 @@ export function ShowAllDialog({
   report,
   nameHeading,
   secondaryHeading,
-  projectId,
   search,
 }: {
   open: boolean;
@@ -31,14 +31,14 @@ export function ShowAllDialog({
   report: ListReport;
   nameHeading: string;
   secondaryHeading: string;
-  projectId: string;
   search: PageSearch;
 }) {
+  const { source } = useAnalyticsScope();
   const [text, setText] = React.useState("");
   const query = useSettled(text.trim(), 250);
   const list = useInfiniteQuery({
     ...listQuery(
-      projectId,
+      source,
       search.range,
       search.filters,
       search.environment,
@@ -52,18 +52,8 @@ export function ShowAllDialog({
   const rows = rankedRows(
     report,
     (list.data?.pages ?? []).flatMap((page) => page.rows),
-    (name, value) => (
-      <FilterLink projectId={projectId} search={search} name={name} value={value} onClick={close} />
-    ),
-    (name) => (
-      <GoalLink
-        projectId={projectId}
-        search={search}
-        goal={{ event: name }}
-        name={name}
-        onClick={close}
-      />
-    ),
+    (name, value) => <FilterLink search={search} name={name} value={value} onClick={close} />,
+    (name) => <GoalLink search={search} goal={{ event: name }} name={name} onClick={close} />,
   );
   // Custom events keep their own numbers under a goal.
   const withGoal = search.goal !== undefined && report !== "customEvents";

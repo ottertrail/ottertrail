@@ -17,6 +17,13 @@ import { thirdPartyLicenses } from "../../scripts/third-party-licenses.ts";
  * which an alert's link opens, and the log lines rule kind, about 0.4 kB past 256.
  */
 const INITIAL_JS_BUDGET = { raw: 780, gzip: 257 };
+/**
+ * A shared link's page (share.html; docs/web-analytics.md, "Shared links"):
+ * React, the Web analytics page, and Recharts (127 kB gzipped), without the
+ * dashboard's router, session, and shell. 1,130 kB (358 kB gzipped) on
+ * 28 November 2026.
+ */
+const SHARE_JS_BUDGET = { raw: 1150, gzip: 365 };
 
 const apiOrigin = process.env.OTTERTRAIL_API_ORIGIN ?? "http://127.0.0.1:3000";
 
@@ -44,6 +51,25 @@ function noApiInTests(): Plugin {
   };
 }
 
+/**
+ * A shared link's address, /share/<token>, opens share.html, as the API
+ * serves it in production (apps/api/src/dashboard-app/routes.ts).
+ */
+function sharePage(): Plugin {
+  return {
+    name: "ottertrail:share-page",
+    configureServer(server) {
+      server.middlewares.use((request, _response, next) => {
+        const [path = "", query] = (request.url ?? "").split("?", 2);
+        if (path.startsWith("/share/")) {
+          request.url = `/share.html${query === undefined ? "" : `?${query}`}`;
+        }
+        next();
+      });
+    },
+  };
+}
+
 // GitHub's runner for a private repository has 2 CPUs, against 14 threads
 // locally: in CI (CI=true) tests and waits get longer limits.
 const CI = process.env.CI === "true";
@@ -55,7 +81,8 @@ export default defineConfig({
     thirdPartyLicenses({
       stylesheets: [fileURLToPath(new URL("./src/styles/globals.css", import.meta.url))],
     }),
-    chunkBudget(INITIAL_JS_BUDGET),
+    chunkBudget({ index: INITIAL_JS_BUDGET, share: SHARE_JS_BUDGET }),
+    sharePage(),
     ...(process.env.VITEST ? [noApiInTests()] : []),
   ]),
   resolve: {
@@ -68,6 +95,11 @@ export default defineConfig({
     // this warning catches chunks well above the entry's size.
     chunkSizeWarningLimit: 600,
     rolldownOptions: {
+      // The dashboard, and a shared link's page, which loads none of its signed-in code.
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        share: fileURLToPath(new URL("./share.html", import.meta.url)),
+      },
       output: {
         codeSplitting: {
           // Recharts and the packages only it uses load as one chunk with the first page that

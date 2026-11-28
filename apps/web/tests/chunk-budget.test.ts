@@ -8,9 +8,16 @@ import {
   overBudget,
 } from "../../../scripts/chunk-budget.ts";
 
-const chunk = (fileName: string, imports: string[], code = "x", isEntry = false): BuiltChunk => ({
+const chunk = (
+  fileName: string,
+  imports: string[],
+  code = "x",
+  isEntry = false,
+  name = fileName.replace(/\.js$/u, ""),
+): BuiltChunk => ({
   type: "chunk",
   fileName,
+  name,
   isEntry,
   imports,
   code,
@@ -32,6 +39,21 @@ describe("initialChunks", () => {
         .map((item) => item.fileName)
         .toSorted(),
     ).toEqual(["index.js", "react.js", "ui.js"]);
+  });
+
+  test("measures one entry alone: a shared link's page never counts the dashboard's", () => {
+    const bundle = {
+      "index.js": chunk("index.js", ["react.js", "router.js"], "x", true),
+      "share.js": chunk("share.js", ["react.js"], "x", true),
+      "react.js": chunk("react.js", []),
+      "router.js": chunk("router.js", []),
+    };
+    const names = (entry: string) =>
+      initialChunks(bundle, entry)
+        .map((item) => item.fileName)
+        .toSorted();
+    expect(names("index")).toEqual(["index.js", "react.js", "router.js"]);
+    expect(names("share")).toEqual(["react.js", "share.js"]);
   });
 });
 
@@ -56,10 +78,16 @@ describe("chunkBudget", () => {
     const code = "a".repeat(5001);
     const bundle = { "index.js": chunk("index.js", [], code, true) };
     expect(measure(Object.values(bundle)).raw).toBe(5.001);
-    const plugin = chunkBudget({ raw: 5, gzip: 100 });
-    expect(() => plugin.generateBundle.handler({}, bundle)).toThrow(/over its budget/);
+    const plugin = chunkBudget({ index: { raw: 5, gzip: 100 } });
+    expect(() => plugin.generateBundle.handler({}, bundle)).toThrow(
+      /first visit to index\.html .*over its budget/,
+    );
     expect(() =>
-      chunkBudget({ raw: 6, gzip: 100 }).generateBundle.handler({}, bundle),
+      chunkBudget({ index: { raw: 6, gzip: 100 } }).generateBundle.handler({}, bundle),
     ).not.toThrow();
+    // A budget for an entry the build lacks is a mistake, not a pass.
+    expect(() =>
+      chunkBudget({ share: { raw: 6, gzip: 100 } }).generateBundle.handler({}, bundle),
+    ).toThrow(/no entry named share/);
   });
 });

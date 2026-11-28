@@ -43,6 +43,7 @@ import { LocationSettings } from "./location-card";
 import { NoSuchProject } from "./no-such-project";
 import { ReplaysSettings } from "./replays-card";
 import { ServerSettings } from "./server-card";
+import { ShareLinksTab } from "./share-links-tab";
 import { SourceMapsCard } from "./source-maps-card";
 import { SpamTab } from "./spam-tab";
 
@@ -499,6 +500,11 @@ function SettingsTabsFor({ project }: { project: Project }) {
           label: "Spam and bots",
           dirty: spamDirty,
           content: <SpamTab project={project} onDirty={setSpamDirty} />,
+        },
+        {
+          value: "shared-links",
+          label: "Shared links",
+          content: <ShareLinksTab projectId={project.id} />,
         },
         {
           value: "source-maps",

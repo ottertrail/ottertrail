@@ -42,6 +42,7 @@ describe("the settings tabs", () => {
       "General",
       "Your server",
       "Spam and bots",
+      "Shared links",
       "Source maps",
       "Session replay",
       "Danger zone",

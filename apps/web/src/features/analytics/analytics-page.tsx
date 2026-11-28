@@ -1,20 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import {
-  ArrowUpRightIcon,
-  ChartLineIcon,
-  FilterXIcon,
-  MousePointerClickIcon,
-  OctagonAlertIcon,
-  PlusIcon,
-  XIcon,
-} from "lucide-react";
+import { ChartLineIcon, FilterXIcon, OctagonAlertIcon, PlusIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
-import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
-import { PageActions } from "@/components/page-header";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -39,7 +28,6 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAccess } from "@/lib/access";
 import {
   activeFilters,
   type Analytics,
@@ -62,15 +50,11 @@ import {
 } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
 import { MISSING } from "@/lib/missing";
-import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
 
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
-import { heatmapsSearchOf } from "../heatmaps/search";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
-import { productSearchOf } from "../product/search";
-import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
-import { FilterLink, GoalLink } from "./filter-link";
+import { FilterLink, GoalLink, PageLink } from "./filter-link";
 import {
   formatConversion,
   formatCount,
@@ -96,10 +80,9 @@ import {
   type PageSearch,
   rankedRows,
   rowRate,
-  searchOf,
 } from "./list-rows";
-import { NowIndicator } from "./now-indicator";
 import type { RankedRow } from "./ranked-list";
+import { useAnalyticsScope } from "./scope";
 import { ShowAllDialog } from "./show-all-dialog";
 
 const METRICS = [
@@ -191,58 +174,6 @@ function visitsTab(
   };
 }
 
-function HeatmapLink({
-  projectId,
-  search,
-  path,
-}: {
-  projectId: string;
-  search: PageSearch;
-  path: string;
-}) {
-  return (
-    <Link
-      to="/projects/$projectId/heatmaps"
-      params={{ projectId }}
-      search={heatmapsSearchOf({
-        range: search.range,
-        environment: search.environment,
-        path,
-        device: undefined,
-      })}
-      aria-label={`Heatmap of ${path}`}
-      title={`Heatmap of ${path}`}
-      className="flex size-6 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-accent hover:text-ink max-sm:size-8"
-    >
-      <MousePointerClickIcon aria-hidden="true" className="size-3.5" />
-    </Link>
-  );
-}
-
-/** A custom event's own page, under Product analytics. */
-function EventPageLink({
-  projectId,
-  search,
-  name,
-}: {
-  projectId: string;
-  search: PageSearch;
-  name: string;
-}) {
-  return (
-    <Link
-      to="/projects/$projectId/product/events/$name"
-      params={{ projectId, name }}
-      search={productSearchOf(search)}
-      aria-label={`Open the ${name} event`}
-      title={`Open the ${name} event`}
-      className="flex size-6 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-accent hover:text-ink max-sm:size-8"
-    >
-      <ArrowUpRightIcon aria-hidden="true" className="size-3.5" />
-    </Link>
-  );
-}
-
 /**
  * A full LIST_PREVIEW_ROWS preview may have more rows. With a goal (`goal`),
  * each row shows its visitors, converted visitors, and rate, most converted
@@ -251,13 +182,11 @@ function EventPageLink({
 function BreakdownSection({
   title,
   tabs,
-  projectId,
   search,
   goal = false,
 }: {
   title: string;
   tabs: ListTab[];
-  projectId: string;
   search: PageSearch;
   goal?: boolean;
 }) {
@@ -325,7 +254,6 @@ function BreakdownSection({
           report={showing.report}
           nameHeading={showing.nameHeading}
           secondaryHeading={showing.secondaryHeading}
-          projectId={projectId}
           search={search}
         />
       )}
@@ -582,36 +510,28 @@ function Trend({ days, goal = false }: { days: DayPoint[]; goal?: boolean }) {
   );
 }
 
-function Reports({
-  analytics,
-  projectId,
-  search,
-}: {
-  analytics: Analytics;
-  projectId: string;
-  search: PageSearch;
-}) {
+function Reports({ analytics, search }: { analytics: Analytics; search: PageSearch }) {
   const { breakdowns } = analytics;
   // The answer's goal, not the address's: while a new one loads, the old numbers stay.
   const goal = analytics.goal;
-  const canOpenEvents = useAccess().canUse("product_analytics");
+  // Links into the dashboard's other pages: never on a shared link.
+  const { dashboard } = useAnalyticsScope();
   const link: FilterLinkFor = (name, value) => (
-    <FilterLink projectId={projectId} search={search} name={name} value={value} />
+    <FilterLink search={search} name={name} value={value} />
   );
   const eventLink = (name: string) => (
-    <GoalLink projectId={projectId} search={search} goal={{ event: name }} name={name} />
+    <GoalLink search={search} goal={{ event: name }} name={name} />
   );
   const rows = (report: Breakdown) => rankedRows(report, fromBreakdown(breakdowns[report]), link);
   // A row without a path ("Unknown") has no page to show.
   const withHeatmaps = (list: RankedRow[]) =>
-    list.map((row) =>
-      row.key.startsWith("/")
-        ? {
-            ...row,
-            action: <HeatmapLink projectId={projectId} search={search} path={row.key} />,
-          }
-        : row,
-    );
+    dashboard === null
+      ? list
+      : list.map((row) =>
+          row.key.startsWith("/")
+            ? { ...row, action: dashboard.renderHeatmapLink(search, row.key) }
+            : row,
+        );
   const chosenEvent =
     search.goal !== undefined && "event" in search.goal ? search.goal.event : undefined;
   const eventRows = rankedRows(
@@ -630,12 +550,12 @@ function Reports({
               Goal
             </Badge>
           )}
-          {canOpenEvents && <EventPageLink projectId={projectId} search={search} name={name} />}
+          {dashboard?.renderEventLink?.(search, name)}
         </>
       ),
     };
   });
-  const card = { projectId, search, goal: goal !== null };
+  const card = { search, goal: goal !== null };
   return (
     <>
       {goal === null ? (
@@ -754,30 +674,23 @@ function Reports({
           ))}
         </div>
       </div>
-      <GoalsSection analytics={analytics} projectId={projectId} search={search} />
+      <GoalsSection analytics={analytics} search={search} />
     </>
   );
 }
 
 /**
  * Goals belong to product analytics (docs/access.md). They show without data too, so a project
- * can set its goals before its first event arrives.
+ * can set its goals before its first event arrives. A shared link shows them, read-only, once
+ * there are some: nobody there can add one.
  */
-function GoalsSection({
-  analytics,
-  projectId,
-  search,
-}: {
-  analytics: Analytics;
-  projectId: string;
-  search: PageSearch;
-}) {
-  const showGoals = useAccess().canUse("product_analytics");
-  if (!showGoals) return null;
+function GoalsSection({ analytics, search }: { analytics: Analytics; search: PageSearch }) {
+  const { dashboard } = useAnalyticsScope();
+  if (dashboard === null ? analytics.goals.length === 0 : !dashboard.showGoals) return null;
   return (
     <GoalsCard
       goals={analytics.goals}
-      projectId={projectId}
+      projectId={dashboard?.projectId ?? ""}
       // The tracker's link events can be goals too (docs/product-analytics.md, "Goals").
       eventNames={[
         ...analytics.customEvents.map((event) => event.name),
@@ -869,11 +782,9 @@ function LoadingReports() {
 }
 
 function ActiveFilters({
-  projectId,
   search,
   analytics,
 }: {
-  projectId: string;
   search: PageSearch;
   analytics: Analytics | undefined;
 }) {
@@ -894,15 +805,13 @@ function ActiveFilters({
           <li className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink">
             <TruncatedText text={goalChip} />
 
-            <Link
-              to="/projects/$projectId/web-analytics"
-              params={{ projectId }}
-              search={searchOf({ ...search, goal: undefined })}
+            <PageLink
+              search={{ ...search, goal: undefined }}
               aria-label={`Remove the filter ${goalChip}`}
               className="rounded p-1 text-ink-subtle hover:bg-background/60 hover:text-ink"
             >
               <XIcon aria-hidden="true" className="size-3.5" />
-            </Link>
+            </PageLink>
           </li>
         )}
         {active.map(([name, value]) => {
@@ -915,45 +824,31 @@ function ActiveFilters({
             >
               <TruncatedText text={text} />
 
-              <Link
-                to="/projects/$projectId/web-analytics"
-                params={{ projectId }}
-                search={searchOf({ ...search, filters: others })}
+              <PageLink
+                search={{ ...search, filters: others }}
                 aria-label={`Remove the filter ${text}`}
                 className="rounded p-1 text-ink-subtle hover:bg-background/60 hover:text-ink"
               >
                 <XIcon aria-hidden="true" className="size-3.5" />
-              </Link>
+              </PageLink>
             </li>
           );
         })}
       </ul>
-      <Link
-        to="/projects/$projectId/web-analytics"
-        params={{ projectId }}
-        search={searchOf({ ...search, filters: {}, goal: undefined })}
+      <PageLink
+        search={{ ...search, filters: {}, goal: undefined }}
         className="text-sm whitespace-nowrap text-link hover:underline"
       >
         Clear filters
-      </Link>
+      </PageLink>
     </div>
   );
 }
 
-function NoData({
-  projectId,
-  project,
-  search,
-  otherEnvironments,
-}: {
-  projectId: string;
-  project: ProjectSummary | undefined;
-  search: PageSearch;
-  otherEnvironments: boolean;
-}) {
-  const neverReceived = project?.lastEventAt === null;
-  // Installation instructions require project management access.
-  const canInstall = useAccess().can("projects");
+function NoData({ search, otherEnvironments }: { search: PageSearch; otherEnvironments: boolean }) {
+  const { dashboard } = useAnalyticsScope();
+  const neverReceived = dashboard?.lastEventAt === null;
+  const canInstall = dashboard?.canInstall ?? false;
   const isYear = "period" in search.range && search.range.period === "12m";
   if (!neverReceived && activeFilters(search.filters).length > 0) {
     return (
@@ -968,14 +863,9 @@ function NoData({
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <ButtonLink
-            variant="outline"
-            to="/projects/$projectId/web-analytics"
-            params={{ projectId }}
-            search={searchOf({ ...search, filters: {} })}
-          >
+          <PageLink button={{ variant: "outline" }} search={{ ...search, filters: {} }}>
             Clear filters
-          </ButtonLink>
+          </PageLink>
         </EmptyContent>
       </Empty>
     );
@@ -999,23 +889,15 @@ function NoData({
               }.`}
         </EmptyDescription>
       </EmptyHeader>
-      {neverReceived && canInstall && (
-        <EmptyContent>
-          <ButtonLink variant="outline" to="/projects/$projectId/settings" params={{ projectId }}>
-            Install the snippet
-          </ButtonLink>
-        </EmptyContent>
-      )}
+      {neverReceived && canInstall && <EmptyContent>{dashboard?.installLink}</EmptyContent>}
       {!neverReceived && !isYear && (
         <EmptyContent>
-          <ButtonLink
-            variant="outline"
-            to="/projects/$projectId/web-analytics"
-            params={{ projectId }}
-            search={searchOf({ ...search, range: { period: "12m" }, filters: {} })}
+          <PageLink
+            button={{ variant: "outline" }}
+            search={{ ...search, range: { period: "12m" }, filters: {} }}
           >
             Show the last 12 months
-          </ButtonLink>
+          </PageLink>
         </EmptyContent>
       )}
     </Empty>
@@ -1031,36 +913,32 @@ const hasData = (analytics: Analytics) =>
   analytics.summary.visits > 0 ||
   analytics.customEvents.length > 0;
 
-/** Use the timezone set in Settings. */
-export function AnalyticsPage({
-  projectId,
+/**
+ * The Web analytics page, in the scope it runs in (scope.tsx): the
+ * dashboard's (dashboard-analytics-page.tsx) or a shared link's (share/).
+ * Use the timezone set in Settings.
+ */
+export function AnalyticsView({
   range,
   filters,
   environment = DEFAULT_ENVIRONMENT,
   goalSearch = {},
 }: {
-  projectId: string;
   range: PageRange;
   filters: Filters;
   environment?: string;
   /** The goal filter in the address (docs/web-analytics.md, "The goal filter"), unchecked. */
   goalSearch?: { goal?: string | undefined; goalEvent?: string | undefined };
 }) {
+  const scope = useAnalyticsScope();
   const goal = goalChoiceFrom(goalSearch);
-  const navigate = useNavigate();
-  const project = useQuery(projectQuery(projectId));
-  const analytics = useQuery(analyticsQuery(projectId, range, filters, environment, goal));
+  const analytics = useQuery(analyticsQuery(scope.source, range, filters, environment, goal));
   const search: PageSearch = { range, filters, environment, goal };
-  const show = (next: Partial<PageSearch>) =>
-    void navigate({
-      to: "/projects/$projectId/web-analytics",
-      params: { projectId },
-      // Preserve other filters when changing dates or environment.
-      search: searchOf({ ...search, ...next }),
-    });
+  // Preserve other filters when changing dates or environment.
+  const show = (next: Partial<PageSearch>) => scope.show({ ...search, ...next });
 
   if (analytics.error instanceof ApiError && analytics.error.status === 404) {
-    return <NoSuchProject />;
+    return scope.notFound;
   }
 
   const data = analytics.data;
@@ -1068,9 +946,7 @@ export function AnalyticsPage({
 
   return (
     <div className="flex flex-col">
-      <PageActions>
-        <NowIndicator projectId={projectId} environment={environment} />
-      </PageActions>
+      {scope.renderHeaderActions(environment)}
       <FilterBar
         label="Period, environment, and filters"
         period={
@@ -1078,7 +954,9 @@ export function AnalyticsPage({
         }
         environment={
           // Keep the picker visible for a selected environment so the user can switch back.
-          data !== undefined && (
+          // A shared link shows its own environment only.
+          data !== undefined &&
+          scope.dashboard !== null && (
             <EnvironmentSelect
               environment={environment}
               answered={data}
@@ -1094,7 +972,7 @@ export function AnalyticsPage({
                 if (!sameGoal(next, goal)) show({ goal: next });
               }}
             />
-            <ActiveFilters projectId={projectId} search={search} analytics={data} />
+            <ActiveFilters search={search} analytics={data} />
           </>
         }
         range={
@@ -1120,15 +998,12 @@ export function AnalyticsPage({
             </AlertDescription>
             <AlertAction>
               {goal !== undefined && isGoalRefusal(analytics.error) ? (
-                <ButtonLink
-                  variant="outline"
-                  size="sm"
-                  to="/projects/$projectId/web-analytics"
-                  params={{ projectId }}
-                  search={searchOf({ ...search, goal: undefined })}
+                <PageLink
+                  button={{ variant: "outline", size: "sm" }}
+                  search={{ ...search, goal: undefined }}
                 >
                   Remove the goal
-                </ButtonLink>
+                </PageLink>
               ) : (
                 <Button variant="outline" size="sm" onClick={() => void analytics.refetch()}>
                   Retry
@@ -1151,16 +1026,14 @@ export function AnalyticsPage({
             aria-busy={refreshing}
           >
             {hasData(data) ? (
-              <Reports analytics={data} projectId={projectId} search={search} />
+              <Reports analytics={data} search={search} />
             ) : (
               <>
                 <NoData
-                  projectId={projectId}
-                  project={project.data}
                   search={search}
                   otherEnvironments={data.environments.some((name) => name !== environment)}
                 />
-                <GoalsSection analytics={data} projectId={projectId} search={search} />
+                <GoalsSection analytics={data} search={search} />
               </>
             )}
           </div>

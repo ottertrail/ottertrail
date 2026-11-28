@@ -89,7 +89,7 @@ import { type Device, isDevice } from "@/lib/speed-api";
 const AccountPage = lazyPage(() => import("@/features/account/account-page"), "AccountPage");
 const AlertsPage = lazyPage(() => import("@/features/alerts/alerts-page"), "AlertsPage");
 const AnalyticsPage = lazyPage(
-  () => import("@/features/analytics/analytics-page"),
+  () => import("@/features/analytics/dashboard-analytics-page"),
   "AnalyticsPage",
 );
 const NotificationsPage = lazyPage(

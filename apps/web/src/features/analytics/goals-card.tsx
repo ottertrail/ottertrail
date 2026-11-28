@@ -20,7 +20,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useAccess } from "@/lib/access";
 import { type GoalResult, goalStepText, MAX_GOALS } from "@/lib/goals-api";
 
 import { AddGoalDialog } from "./add-goal-dialog";
@@ -28,6 +27,7 @@ import { DeleteGoalDialog } from "./delete-goal-dialog";
 import { GoalLink } from "./filter-link";
 import { formatConversion, formatWhole } from "./format";
 import type { PageSearch } from "./list-rows";
+import { useAnalyticsScope } from "./scope";
 
 function AddGoalButton({ atLimit, onClick }: { atLimit: boolean; onClick: () => void }) {
   const reasonId = React.useId();
@@ -113,12 +113,7 @@ function GoalTable({
                     {search === undefined ? (
                       goal.name
                     ) : (
-                      <GoalLink
-                        projectId={projectId}
-                        search={search}
-                        goal={{ id: goal.id }}
-                        name={goal.name}
-                      />
+                      <GoalLink search={search} goal={{ id: goal.id }} name={goal.name} />
                     )}
                   </TruncatedText>
                   {selected === goal.id && (
@@ -187,7 +182,8 @@ export function GoalsCard({
   search?: PageSearch;
 }) {
   const selected = search?.goal !== undefined && "id" in search.goal ? search.goal.id : undefined;
-  const canManage = useAccess().canUse("product_analytics", "manage");
+  // Only the signed-in dashboard changes goals (docs/access.md): never a shared link.
+  const canManage = useAnalyticsScope().dashboard?.canManageGoals ?? false;
   const [adding, setAdding] = React.useState(false);
   // Refetching may remove the trigger, so return focus to the heading.
   const headingRef = React.useRef<HTMLHeadingElement>(null);
@@ -237,13 +233,15 @@ export function GoalsCard({
           </p>
         </>
       )}
-      <AddGoalDialog
-        open={adding}
-        onOpenChange={setAdding}
-        projectId={projectId}
-        eventNames={eventNames}
-        returnFocus={headingRef}
-      />
+      {canManage && (
+        <AddGoalDialog
+          open={adding}
+          onOpenChange={setAdding}
+          projectId={projectId}
+          eventNames={eventNames}
+          returnFocus={headingRef}
+        />
+      )}
     </section>
   );
 }

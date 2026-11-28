@@ -13,11 +13,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
+import { projectReports } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
 import { nowQuery, type RightNow } from "@/lib/now-api";
 
 import { NoSuchProject } from "../projects/no-such-project";
 import { StackedBarChart } from "../telemetry/stacked-bar-chart";
+import { DashboardAnalyticsScope } from "./dashboard-analytics-page";
 import { FilterLink } from "./filter-link";
 import { countryName, formatCount, formatTimeOfDay, formatWhole } from "./format";
 import type { PageSearch } from "./list-rows";
@@ -135,7 +137,7 @@ function PerMinute({ now }: { now: RightNow }) {
  * A row's name links to the Web analytics page for today, filtered by it,
  * as the page's own lists do.
  */
-function Lists({ now, projectId }: { now: RightNow; projectId: string }) {
+function Lists({ now }: { now: RightNow }) {
   const today: PageSearch = {
     range: { period: "today" },
     filters: {},
@@ -153,7 +155,7 @@ function Lists({ now, projectId }: { now: RightNow; projectId: string }) {
           figureHeadings={["Visitors", "Views"]}
           rows={now.pages.map((row) => ({
             key: row.path,
-            label: <FilterLink projectId={projectId} search={today} name="page" value={row.path} />,
+            label: <FilterLink search={today} name="page" value={row.path} />,
             title: row.path,
             bar: row.visitors,
             figures: [formatWhole(row.visitors), formatWhole(row.pageviews)],
@@ -169,9 +171,7 @@ function Lists({ now, projectId }: { now: RightNow; projectId: string }) {
           figureHeadings={["Visitors"]}
           rows={now.sources.map((row) => ({
             key: row.value,
-            label: (
-              <FilterLink projectId={projectId} search={today} name="source" value={row.value} />
-            ),
+            label: <FilterLink search={today} name="source" value={row.value} />,
             title: row.value,
             bar: row.visitors,
             figures: [formatWhole(row.visitors)],
@@ -189,14 +189,7 @@ function Lists({ now, projectId }: { now: RightNow; projectId: string }) {
             const name = row.value === null ? "Unknown" : countryName(row.value);
             return {
               key: row.value ?? "\u0000unknown",
-              label: (
-                <FilterLink
-                  projectId={projectId}
-                  search={today}
-                  name="country"
-                  value={row.value ?? ""}
-                />
-              ),
+              label: <FilterLink search={today} name="country" value={row.value ?? ""} />,
               title: name,
               bar: row.visitors,
               figures: [formatWhole(row.visitors)],
@@ -265,7 +258,7 @@ export function RightNowPage({
   projectId: string;
   environment?: string;
 }) {
-  const now = useQuery(nowQuery(projectId, environment));
+  const now = useQuery(nowQuery(projectReports(projectId), environment));
   const back = (
     <PageBack
       label="Web analytics"
@@ -345,7 +338,9 @@ export function RightNowPage({
               ]}
             />
             <PerMinute now={data} />
-            <Lists now={data} projectId={projectId} />
+            <DashboardAnalyticsScope projectId={projectId}>
+              <Lists now={data} />
+            </DashboardAnalyticsScope>
             <Notes />
           </div>
         )}

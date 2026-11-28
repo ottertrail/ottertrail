@@ -174,33 +174,59 @@ export const goalParams = (goal: GoalChoice | undefined): Record<string, string>
 export const sameGoal = (a: GoalChoice | undefined, b: GoalChoice | undefined) =>
   JSON.stringify(goalParams(a)) === JSON.stringify(goalParams(b));
 
+/**
+ * Where the Web analytics reports are read: a project's routes, for the
+ * signed-in dashboard, or a shared link's (docs/web-analytics.md, "Shared
+ * links"). `key` names it in the query cache: the project's ID, as every
+ * project query starts, or the link's.
+ */
+export interface ReportSource {
+  key: string;
+  /** The routes' common path, such as `/api/projects/<id>`. */
+  path: string;
+  /** A shared link's routes take no environment: the link names its own. */
+  shared: boolean;
+}
+
+export const projectReports = (projectId: string): ReportSource => ({
+  key: projectId,
+  path: `/api/projects/${encodeURIComponent(projectId)}`,
+  shared: false,
+});
+
+export const sharedReports = (token: string): ReportSource => ({
+  key: `share:${token}`,
+  path: `/api/share/${encodeURIComponent(token)}`,
+  shared: true,
+});
+
 /** How often a page that shows today refreshes on its own. */
 const REFRESH_MS = 60_000;
 
-const environmentParams = (environment: string): Record<string, string> =>
-  environment === DEFAULT_ENVIRONMENT ? {} : { environment };
+export const environmentParams = (
+  source: ReportSource,
+  environment: string,
+): Record<string, string> =>
+  environment === DEFAULT_ENVIRONMENT || source.shared ? {} : { environment };
 
 export const analyticsQuery = (
-  projectId: string,
+  source: ReportSource,
   range: PageRange,
   filters: Filters = {},
   environment = DEFAULT_ENVIRONMENT,
   goal?: GoalChoice,
 ) =>
   queryOptions({
-    queryKey: ["analytics", projectId, range, filters, environment, goalParams(goal)],
+    queryKey: ["analytics", source.key, range, filters, environment, goalParams(goal)],
     queryFn: async ({ signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
-        ...environmentParams(environment),
+        ...environmentParams(source, environment),
         ...Object.fromEntries(activeFilters(filters)),
         ...goalParams(goal),
       });
       return expectShape(
-        await apiRequest(
-          `/api/projects/${encodeURIComponent(projectId)}/analytics?${query.toString()}`,
-          { signal },
-        ),
+        await apiRequest(`${source.path}/analytics?${query.toString()}`, { signal }),
         isAnalytics,
       );
     },
@@ -292,7 +318,7 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
 
 /** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period, environment, filters, and goal. */
 export const listQuery = (
-  projectId: string,
+  source: ReportSource,
   range: PageRange,
   filters: Filters,
   environment: string,
@@ -303,7 +329,7 @@ export const listQuery = (
   infiniteQueryOptions({
     queryKey: [
       "analytics-list",
-      projectId,
+      source.key,
       range,
       filters,
       environment,
@@ -314,7 +340,7 @@ export const listQuery = (
     queryFn: async ({ pageParam, signal }) => {
       const query = new URLSearchParams({
         ...rangeParams(range),
-        ...environmentParams(environment),
+        ...environmentParams(source, environment),
         ...Object.fromEntries(activeFilters(filters)),
         ...goalParams(goal),
         report,
@@ -322,10 +348,9 @@ export const listQuery = (
         limit: String(LIST_PAGE_SIZE),
         ...(search === "" ? {} : { search }),
       });
-      const body = await apiRequest(
-        `/api/projects/${encodeURIComponent(projectId)}/analytics/list?${query.toString()}`,
-        { signal },
-      );
+      const body = await apiRequest(`${source.path}/analytics/list?${query.toString()}`, {
+        signal,
+      });
       const page = listPage(report, body);
       if (page === null) {
         throw new ApiError(0, "The API sent an unexpected response.");

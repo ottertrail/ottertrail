@@ -3,6 +3,7 @@ import { cn } from "cn";
 
 import { ButtonLink } from "@/components/button-link";
 import { DEFAULT_ENVIRONMENT } from "@/lib/analytics-api";
+import { projectReports } from "@/lib/analytics-queries";
 import { nowQuery } from "@/lib/now-api";
 
 import { formatWhole } from "./format";
@@ -43,7 +44,7 @@ export function NowIndicator({
   projectId: string;
   environment: string;
 }) {
-  const now = useQuery(nowQuery(projectId, environment));
+  const now = useQuery(nowQuery(projectReports(projectId), environment));
   if (now.data === undefined) return null;
   const { visitors } = now.data;
   return (

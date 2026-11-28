@@ -93,6 +93,7 @@ import type {
   StatusCounts,
 } from "../../src/lib/services-api.ts";
 import type { LocationDataStatus, Settings } from "../../src/lib/settings-api.ts";
+import type { SharedPage, ShareLink } from "../../src/lib/share-links-api.ts";
 import type { SourceMapFile, SourceMapRelease } from "../../src/lib/source-maps-api.ts";
 import type { Speed } from "../../src/lib/speed-api.ts";
 import type { StorageReport } from "../../src/lib/storage-api.ts";
@@ -401,10 +402,110 @@ export interface FakeApi {
   deleteProject: (api: FakeApi, id: string) => Response;
   /** The signed-in user's own name, email, password, and sessions (fake-account.ts). */
   account: FakeAccount;
+  /**
+   * The project's shared links, oldest first: GET, POST, and DELETE
+   * /api/projects/:id/share-links read and change them (the owner's and
+   * admins'). A new one's address holds FAKE_SHARE_TOKEN.
+   */
+  shareLinks: ShareLink[];
+  /**
+   * The tokens that open a shared link's page (/api/share/:token…), with
+   * what the page shows around the reports; any other token answers 404, as
+   * a revoked one does. The reports are `analytics`, `list`, and `now`.
+   */
+  sharedPages: Record<string, SharedPage>;
   /** Every path the page asked for, with its query, in order. */
   requests: string[];
   /** The bodies of requests that change something, such as a delete's confirmation. */
   bodies: { method: string; path: string; body: unknown }[];
+}
+
+/** The token in a new shared link's address, and the one sharedPages opens by default. */
+export const FAKE_SHARE_TOKEN = "a-shared-link-only-these-tests-use";
+
+/** A shared link as the settings list it. */
+export function fakeShareLink(overrides: Partial<ShareLink> = {}): ShareLink {
+  return {
+    id: "5a5a5a5a-0000-4000-8000-000000000001",
+    name: "For the client",
+    environment: "production",
+    prefix: "a-shar",
+    createdAt: "2026-11-12T09:00:00.000Z",
+    createdBy: { id: "user-1", name: "Ada Owner" },
+    lastOpenedAt: "2026-11-16T08:30:00.000Z",
+    ...overrides,
+  };
+}
+
+const NO_SHARED_LINK = {
+  error: "not_found",
+  message: "This link does not work. It may have been revoked, or copied incompletely.",
+};
+
+/** The shared link routes: the settings' list, and a link's own page and reports. */
+async function answerShareLinks(
+  api: FakeApi,
+  url: URL,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const path = url.pathname;
+  const manage = /^\/api\/projects\/[^/]+\/share-links(?:\/([^/]+))?$/.exec(path);
+  if (manage !== null) {
+    if (api.access.role === "member") {
+      return json({ error: "forbidden", message: "You do not have access to this." }, 403);
+    }
+    const linkId = manage[1];
+    if (linkId !== undefined && init?.method === "DELETE") {
+      const before = api.shareLinks.length;
+      api.shareLinks = api.shareLinks.filter((link) => link.id !== decodeURIComponent(linkId));
+      return api.shareLinks.length === before
+        ? json({ error: "link_not_found", message: "The project has no link with this ID." }, 404)
+        : new Response(null, { status: 204 });
+    }
+    if (init?.method === "POST") {
+      const body: unknown = JSON.parse(typeof init.body === "string" ? init.body : "{}");
+      const sent = typeof body === "object" && body !== null ? body : {};
+      const name = "name" in sent && typeof sent.name === "string" ? sent.name.trim() : "";
+      const environment =
+        "environment" in sent && typeof sent.environment === "string"
+          ? sent.environment.toLowerCase()
+          : "production";
+      const link = fakeShareLink({
+        id: `5a5a5a5a-0000-4000-8000-${String(api.shareLinks.length + 2).padStart(12, "0")}`,
+        name,
+        environment,
+        createdAt: "2026-11-16T10:00:00.000Z",
+        lastOpenedAt: null,
+      });
+      api.shareLinks = [...api.shareLinks, link];
+      return json({ link, url: `${window.location.origin}/share/${FAKE_SHARE_TOKEN}` }, 201);
+    }
+    return json({ links: api.shareLinks, maxLinks: 10 });
+  }
+  const shared = /^\/api\/share\/([^/]+)(\/analytics(?:\/list|\/now)?)?$/.exec(path);
+  if (shared === null) return null;
+  const page = api.sharedPages[decodeURIComponent(shared[1] ?? "")];
+  if (page === undefined) return json(NO_SHARED_LINK, 404);
+  const report = shared[2];
+  if (report === undefined) return json(page);
+  if (report === "/analytics/now") {
+    const result = api.now(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  if (report === "/analytics/list") {
+    const result = api.list(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
+  const result = await api.analytics(
+    PROJECT.id,
+    url.searchParams.get("period"),
+    url.searchParams,
+    api,
+  );
+  // As the API answers: the link's environment, and no other.
+  return result instanceof Response
+    ? result
+    : json({ ...result, environment: page.environment, environments: [page.environment] });
 }
 
 /** When the fake API says a pending deletion of a user's data was asked for. */
@@ -4842,6 +4943,9 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   // As the API: everything else needs a session (sign-in and setup are above or public).
   const links = answerLinks(api, url, init);
   if (links !== null) return links;
+  // A shared link's routes need no session: the token is their capability.
+  const shared = path.startsWith("/api/share/") ? await answerShareLinks(api, url, init) : null;
+  if (shared !== null) return shared;
   if (
     (!api.signedIn && !path.startsWith("/api/auth/") && path !== "/api/setup") ||
     api.refusedPaths.includes(path)
@@ -5046,6 +5150,8 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (goalPath?.[1] !== undefined && init?.method === "DELETE") {
     return removeGoal(api, decodeURIComponent(goalPath[1]));
   }
+  const shareAnswer = await answerShareLinks(api, url, init);
+  if (shareAnswer !== null) return shareAnswer;
   if (/^\/api\/projects\/[^/]+\/ingest-activity$/.test(path)) {
     if (api.access.role === "member") {
       return json({ error: "forbidden", message: "You do not have access to this." }, 403);
@@ -5514,6 +5620,14 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     unknownWidgets: [],
     widget: fakeWidget,
     account: fakeAccount(),
+    shareLinks: [fakeShareLink()],
+    sharedPages: {
+      [FAKE_SHARE_TOKEN]: {
+        project: { name: PROJECT.name, iconUrl: null },
+        environment: "production",
+        timeZone: "Asia/Singapore",
+      },
+    },
     requests: [],
     bodies: [],
     ...overrides,

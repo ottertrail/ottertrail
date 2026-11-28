@@ -1,6 +1,6 @@
 import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 
-import { DEFAULT_ENVIRONMENT } from "./analytics-api";
+import { environmentParams, type ReportSource } from "./analytics-queries";
 import { apiRequest, expectShape } from "./api";
 
 /**
@@ -70,16 +70,13 @@ const isRightNow = (value: unknown): value is RightNow =>
  * the document is hidden, and asks again when it shows. Never kept longer
  * than a poll.
  */
-export const nowQuery = (projectId: string, environment: string) =>
+export const nowQuery = (source: ReportSource, environment: string) =>
   queryOptions({
-    queryKey: ["analytics-now", projectId, environment],
+    queryKey: ["analytics-now", source.key, environment],
     queryFn: async ({ signal }) => {
-      const query =
-        environment === DEFAULT_ENVIRONMENT
-          ? ""
-          : `?${new URLSearchParams({ environment }).toString()}`;
+      const params = new URLSearchParams(environmentParams(source, environment)).toString();
       return expectShape(
-        await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/analytics/now${query}`, {
+        await apiRequest(`${source.path}/analytics/now${params === "" ? "" : `?${params}`}`, {
           signal,
         }),
         isRightNow,
