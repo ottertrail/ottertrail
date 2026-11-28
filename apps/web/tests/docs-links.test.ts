@@ -27,6 +27,7 @@ const EXPECTED: Record<string, [topic: string, path: string]> = {
   "/settings?tab=channels": ["Notification channels settings", "/uptime-and-alerts/channels/"],
   "/projects/$projectId/overview": ["Overview", "/introduction/overview/"],
   "/projects/$projectId/web-analytics": ["Web analytics", "/web-analytics/reports/"],
+  "/projects/$projectId/web-analytics/now": ["Right now", "/web-analytics/reports/#right-now"],
   "/projects/$projectId/speed": ["Speed", "/web-analytics/web-vitals/"],
   "/projects/$projectId/heatmaps": ["Heatmaps", "/web-analytics/heatmaps/"],
   "/projects/$projectId/users": ["Users", "/users/the-users-page/"],

@@ -261,9 +261,11 @@ function ProjectMenu({ projectId }: { projectId: string }) {
               <SidebarMenuButton
                 render={<Link to="/projects/$projectId/web-analytics" params={{ projectId }} />}
                 isActive={
+                  // Right now (web-analytics/now) is part of it.
                   matchRoute({
                     to: "/projects/$projectId/web-analytics",
                     params: { projectId },
+                    fuzzy: true,
                   }) !== false
                 }
                 tooltip="Web analytics"

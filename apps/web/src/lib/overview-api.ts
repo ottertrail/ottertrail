@@ -21,6 +21,7 @@ export const WIDGETS = [
   { id: "ai-cost", area: "ai", title: "AI cost" },
   { id: "speed", area: "web_analytics", title: "Page speed" },
   { id: "main-goal", area: "product_analytics", title: "Main goal" },
+  { id: "now", area: "web_analytics", title: "Right now" },
   { id: "traffic", area: "web_analytics", title: "Traffic" },
   { id: "goals", area: "product_analytics", title: "Goals and conversion" },
   { id: "users", area: "product_analytics", title: "Signed-in users" },
@@ -28,6 +29,12 @@ export const WIDGETS = [
 ] as const satisfies readonly { id: string; area: Area; title: string }[];
 
 export type WidgetId = (typeof WIDGETS)[number]["id"];
+
+/**
+ * The widgets with a route of their own. Right now reads the Web analytics
+ * page's live numbers instead (now-api.ts), so the two share one poll.
+ */
+export type PeriodWidgetId = Exclude<WidgetId, "now">;
 
 export const widgetTitle = (id: WidgetId) =>
   WIDGETS.find((widget) => widget.id === id)?.title ?? id;
@@ -275,7 +282,7 @@ const isOverviewGoal = (value: unknown): value is OverviewGoal =>
 const isServiceFigures = (value: unknown) =>
   has(value, { requests: isNumber, failed: isNumber, p95Us: isNumberOrNull });
 
-const SHAPES: { [K in WidgetId]: (value: unknown) => boolean } = {
+const SHAPES: { [K in PeriodWidgetId]: (value: unknown) => boolean } = {
   attention: (value) =>
     has(value, {
       alerts: (list) =>
@@ -489,7 +496,7 @@ export async function resetLayout(projectId: string): Promise<Layout> {
   return layoutOf(await apiRequest(overviewPath(projectId, "layout"), { method: "DELETE" }));
 }
 
-export const widgetQuery = <K extends WidgetId>(
+export const widgetQuery = <K extends PeriodWidgetId>(
   projectId: string,
   id: K,
   period: OverviewPeriod,

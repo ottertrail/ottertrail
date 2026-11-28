@@ -170,7 +170,8 @@ export function StackedBarChart({
   const totals = Array.from({ length: buckets }, (_, index) =>
     parts.reduce((sum, part) => sum + (part.values[index] ?? 0), 0),
   );
-  const ticks = ticksFor(0, Math.max(0, ...totals));
+  // The bars count things (records, traces, visitors): no half steps.
+  const ticks = ticksFor(0, Math.max(0, ...totals), 4, 1);
   const times = Array.from({ length: buckets }, (_, index) => bucketStart(frame, index));
   const axis = timeTicks(times, timeZone, stepSeconds);
   const xTicks = evenTicks(axis.ticks, axis.ticks.map(axis.label), width);

@@ -14,6 +14,7 @@ import * as React from "react";
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
 import { FilterBar, FilterBarRange } from "@/components/filter-bar";
+import { PageActions } from "@/components/page-header";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -95,6 +96,7 @@ import {
   rowRate,
   searchOf,
 } from "./list-rows";
+import { NowIndicator } from "./now-indicator";
 import type { RankedRow } from "./ranked-list";
 import { ShowAllDialog } from "./show-all-dialog";
 
@@ -997,6 +999,9 @@ export function AnalyticsPage({
 
   return (
     <div className="flex flex-col">
+      <PageActions>
+        <NowIndicator projectId={projectId} environment={environment} />
+      </PageActions>
       <FilterBar
         label="Period, environment, and filters"
         period={

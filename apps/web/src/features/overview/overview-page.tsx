@@ -34,6 +34,7 @@ import {
   layoutQuery,
   OVERVIEW_PERIODS,
   type OverviewPeriod,
+  type PeriodWidgetId,
   resetLayout,
   saveLayout,
   type WidgetId,
@@ -48,6 +49,7 @@ import {
   ErrorsWidget,
   GoalsWidget,
   MainGoalWidget,
+  NowWidget,
   ServicesWidget,
   SourcesWidget,
   SpeedWidget,
@@ -65,6 +67,7 @@ const WIDGET_COMPONENTS: Record<WidgetId, (props: WidgetProps) => React.ReactNod
   "ai-cost": AiCostWidget,
   speed: SpeedWidget,
   "main-goal": MainGoalWidget,
+  now: NowWidget,
   traffic: TrafficWidget,
   goals: GoalsWidget,
   users: UsersWidget,
@@ -177,11 +180,14 @@ export function OverviewPage({
     }
   }
 
-  // Use the API dates when available; calculate locally while loading.
-  const firstShown = layout.data?.widgets.find((widget) => !widget.hidden)?.id ?? "traffic";
+  // Use the API dates when available; calculate locally while loading. Right now has no days.
+  const withDays = layout.data?.widgets.find(
+    (widget): widget is { id: PeriodWidgetId; hidden: false } =>
+      !widget.hidden && widget.id !== "now",
+  );
   const first = useQuery({
-    ...widgetQuery(projectId, firstShown, period, environment),
-    enabled: layout.data?.widgets.some((widget) => !widget.hidden) === true,
+    ...widgetQuery(projectId, withDays?.id ?? "traffic", period, environment),
+    enabled: withDays !== undefined,
   });
   const timeZone = first.data?.timeZone ?? me?.instance.timeZone ?? "UTC";
   const days = first.data ?? periodDays(period, timeZone);

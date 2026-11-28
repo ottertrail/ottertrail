@@ -61,6 +61,7 @@ import {
   type MetricSeries,
   type MetricSparkline,
 } from "../../src/lib/metrics-api.ts";
+import type { RightNow } from "../../src/lib/now-api.ts";
 import { WIDGETS, type WidgetId } from "../../src/lib/overview-api.ts";
 import {
   type Funnel,
@@ -212,6 +213,8 @@ export interface FakeApi {
   savedFunnels: SavedFunnel[];
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
+  /** Answers GET /api/projects/:id/analytics/now; by default, fakeNow. A Response stands for an error. */
+  now: (query: URLSearchParams) => RightNow | Response;
   /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
   users: (query: URLSearchParams, api: FakeApi) => UserList | Response;
   /** Answers GET /api/projects/:id/users/:userId; by default, fakeUser. */
@@ -2784,6 +2787,68 @@ export function fakeGoals(): GoalResult[] {
   ];
 }
 
+/**
+ * Right now's visitors per minute, oldest first: 8 visitors in the 30
+ * minutes, 3 of them in the last 5, and 25 pageviews in all, as the pages
+ * below add up. The fixture's week has about 110 visitors a day.
+ */
+const NOW_VISITORS = [
+  1, 0, 1, 1, 0, 2, 1, 0, 0, 1, 1, 0, 1, 2, 1, 0, 1, 0, 0, 1, 1, 2, 1, 0, 1, 1, 2, 1, 1, 1,
+];
+const NOW_PAGEVIEWS = [
+  1, 0, 1, 0, 0, 3, 1, 0, 0, 1, 1, 0, 1, 3, 1, 0, 1, 0, 0, 1, 0, 2, 1, 0, 1, 1, 2, 1, 1, 1,
+];
+
+/** Right now at this moment, for the same site as analyticsFixture; change parts with `overrides`. */
+export function fakeNow(query: URLSearchParams, overrides: Partial<RightNow> = {}): RightNow {
+  const at = new Date();
+  const first = Math.floor(at.getTime() / 60_000) * 60_000 - 29 * 60_000;
+  return {
+    timeZone: "Asia/Singapore",
+    environment: query.get("environment") ?? "production",
+    at: at.toISOString(),
+    visitors: 3,
+    windowVisitors: 8,
+    perMinute: NOW_VISITORS.map((visitors, index) => ({
+      start: new Date(first + index * 60_000).toISOString(),
+      visitors,
+      pageviews: NOW_PAGEVIEWS[index] ?? 0,
+    })),
+    pages: [
+      { path: "/", visitors: 6, pageviews: 9 },
+      { path: "/pricing", visitors: 4, pageviews: 7 },
+      { path: "/blog/launch", visitors: 2, pageviews: 4 },
+      { path: "/signup", visitors: 2, pageviews: 3 },
+      { path: "/docs/getting-started", visitors: 1, pageviews: 2 },
+    ],
+    sources: [
+      { value: "Direct / none", visitors: 4 },
+      { value: "google.com", visitors: 3 },
+      { value: "newsletter", visitors: 1 },
+    ],
+    countries: [
+      { value: "DE", visitors: 4 },
+      { value: "SG", visitors: 2 },
+      { value: null, visitors: 2 },
+    ],
+    ...overrides,
+  };
+}
+
+/** Nobody on the site in the last 30 minutes. */
+export const nobodyNow = (query: URLSearchParams): RightNow => {
+  const busy = fakeNow(query);
+  return {
+    ...busy,
+    visitors: 0,
+    windowVisitors: 0,
+    perMinute: busy.perMinute.map((minute) => ({ ...minute, visitors: 0, pageviews: 0 })),
+    pages: [],
+    sources: [],
+    countries: [],
+  };
+};
+
 /** A week of numbers for one project; change parts with `overrides`. */
 export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics {
   return {
@@ -5228,6 +5293,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.user(decodeURIComponent(userPath[1]), url.searchParams, api);
     return result instanceof Response ? result : json(result);
   }
+  if (/^\/api\/projects\/[^/]+\/analytics\/now$/.test(path)) {
+    const result = api.now(url.searchParams);
+    return result instanceof Response ? result : json(result);
+  }
   if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
     const result = api.list(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -5346,6 +5415,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     goals: fakeGoals(),
     savedFunnels: fakeSavedFunnels(),
     list: fakeList,
+    now: fakeNow,
     users: fakeUsers,
     user: fakeUser,
     userDeletions: [],
@@ -5902,7 +5972,7 @@ export function fakeWidget(id: WidgetId, query: URLSearchParams, api: FakeApi): 
         pages: analytics.pages.map(({ path, visitors }) => ({ path, visitors })),
       };
     default:
-      return json({ error: "not_found", message: `No fake widget ${String(id)}` }, 404);
+      return json({ error: "not_found", message: `No fake widget ${id}` }, 404);
   }
 }
 

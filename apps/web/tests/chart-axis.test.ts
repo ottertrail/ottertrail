@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 
-import { timeTicks } from "../src/features/telemetry/chart-time.ts";
+import { ticksFor, timeTicks } from "../src/features/telemetry/chart-time.ts";
 import { evenTicks, formatAxisCount } from "../src/lib/chart-axis.ts";
 
 const hours = (start: string, count: number, step: number) =>
@@ -12,6 +12,16 @@ describe("an axis's counts", () => {
     expect(formatAxisCount(950)).toBe("950");
     expect(formatAxisCount(1200)).toBe("1.2K");
     expect(formatAxisCount(3_400_000)).toBe("3.4M");
+  });
+});
+
+describe("a value axis's steps", () => {
+  test("are 1, 2, or 5 times a power of ten, and never under the least step", () => {
+    expect(ticksFor(0, 2)).toEqual([0, 0.5, 1, 1.5, 2]);
+    // Counts: a bar chart of a few visitors has no half steps.
+    expect(ticksFor(0, 2, 4, 1)).toEqual([0, 1, 2]);
+    expect(ticksFor(0, 0, 4, 1)).toEqual([0, 1]);
+    expect(ticksFor(0, 950, 4, 1)).toEqual([0, 500, 1000]);
   });
 });
 

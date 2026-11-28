@@ -22,6 +22,7 @@ const ALL_TITLES = [
   "AI cost",
   "Page speed",
   "Main goal",
+  "Right now",
   "Traffic",
   "Goals and conversion",
   "Signed-in users",
@@ -118,10 +119,10 @@ describe("edit mode", () => {
 
     const up = page.getByRole("button", { name: "Move Traffic up" });
     await up.click();
-    await expect.element(page.getByText("Traffic moved to 7 of 11.")).toBeVisible();
+    await expect.element(page.getByText("Traffic moved to 8 of 12.")).toBeVisible();
     // Focus stays on the button that moved it.
     await expect.element(up).toHaveFocus();
-    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(6);
+    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(7);
 
     await page.getByRole("button", { name: "Done" }).click();
     expect(shownTitles()).toEqual([
@@ -130,8 +131,9 @@ describe("edit mode", () => {
       "Server requests, failures and p95",
       "AI cost",
       "Page speed",
-      "Traffic",
       "Main goal",
+      "Traffic",
+      "Right now",
       "Goals and conversion",
       "Signed-in users",
       "Top sources and pages",
@@ -159,7 +161,7 @@ describe("what a member sees", () => {
     const api = installFakeApi({ access: memberAccess({ web_analytics: "view" }) });
     renderApp(OVERVIEW);
     await expect.element(widget("Traffic").getByText("765")).toBeVisible();
-    expect(shownTitles()).toEqual(["Page speed", "Traffic", "Top sources and pages"]);
+    expect(shownTitles()).toEqual(["Page speed", "Right now", "Traffic", "Top sources and pages"]);
     expect(page.getByRole("region", { name: "AI cost" }).elements()).toEqual([]);
     const asked = api.requests
       .filter((path) => path.includes("/overview/") && !path.includes("/layout"))
@@ -284,14 +286,14 @@ describe("saving the layout", () => {
     // The first save is held back by the API; the second is asked for meanwhile.
     await up.click();
     await up.click();
-    await expect.element(page.getByText("Traffic moved to 6 of 11.")).toBeVisible();
+    await expect.element(page.getByText("Traffic moved to 7 of 12.")).toBeVisible();
     held.resolve();
 
-    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(5);
+    await expect.poll(() => api.layout?.order.indexOf("traffic")).toBe(6);
     const saves = api.bodies.filter((body) => body.path.endsWith("/overview/layout"));
     await expect.poll(() => saves.length).toBe(2);
     // The page still shows the second move once the first save's answer is in.
-    await expect.poll(() => shownTitles().indexOf("Traffic")).toBe(5);
+    await expect.poll(() => shownTitles().indexOf("Traffic")).toBe(6);
   });
 
   test("a widget the dashboard does not know is left out, and the rest still show", async () => {

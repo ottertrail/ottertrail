@@ -21,7 +21,8 @@ function goalRows(): string[][] {
 const dialog = () => page.getByRole("dialog", { name: "Add a goal" });
 
 const analyticsRequests = (api: { requests: string[] }) =>
-  api.requests.filter((path) => path.includes("/analytics")).length;
+  api.requests.filter((path) => path.includes("/analytics") && !path.includes("/analytics/now"))
+    .length;
 
 async function choose(combobox: string, option: string) {
   await page.getByRole("combobox", { name: combobox }).click();

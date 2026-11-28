@@ -65,6 +65,10 @@ export const SCREEN_DOCS: Partial<Record<RoutePath, ScreenDocs>> = {
   // A project's reports and lists.
   "/projects/$projectId/overview": { topic: "Overview", path: "/introduction/overview/" },
   "/projects/$projectId/web-analytics": { topic: "Web analytics", path: "/web-analytics/reports/" },
+  "/projects/$projectId/web-analytics/now": {
+    topic: "Right now",
+    path: "/web-analytics/reports/#right-now",
+  },
   "/projects/$projectId/speed": { topic: "Speed", path: "/web-analytics/web-vitals/" },
   "/projects/$projectId/heatmaps": { topic: "Heatmaps", path: "/web-analytics/heatmaps/" },
   "/projects/$projectId/users": { topic: "Users", path: "/users/the-users-page/" },

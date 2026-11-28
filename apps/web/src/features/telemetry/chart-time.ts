@@ -1,11 +1,17 @@
-/** Use steps of 1, 2, or 5 times a power of ten. */
-export function ticksFor(lo: number, hi: number, count = 4): number[] {
+/**
+ * Use steps of 1, 2, or 5 times a power of ten, and at least `minStep`: 1
+ * for counts, which have no half.
+ */
+export function ticksFor(lo: number, hi: number, count = 4, minStep = 0): number[] {
   const low = Math.min(0, lo);
   let high = Math.max(0, hi);
   if (high === low) high = low + 1;
   const raw = (high - low) / count;
   const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw) ?? 10 * magnitude;
+  const step = Math.max(
+    minStep,
+    [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw) ?? 10 * magnitude,
+  );
   const ticks: number[] = [];
   for (let k = Math.floor(low / step); ; k += 1) {
     const tick = Number((k * step).toPrecision(12));

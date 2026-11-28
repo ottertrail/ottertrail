@@ -48,8 +48,9 @@ const links = () =>
     link.getAttribute("aria-label"),
   );
 
+/** The page's report requests, without Right now's polls (right-now.test.tsx). */
 const analyticsRequests = (api: { requests: string[] }) =>
-  api.requests.filter((path) => path.includes("/analytics"));
+  api.requests.filter((path) => path.includes("/analytics") && !path.includes("/analytics/now"));
 
 describe("the analytics page", () => {
   test("shows the period's numbers, days, and lists", async () => {

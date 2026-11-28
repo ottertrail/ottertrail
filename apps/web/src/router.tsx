@@ -123,6 +123,7 @@ const MembersPage = lazyPage(() => import("@/features/settings/members-page"), "
 const MetricPage = lazyPage(() => import("@/features/telemetry/metric-page"), "MetricPage");
 const MetricsPage = lazyPage(() => import("@/features/telemetry/metrics-page"), "MetricsPage");
 const OverviewPage = lazyPage(() => import("@/features/overview/overview-page"), "OverviewPage");
+const RightNowPage = lazyPage(() => import("@/features/analytics/now-page"), "RightNowPage");
 const ProjectSettingsPage = lazyPage(
   () => import("@/features/projects/project-settings-page"),
   "ProjectSettingsPage",
@@ -408,6 +409,23 @@ const webAnalyticsRoute = createRoute({
         goalSearch={{ goal, goalEvent }}
       />
     );
+  }),
+});
+
+/**
+ * Right now: the visitors on the site in the last minutes, for the
+ * environment in the address (left out for production). Its own address,
+ * since the Web analytics page's period and filters do not apply to it.
+ */
+const rightNowRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/web-analytics/now",
+  staticData: { title: "Right now", access: "web_analytics" },
+  validateSearch: (search: { env?: unknown } & SearchSchemaInput) => environmentSearch(search),
+  component: withPage(RightNowPage, function RightNowRouteComponent() {
+    const { projectId } = rightNowRoute.useParams();
+    const { env } = rightNowRoute.useSearch();
+    return <RightNowPage projectId={projectId} environment={env ?? DEFAULT_ENVIRONMENT} />;
   }),
 });
 
@@ -1528,6 +1546,7 @@ const routeTree = rootRoute.addChildren([
       projectIndexRoute,
       overviewRoute,
       webAnalyticsRoute,
+      rightNowRoute,
       speedRoute,
       heatmapsRoute,
       usersRoute,

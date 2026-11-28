@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRightIcon } from "lucide-react";
-import { Area, AreaChart, ReferenceLine, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, ReferenceLine, XAxis, YAxis } from "recharts";
 
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
@@ -27,10 +27,12 @@ import {
   formatCount,
   formatDay,
   formatPercent,
+  formatTimeOfDay,
   formatWhole,
   pointsChange,
   relativeChange,
 } from "@/features/analytics/format";
+import { LiveDot } from "@/features/analytics/now-indicator";
 import { deviceLabel, formatVital, type Rating, rate } from "@/features/speed/format";
 import { RatingBadge } from "@/features/speed/rating";
 import { formatDuration } from "@/features/telemetry/format";
@@ -41,11 +43,12 @@ import { DEFAULT_PERIOD } from "@/lib/analytics-api";
 import { AI_DOCS_URL } from "@/lib/docs";
 import { goalStepText } from "@/lib/goals-api";
 import { MISSING } from "@/lib/missing";
+import { type NowMinute, nowQuery } from "@/lib/now-api";
 import {
   type OverviewGoal,
   type Retained,
   type OverviewPeriod,
-  type WidgetId,
+  type PeriodWidgetId,
   widgetQuery,
   widgetTitle,
 } from "@/lib/overview-api";
@@ -72,7 +75,7 @@ const headClass = "h-8 text-xs font-normal text-ink-subtle";
 const numHeadClass = `${headClass} text-right`;
 const numClass = "text-right tabular-nums";
 
-function useWidget<K extends WidgetId>(id: K, props: WidgetProps) {
+function useWidget<K extends PeriodWidgetId>(id: K, props: WidgetProps) {
   return useQuery({
     ...widgetQuery(props.projectId, id, props.period, props.environment),
     enabled: props.arrange?.hidden !== true,
@@ -1002,6 +1005,112 @@ function DayLine({ days }: { days: { day: string; visitors: number }[] }) {
         <span>{formatDay(last.day, { weekday: true })}</span>
       </figcaption>
     </figure>
+  );
+}
+
+const MINUTE_BARS = { visitors: { color: "var(--chart-1)" } };
+
+/** Visitors per minute, small: the Right now view has the chart with its readout. */
+function MinuteBars({ minutes, timeZone }: { minutes: NowMinute[]; timeZone: string }) {
+  const first = minutes[0];
+  const last = minutes.at(-1);
+  if (first === undefined || last === undefined) return null;
+  const busiest = minutes.reduce((a, b) => (b.visitors > a.visitors ? b : a), first);
+  const time = (minute: NowMinute) => formatTimeOfDay(minute.start, timeZone);
+  return (
+    <figure className="flex flex-col gap-1">
+      <ChartContainer config={MINUTE_BARS} aria-hidden="true" className="aspect-auto h-16 w-full">
+        <BarChart
+          data={minutes}
+          margin={{ top: 4, right: 1, bottom: 1, left: 1 }}
+          barCategoryGap={1}
+          accessibilityLayer={false}
+        >
+          <XAxis dataKey="start" hide />
+          <YAxis hide domain={[0, (max: number) => Math.max(1, max)]} />
+          <ReferenceLine y={0} stroke="var(--border)" />
+          <Bar
+            dataKey="visitors"
+            fill="var(--chart-1)"
+            radius={[2, 2, 0, 0]}
+            maxBarSize={24}
+            isAnimationActive={false}
+          />
+        </BarChart>
+      </ChartContainer>
+      <p className="sr-only">
+        Visitors per minute from {time(first)} to {time(last)}: most,{" "}
+        {formatWhole(busiest.visitors)}, at {time(busiest)}; {formatWhole(last.visitors)} in the
+        minute still running.
+      </p>
+      <figcaption
+        aria-hidden="true"
+        className="flex justify-between text-xs text-ink-subtle tabular-nums"
+      >
+        <span>{time(first)}</span>
+        <span>Visitors per minute</span>
+        <span>{time(last)}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/**
+ * Live, whatever the overview's period: the Web analytics page's query,
+ * polled every 15 seconds while the tab shows.
+ */
+export function NowWidget(props: WidgetProps) {
+  const { projectId, environment } = props;
+  const query = useQuery({
+    ...nowQuery(projectId, environment),
+    enabled: props.arrange?.hidden !== true,
+  });
+  const title = widgetTitle("now");
+  return (
+    <WidgetFrame
+      id="now"
+      title={title}
+      arrange={props.arrange}
+      link={
+        <Link
+          to="/projects/$projectId/web-analytics/now"
+          params={{ projectId }}
+          search={environmentSearch(environment)}
+          className={headLink}
+        >
+          Pages and sources
+        </Link>
+      }
+    >
+      <WidgetState title={title} query={query}>
+        {(data) => (
+          <div className="flex flex-col gap-3">
+            <StatStrip
+              label={title}
+              stats={[
+                {
+                  label: "Visitors now",
+                  value: (
+                    <span className="flex items-center gap-2">
+                      <LiveDot live={data.visitors > 0} />
+                      {formatWhole(data.visitors)}
+                    </span>
+                  ),
+                },
+                { label: "Last 30 minutes", value: formatWhole(data.windowVisitors) },
+              ]}
+              className="lg:grid-cols-2"
+            />
+            {data.windowVisitors === 0 ? (
+              <p className="text-sm text-ink-subtle">Nobody in the last 30 minutes.</p>
+            ) : (
+              <MinuteBars minutes={data.perMinute} timeZone={data.timeZone} />
+            )}
+            <WidgetNote>Visitors now counts the last 5 minutes.</WidgetNote>
+          </div>
+        )}
+      </WidgetState>
+    </WidgetFrame>
   );
 }
 

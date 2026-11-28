@@ -117,6 +117,10 @@ export default defineConfig({
               async emulateColorScheme(context, scheme: "light" | "dark") {
                 await context.page.emulateMedia({ colorScheme: scheme });
               },
+              /** For a test that checks an animation stops; it switches it back. */
+              async emulateReducedMotion(context, reduce: boolean) {
+                await context.page.emulateMedia({ reducedMotion: reduce ? "reduce" : null });
+              },
             },
             instances: [{ browser: "chromium" }],
           },
