@@ -866,6 +866,31 @@ The earlier period is seen as it stood at that time: every report ignores events
 
 Counts and averages change in percent, rounded; a change too small to round to 1% shows as "<1%", never as no change. The bounce rate, a share, changes in percentage points: from 24% to 30% is 6 points, where "25% more" would mislead. Points are worked out from the whole percentages shown, so the change always matches them. A number with nothing to compare with (nothing before, or 0) shows no change.
 
+### Right now
+
+Who is on the site in the last minutes, for one environment. Code: `apps/api/src/reports/now.ts` and `now-routes.ts`; the dashboard: [dashboard](dashboard.md#right-now).
+
+```text
+GET /api/projects/:id/analytics/now[?environment=staging]
+```
+
+**What counts.** A visitor is there when their browser sent an event web analytics counts: a pageview, an engagement report (time on a page), or a custom event, with a visitor ID. A server's events have no visitor ID, so they never count, and neither do errors and Web Vitals, as everywhere in web analytics. Bots were refused on arrival (section 4). Visitors are daily visitor IDs, as for Visitors.
+
+**The windows.** The answer holds:
+
+- `visitors`: the visitors with an event in the last 5 minutes, up to the moment of the request (`at`).
+- `windowVisitors`: those of the last 30 minutes, and `perMinute`: for each of those 30 minutes, whole clock minutes with the current one last and still running, its visitors and pageviews. A minute with nobody is 0.
+- `pages`: the 10 paths with the most visitors in the 30 minutes, with their pageviews. A page's visitors are those with any event on it, so a visitor still reading a page opened 40 minutes ago counts there when its engagement report arrives.
+- `sources` and `countries`: the 10 with the most visitors among the visits active in the 30 minutes, named as the Sources and Countries lists name them, Unknown last. A visit's source and country come from its first event, which may be before the window: someone who came from a search 40 minutes ago and is still reading counts under the search. So this query works out the visits of the active visitors only, from the midnight that starts the window's first minute in the instance's timezone, where visitor IDs change (`contextMs: 0` in `visitsSql`): no visit of those IDs started earlier.
+
+**What it reads.** Two queries, one after the other, every value a bound parameter and `project_id` first; the second only when someone was there. The first reads the window's events once and groups them three ways at once (`GROUPING SETS`: by minute, by page, and in all). The second reads the window's visitor IDs, then their events since that midnight. The events are sorted by project, then UTC day, then event ID, so ClickHouse reads a project's whole day around the window, not only its 30 minutes; the cost grows with a day's events, not with the window. Measured on the seeded Demo shop (`vp run seed`: 45,600 events over 30 days, the development stack on an Apple M4 Max): the first query read 7,723 rows in 4 ms, the second 15,446 rows (the same granule twice) in 14 ms, 18 ms for a poll. With nobody there, only the first runs. A large project has not been measured.
+
+**Limits on the reading.** The route holds a live poll's place in the dashboard's query limit, the one Logs' and Traces' Live share (`liveReader`, `LIVE_QUERIES_AT_ONCE`), so a page polling it never takes a slot from the reports, with the dashboard's ClickHouse settings (15 seconds, 300 MB). A busy limit answers 503, and the next poll asks again. The answer is never cached (`Cache-Control: no-store`). It needs Web analytics view, as the analytics page does.
+
+**The refresh.** The dashboard asks every 15 seconds while its tab shows, and not while it is hidden ([dashboard](dashboard.md#right-now)).
+
+**Across midnight.** Visitor IDs change at midnight in the instance's timezone (section 5). Someone active across midnight has two IDs, so for the 30 minutes after it they count twice: once under each ID, in the visitors, the minutes, and the lists. Their visit is two visits too ([Midnight](#midnight)), and the second usually counts as Direct / none, since its first event's referrer is the site itself. The dashboard does not say so on the screen.
+
 ### Who can read reports
 
 Signed-in dashboard users, through one endpoint per page ([dashboard.md](dashboard.md#83-report-endpoints)), and anyone with database access through `vp run report`. A public project key never reads data (section 2). Each breakdown name maps to a fixed SQL expression, so request text never becomes SQL, and row limits are clamped to 1-100.
