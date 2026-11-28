@@ -195,6 +195,23 @@ describe("POST /api/events", () => {
     expect(second).toMatchObject({ path: "/", occurred_at: new Date(NOW - 1000) });
   });
 
+  test("stores ref as the source when there is no utm_source", async () => {
+    const project = await createProject();
+    const response = await send(
+      batch(project.public_key, [
+        pageview({ occurredAt: NOW - 2000, url: `https://${SITE}/?ref=newsletter` }),
+        pageview({
+          occurredAt: NOW - 1000,
+          url: `https://${SITE}/?ref=newsletter&utm_source=launch`,
+        }),
+      ]),
+    );
+
+    expect(response.statusCode).toBe(202);
+    const stored = await storedEvents(project.id);
+    expect(stored.map((event) => event.utm_source)).toEqual(["newsletter", "launch"]);
+  });
+
   test("keeps a hash router's route in the path, and never a token in the fragment", async () => {
     const project = await createProject();
     const urls = [

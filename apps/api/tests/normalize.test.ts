@@ -46,6 +46,37 @@ describe("parsePageUrl", () => {
     expect(page?.utm.campaign).toBe("x".repeat(199));
   });
 
+  test("takes ref as the source when there is no utm_source", () => {
+    expect(parsePageUrl("https://example.com/?ref=%20newsletter%20&utm_medium=email")?.utm).toEqual(
+      {
+        source: "newsletter",
+        medium: "email",
+      },
+    );
+  });
+
+  test("a utm_source wins over ref", () => {
+    expect(parsePageUrl("https://example.com/?ref=newsletter&utm_source=launch")?.utm).toEqual({
+      source: "launch",
+    });
+  });
+
+  test("cuts ref to 200 characters, and ignores an empty or unstorable one", () => {
+    expect(parsePageUrl(`https://example.com/?ref=${"r".repeat(300)}`)?.utm).toEqual({
+      source: "r".repeat(200),
+    });
+    expect(parsePageUrl("https://example.com/?ref=%20")?.utm).toEqual({});
+    expect(parsePageUrl("https://example.com/?ref=a%00b")?.utm).toEqual({});
+    // An unstorable utm_source is no source: ref stands in.
+    expect(parsePageUrl("https://example.com/?utm_source=a%00b&ref=news")?.utm).toEqual({
+      source: "news",
+    });
+  });
+
+  test.each(["source", "via", "aff"])("reads no source from ?%s=", (name) => {
+    expect(parsePageUrl(`https://example.com/?${name}=news`)?.utm).toEqual({});
+  });
+
   test("keeps percent-encoding in the path as sent", () => {
     expect(parsePageUrl("https://example.com/caf%C3%A9")?.path).toBe("/caf%C3%A9");
   });

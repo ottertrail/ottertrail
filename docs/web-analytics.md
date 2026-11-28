@@ -274,6 +274,8 @@ The tracker runs on the customer's site (`example.com`) but sends to the Ottertr
 
 Query strings can hold secrets (`/reset?token=…`, session IDs). The endpoint keeps only the path and the five UTM tags (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`) and drops the rest of the query string and the fragment, except a hash router's route (below). UTM values are trimmed and cut to 200 characters, without splitting a character such as an emoji in half. A tag that decodes to a NUL character (`%00`) is dropped, like a bad referrer.
 
+**`ref` as the source.** Many links name their source with `?ref=` and no UTM tags (`https://example.com/?ref=newsletter`). When a page URL has no usable `utm_source` (none, blank, or one that cannot be stored), the endpoint takes `ref` as the source, with the same checks: trimmed, cut to 200 characters, dropped when blank or with a NUL. It is stored in the `utm_source` column, so reports show it as a tagged source. Only the exact name `ref` counts; `source`, `via`, `aff`, and other names are dropped as any query field is. This applies to every sender. The tracker sends `ref` only when the page has no `utm_source`, and never with `data-ref="off"` ([below](#ref-in-links)). A `ref` value is stored and shown as the source, so it must not identify a person.
+
 **Routes in the fragment.** A site with a hash router ([hash routes](#hash-routes)) has its pages in the fragment: `https://example.com/#/pricing`. The endpoint keeps a fragment only when it looks like a route: it starts with `#/`, it is cut at its first `?`, and what is left has no `=`, `&`, or second `#`, and is more than `#/`. Sign-in flows put tokens in the fragment (`#access_token=…`, `#/callback&code=…`, `#/access_token=…`), and none of those match. The route goes at the end of the stored path, so `https://example.com/app/#/pricing?plan=team` is stored as `/app/#/pricing`, and reports show it so. A route that would make the path longer than 2,048 characters is dropped, and the event is kept. The rule applies to every sender, as it trusts none; the tracker sends a route only with `data-hash-routes="on"`. Code: `routeOf` in `apps/api/src/collection/normalize.ts`, the same rule as the tracker's in `packages/tracker/src/url.ts`.
 
 Referrers lose their query string and fragment too: `https://news.ycombinator.com/item?id=1` is stored as `https://news.ycombinator.com/item`. App referrers keep their scheme and host (`android-app://com.google.android.gm`). A referrer that cannot be parsed is dropped, not rejected: a bad referrer is not a reason to lose the event.
@@ -380,7 +382,7 @@ A delete takes at most 10,000 visits; past that it refuses, deleting nothing (40
 
 ## 3. The tracker
 
-`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 16.5 KB, 6.8 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, `dist/n.js` (1.6 KB gzipped) for [request tracing](#traces) with `data-traces="on"`, and `dist/o.js` (8.0 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
+`packages/tracker` builds `dist/tracker.js`, the script a site adds to its pages: about 16.6 KB, 6.9 KB gzipped. It loads `dist/v.js` (3.7 KB gzipped) from beside itself to measure [Web Vitals](#web-vitals), `dist/r.js` (29 KB gzipped) to record [session replays](session-replay.md) when the page asks for them, `dist/h.js` (4.8 KB gzipped) for [heatmaps](#heatmaps) when the page asks for them, `dist/n.js` (1.6 KB gzipped) for [request tracing](#traces) with `data-traces="on"`, and `dist/o.js` (8.0 KB gzipped) on a page opened from the dashboard to show its [heatmap overlay](#the-overlay-on-your-site). `o.js` loads `dist/s.js` (28 KB gzipped, nearly all of it rrweb) only when the owner presses "Save this view" ([saved views](#saved-views)).
 
 ```html
 <script
@@ -410,7 +412,7 @@ The script runs on customers' pages, next to their own code, so:
 - It never throws into the page. Every entry point catches its own errors.
 - It never blocks the page: `defer` loads it after the HTML, and sending happens in the background.
 - It stays small, with no dependencies.
-- Secrets never leave the visitor's device. Page URLs are reduced to origin, path, and UTM tags (and the route, with [hash routes](#hash-routes)), and referrers to origin and path, before anything is sent. The API removes them again, because it trusts no sender.
+- Secrets never leave the visitor's device. Page URLs are reduced to origin, path, and UTM tags (with `ref` when there is no `utm_source`, and the route with [hash routes](#hash-routes)), and referrers to origin and path, before anything is sent. The API removes them again, because it trusts no sender.
 - Bad input does not cost other events. The API rejects a whole batch for one invalid event, so `track()` cleans names (control characters removed, 200 characters at most) and properties (flat values only, at most 30 keys, strings cut to 500 characters, 8 KB in total) before queuing them.
 
 ### What counts as a pageview
@@ -462,7 +464,7 @@ The tracker measures how long each page is visible: time in a background tab or 
 How fast each page load felt, measured in the visitor's browser: Largest Contentful Paint (LCP, when the main content showed), Interaction to Next Paint (INP, how quickly the page answered clicks, taps, and keys), Cumulative Layout Shift (CLS, how much the content jumped), and, to explain them, First Contentful Paint (FCP) and Time to First Byte (TTFB).
 
 - **Measured by Google's [web-vitals](https://github.com/GoogleChrome/web-vitals) library** (Apache-2.0, version 6.2.3), which handles the cases a hand-written version would get wrong: back/forward cache restores, prerendered pages, background tabs, and how INP picks among many interactions.
-- **In a second script, `v.js`,** served beside the tracker (`/v.js`), which the tracker adds to the page when it starts: 3.7 KB gzipped, smaller than the tracker itself (6.8 KB), so a page that does not want it never downloads it (`data-vitals="off"`). The browser keeps the entries the library reads, so loading it after the page loses only interactions before it ran, which the tracker's `defer` makes rare.
+- **In a second script, `v.js`,** served beside the tracker (`/v.js`), which the tracker adds to the page when it starts: 3.7 KB gzipped, smaller than the tracker itself (6.9 KB), so a page that does not want it never downloads it (`data-vitals="off"`). The browser keeps the entries the library reads, so loading it after the page loses only interactions before it ran, which the tracker's `defer` makes rare.
 - **One `vitals` event per page load,** sent when the page is first hidden or left, with `lcp`, `inp`, `fcp`, and `ttfb` in whole milliseconds and `cls` to four decimals, as measured until then. It belongs to the page the visitor landed on and whoever was signed in at that moment, whatever in-app navigations came after: an early redirect, such as `/` to `/en/`, does not lose it, and the click that navigates still counts for INP. A value not measured by then is left out: INP without an interaction, LCP if the page was hidden before its main content showed. Later changes, such as a slow click after the visitor comes back to the tab, are not sent. A page restored from the back/forward cache is a new page load, with its own event. When the visitor leaves the page, the browser fires `pagehide`, then `visibilitychange`, when the library takes its last measurements: the tracker sends on the second, so a slow click just before leaving still counts.
 - **Not web analytics:** like time on page, `vitals` events make no visit, pageview, or custom event (`analyticsEvent()` in `visits.ts`), and are not a user's own activity (`NOT_THEIRS` in `identities/users.ts`). The name is reserved: the tracker refuses `track("vitals")`, and server-side events cannot use it. An event a site named `vitals` itself before this now counts as a page load's Web Vitals and leaves web analytics; reports ignore values outside the limits below, and a `vitals` event without one is not a page load.
 - **In-app navigations get no values of their own.** The library measures page loads, as Chrome's own field data does: in a single-page app, the page load's values belong to the page the visitor landed on, and its INP and CLS include clicks and shifts on later in-app pages, until the page is first hidden.
@@ -506,6 +508,12 @@ Three of the tracker's own events, each on by default. Code: `packages/tracker/s
 - **Marking a not found page:** `<meta name="ottertrail" content="not-found">` in the page's head, read on the page load. A single-page app that shows its not found page without a page load calls `window.ottertrail?.notFound()`. Either sends one `not_found` per page view, beside its pageview. The tracker never guesses a 404 from the title or the status, which a script cannot read.
 - **In visits:** a click on a link or a file is an interaction, as a custom event is, so a visit with one is no bounce. A not found page is not: a visitor who only saw the missing page bounced. None of them is a custom event in reports; each has its list ([Reports](#links-and-not-found-pages-in-reports)). `track()` refuses the three names, with a warning, and server-side events cannot use them.
 - **Cost:** `tracker.js` grew from 5,630 to 6,103 bytes gzipped (13.6 to 14.7 KB raw) with all three.
+
+### `ref` in links
+
+The page URL keeps `ref` (`?ref=newsletter`) when it has no `utm_source`, so the API can use it as the visit's source ([URL cleanup](#url-cleanup)). With a `utm_source`, `ref` is dropped. A blank value, or one that cannot be stored, is dropped as a UTM tag is.
+
+`data-ref="off"` turns this off: the tracker then drops `ref` as it drops every other query field, from every event and from what a [before-send hook](#before-send) returns. Use it on a site whose links put a person's referral code in `ref` (`?ref=friend-4821`): a `ref` value is stored and shown as the source, so it must not identify a person.
 
 ### Hash routes
 
@@ -910,9 +918,11 @@ A breakdown groups visits by one property: `source`, `entryPage`, `exitPage`, `u
 
 **Source** is the first of these that exists:
 
-1. `utm_source` from the page URL (`?utm_source=newsletter`).
+1. `utm_source` from the page URL (`?utm_source=newsletter`), or, without one, `ref` (`?ref=newsletter`), stored as the `utm_source` ([URL cleanup](#url-cleanup)).
 2. The referrer's hostname without `www.`: `https://www.google.com/search` becomes `google.com`. Android apps send their package name: `android-app://com.google.android.gm` becomes `com.google.android.gm`, the Gmail app.
 3. `Direct / none`: no referrer, as with a typed address, a bookmark, or a link in an app that sends none.
+
+A visit's source comes from its first event, as every visit-level value does: a `ref` or `utm_source` on a later page of the visit does not change it.
 
 A referrer on one of the project's own allowed hostnames is not a source. It means the visit began on a page of the same site, such as a tab left open for over 30 minutes, so it counts as direct.
 

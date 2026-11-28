@@ -2618,3 +2618,32 @@ describe("ignoring the owner's own browser", () => {
     expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
   });
 });
+
+describe("ref as the source", () => {
+  test("the page's ref is sent when there is no utm_source", async () => {
+    const page = fakePage("https://example.com/pricing?ref=newsletter&token=s3cret");
+    await runScript();
+    page.hide();
+    await page.settle();
+
+    expect(page.events[0]?.url).toBe("https://example.com/pricing?ref=newsletter");
+  });
+
+  test('data-ref="off" drops it, from every event and from what a before-send hook returns', async () => {
+    const page = fakePage("https://example.com/pricing?ref=friend-4821", "", {
+      attributes: { ref: "off", beforeSend: "hook" },
+    });
+    Object.assign(page.window, {
+      hook: (event: { url: string }) => ({ ...event, url: `${event.url}?ref=friend-4821` }),
+    });
+    await runScript();
+    page.window.ottertrail?.track("signup");
+    page.hide();
+    await page.settle();
+
+    expect(new Set(page.events.map((event) => event.url))).toEqual(
+      new Set(["https://example.com/pricing"]),
+    );
+    expect(JSON.stringify(page.batches)).not.toContain("friend-4821");
+  });
+});

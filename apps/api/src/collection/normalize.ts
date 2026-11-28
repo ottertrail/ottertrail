@@ -56,7 +56,8 @@ export function routeOf(hash: string): string {
 }
 
 /**
- * Keeps the hostname, path, and five UTM tags. Other query fields and fragments
+ * Keeps the hostname, path, and five UTM tags, with `ref` as the source
+ * when there is no utm_source. Other query fields and fragments
  * can contain secrets. A route-like fragment (routeOf) stays at the end of the
  * path, as "/#/pricing", unless the two together pass the path's limit.
  * Returns null for invalid http(s) URLs or paths over the limit.
@@ -74,13 +75,19 @@ export function parsePageUrl(raw: string): PageUrl | null {
     url.pathname.length + route.length > MAX_PATH_LENGTH ? url.pathname : url.pathname + route;
 
   const utm: Utm = {};
-  for (const [field, param] of UTM_PARAMS) {
+  const read = (param: string) => {
     const value = url.searchParams.get(param)?.trim();
     // Drop invalid tags such as %00 without losing the event.
-    if (value && isStorableText(value)) {
-      utm[field] = truncate(value, MAX_UTM_LENGTH);
-    }
+    return value && isStorableText(value) ? truncate(value, MAX_UTM_LENGTH) : undefined;
+  };
+  for (const [field, param] of UTM_PARAMS) {
+    const value = read(param);
+    if (value !== undefined) utm[field] = value;
   }
+  // "?ref=" names the source on links without UTM tags. The tracker sends
+  // it only when the snippet allows it (data-ref); this reads any sender's.
+  const ref = utm.source === undefined ? read("ref") : undefined;
+  if (ref !== undefined) utm.source = ref;
   return { hostname: url.hostname, path, utm };
 }
 

@@ -46,6 +46,42 @@ describe("cleanPageUrl", () => {
   });
 });
 
+describe("cleanPageUrl and ref", () => {
+  test("keeps ref when the address has no utm_source", () => {
+    expect(cleanPageUrl("https://example.com/?ref=newsletter&utm_medium=email&x=1")).toBe(
+      "https://example.com/?utm_medium=email&ref=newsletter",
+    );
+  });
+
+  test("drops ref when a utm_source is there", () => {
+    expect(cleanPageUrl("https://example.com/?ref=newsletter&utm_source=launch")).toBe(
+      "https://example.com/?utm_source=launch",
+    );
+  });
+
+  test("keeps ref when the utm_source is blank or cannot be stored", () => {
+    expect(cleanPageUrl("https://example.com/?utm_source=%20&ref=news")).toBe(
+      "https://example.com/?ref=news",
+    );
+    expect(cleanPageUrl("https://example.com/?utm_source=a%00b&ref=news")).toBe(
+      "https://example.com/?ref=news",
+    );
+  });
+
+  test.each(["?ref=", "?ref=%20%20", "?ref=a%00b", "?source=news", "?via=news", "?aff=news"])(
+    "keeps nothing of %j",
+    (query) => {
+      expect(cleanPageUrl(`https://example.com/${query}`)).toBe("https://example.com/");
+    },
+  );
+
+  test('drops ref when it is turned off (data-ref="off")', () => {
+    expect(cleanPageUrl("https://example.com/?ref=friend-4821", false, false)).toBe(
+      "https://example.com/",
+    );
+  });
+});
+
 describe("cleanPageUrl with hash routes", () => {
   test("keeps a route, cut at its query", () => {
     expect(cleanPageUrl("https://example.com/?utm_source=a#/pricing?plan=team", true)).toBe(

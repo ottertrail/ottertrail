@@ -163,6 +163,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       release = undefined;
     }
     const hashRoutes = script?.dataset.hashRoutes === "on";
+    const refOn = script?.dataset.ref !== "off";
     const automatic = script?.dataset.pageviews !== "manual";
     const ignored = ignoredBrowser();
     if (ignored) {
@@ -175,7 +176,7 @@ const REAL = Symbol.for("ottertrail.tracker");
     const landing = (href = location.href): Page => {
       const referrer = cleanReferrer(document.referrer);
       return {
-        url: cleanPageUrl(href, hashRoutes),
+        url: cleanPageUrl(href, hashRoutes, refOn),
         ...(referrer === undefined ? {} : { referrer }),
       };
     };
@@ -278,7 +279,7 @@ const REAL = Symbol.for("ottertrail.tracker");
         if (typeof result !== "object") throw new Error();
         const changed: { url?: unknown; referrer?: unknown; properties?: unknown } = result;
         if (typeof changed.url !== "string") throw new Error();
-        const url = cleanPageUrl(changed.url, hashRoutes);
+        const url = cleanPageUrl(changed.url, hashRoutes, refOn);
         // Another origin could refuse the whole batch: its hostname may not be allowed.
         if (new URL(url).origin !== new URL(page.url).origin) throw new Error();
         const referrer =
@@ -444,7 +445,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       } else {
         const referrer = cleanReferrer(current.url);
         current = {
-          url: cleanPageUrl(href, hashRoutes),
+          url: cleanPageUrl(href, hashRoutes, refOn),
           ...(referrer === undefined ? {} : { referrer }),
         };
       }

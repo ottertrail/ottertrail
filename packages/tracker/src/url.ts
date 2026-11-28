@@ -20,25 +20,29 @@ export function routeOf(hash: string): string {
 
 /**
  * The page URL to send: origin and path, plus only the five UTM campaign
- * tags, and with `hashRoutes` the fragment's route (routeOf). Everything
+ * tags, `ref` when there is no utm_source (unless `ref` is false, for
+ * data-ref="off"), and with `hashRoutes` the fragment's route (routeOf). Everything
  * else in the query string and the fragment is removed in the browser, so
  * secrets such as "?token=…" never leave the visitor's device. (The API
  * removes them again; it does not trust senders.)
  *
- * A UTM tag whose value PostgreSQL cannot store (a NUL from "%00") is left
- * out. Returns "" when the cleaned URL or its path and route are longer than
+ * A tag that is blank, or whose value PostgreSQL cannot store (a NUL from
+ * "%00"), is left out. Returns "" when the cleaned URL or its path and route are longer than
  * the API accepts: events on such a page are not sent.
  */
-export function cleanPageUrl(href: string, hashRoutes = false): string {
+export function cleanPageUrl(href: string, hashRoutes = false, ref = true): string {
   const url = new URL(href);
   const clean = new URL(url.origin + url.pathname);
   if (hashRoutes) clean.hash = routeOf(url.hash);
-  for (const param of UTM_PARAMS) {
+  const keep = (param: string) => {
     const value = url.searchParams.get(param);
-    if (value && !UNSTORABLE.test(value)) {
+    if (value?.trim() && !UNSTORABLE.test(value)) {
       clean.searchParams.set(param, value);
     }
-  }
+  };
+  for (const param of UTM_PARAMS) keep(param);
+  // The source when there is no utm_source; the API reads it so too.
+  if (ref && !clean.searchParams.has("utm_source")) keep("ref");
   return clean.href.length > MAX_URL_LENGTH ||
     clean.pathname.length + clean.hash.length > MAX_PATH_LENGTH
     ? ""
