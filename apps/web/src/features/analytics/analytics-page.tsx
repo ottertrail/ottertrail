@@ -727,6 +727,9 @@ function Reports({
               },
             ]}
           />
+        </div>
+        {/* Two per row at most: links are long, and a goal's three figures need half the width. */}
+        <div className="mt-8 grid gap-x-8 gap-y-8 @3xl:grid-cols-2">
           {EVENT_SECTIONS.map((section) => (
             <BreakdownSection
               key={section.report}
