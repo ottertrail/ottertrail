@@ -69,6 +69,8 @@ The development stack runs in Podman's machine, 2 GB by default and shared with 
 
 The overview reads it for new signed-in users and weekly cohorts ([dashboard](dashboard.md#overview)), instead of every signed-in event the project keeps.
 
+`release_first_seen` (migration 0017, filled by `release_first_seen_mv`) does the same for releases: one row per project, environment, and release, ordered so, with the earliest event of any kind that named the release. The Web analytics chart reads it for its release marks ([web analytics](web-analytics.md#notes-and-releases-on-the-chart)), filtered by project and environment first, one row per release. The migration copied in the events already stored. Unlike `user_first_seen`, it is not rebuilt after retention, a spam delete, or a user's deletion: it holds no personal data, and a release's first appearance stays a fact of the project's history even once those events are gone. It goes with its project.
+
 It follows the events:
 
 - **Retention.** When the worker deletes a project's old events, it deletes the project's rows here and works them out again from the events kept. A user whose early events are gone is first seen at their earliest event kept; a user with none left is gone. Events stored meanwhile are added back after the delete (below), so a user first seen during the rebuild keeps their row.
@@ -114,6 +116,7 @@ What a delete reaches, and what it does not:
 
 | Derived from events                                                                            | Reached?                                                                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release_first_seen` (ClickHouse, filled by `release_first_seen_mv`)                           | No: a release first seen in a deleted visit keeps that time as its mark                                                                                                                                                                         |
 | Reports, visits, the overview, funnels, retention, Speed, Users, Errors                        | Yes: all are worked out from `events` when asked                                                                                                                                                                                                |
 | `user_first_seen` (ClickHouse, filled by `user_first_seen_mv`)                                 | Yes: when a deleted visit had a signed-in user, the project's rows are worked out again from the events kept, as after retention ([First-seen times](#first-seen-times))                                                                        |
 | Session replays of the visits' errors (object store, `replays`, `replay_chunks`)               | Yes: the replays named by the deleted errors (`replay_id`) are deleted, objects and rows, holding the project's row as deleting all replays does. If the object store fails, the events stay deleted and the replays expire after their 30 days |
@@ -122,7 +125,7 @@ What a delete reaches, and what it does not:
 | Error resolutions (`error_resolutions`)                                                        | Not derived: a resolution stays, and applies if the error comes back                                                                                                                                                                            |
 | Backups                                                                                        | No: deleted events stay in backups taken before                                                                                                                                                                                                 |
 
-Every other ClickHouse table (`spans`, `logs`, `metric_points`, `metric_histograms`, `check_results`) holds telemetry, not events, and no other materialized view reads `events`. `heatmaps` holds no visitor ID, so a deleted visit's clicks and scroll depth stay until their 90 days are over.
+Every other ClickHouse table (`spans`, `logs`, `metric_points`, `metric_histograms`, `check_results`) holds telemetry, not events, and no materialized view other than `user_first_seen_mv` and `release_first_seen_mv` reads `events`. `heatmaps` holds no visitor ID, so a deleted visit's clicks and scroll depth stay until their 90 days are over.
 
 ## Heatmaps
 

@@ -67,6 +67,21 @@ export function firstSeenSelect(database: string | null, where = "1"): string {
           GROUP BY project_id, environment, user_id`;
 }
 
+/** Each release's first event per project and environment (0017). */
+export const RELEASE_FIRST_SEEN = "release_first_seen";
+
+/** Each release's earliest event in the events of `database`, as release_first_seen's rows. */
+function releaseFirstSeenSelect(database: string): string {
+  // Rename release inside the subquery, as firstSeenSelect does user_id.
+  return `SELECT project_id, environment, version AS release, minState(occurred_at) AS first_seen
+          FROM (
+            SELECT project_id, environment, assumeNotNull(release) AS version, occurred_at
+            FROM ${database}.events
+            WHERE release IS NOT NULL
+          )
+          GROUP BY project_id, environment, release`;
+}
+
 /** How long heatmap rows are kept (0006): a fixed 90 days, whatever the project's event retention. */
 export const HEATMAP_RETENTION_DAYS = 90;
 
@@ -775,6 +790,34 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
     statements: (database) => [
       `ALTER TABLE ${database}.events
          ADD COLUMN IF NOT EXISTS hostname LowCardinality(Nullable(String)) AFTER path`,
+    ],
+  },
+  {
+    name: "0017_release_first_seen",
+    /**
+     * When each release was first seen, per project and environment, for
+     * the release marks on the Web analytics chart (docs/clickhouse.md,
+     * "First-seen times"): the chart reads one row per release instead of
+     * the project's whole history. Filled as user_first_seen is (0004): a
+     * materialized view adds each insert's earliest time, AggregatingMergeTree
+     * merges them, and a retried event adds its time again, which a min
+     * ignores. Every stored event with a release counts, a server's too.
+     * The events already stored are copied in once, harmlessly again after
+     * a failure.
+     */
+    statements: (database) => [
+      `CREATE TABLE IF NOT EXISTS ${database}.${RELEASE_FIRST_SEEN} (
+        project_id UUID,
+        environment LowCardinality(String),
+        release String,
+        first_seen AggregateFunction(min, DateTime64(3, 'UTC'))
+      )
+      ENGINE = AggregatingMergeTree
+      ORDER BY (project_id, environment, release)`,
+      `CREATE MATERIALIZED VIEW IF NOT EXISTS ${database}.release_first_seen_mv
+       TO ${database}.${RELEASE_FIRST_SEEN}
+       AS ${releaseFirstSeenSelect(database)}`,
+      `INSERT INTO ${database}.${RELEASE_FIRST_SEEN} ${releaseFirstSeenSelect(database)}`,
     ],
   },
 ];

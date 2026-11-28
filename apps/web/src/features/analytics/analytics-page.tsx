@@ -105,7 +105,7 @@ import {
   valueText,
 } from "./list-rows";
 import type { RankedRow } from "./ranked-list";
-import { useAnalyticsScope } from "./scope";
+import { type TrendMarks, useAnalyticsScope } from "./scope";
 import { ShowAllDialog } from "./show-all-dialog";
 
 const METRICS = [
@@ -586,14 +586,26 @@ const COMPARISON_LABELS: Record<Comparison, string> = {
   off: "",
 };
 
-function Trend({
+/** The chart, with the dashboard's notes and releases; a shared link has none (scope.ts). */
+function Trend(props: Omit<React.ComponentProps<typeof TrendView>, "marks">) {
+  const Marks = useAnalyticsScope().dashboard?.ChartMarks;
+  return Marks === undefined ? (
+    <TrendView {...props} marks={null} />
+  ) : (
+    <Marks analytics={props.analytics}>{(marks) => <TrendView {...props} marks={marks} />}</Marks>
+  );
+}
+
+function TrendView({
   analytics,
   goal = false,
   onInterval,
+  marks,
 }: {
   analytics: Analytics;
   goal?: boolean;
   onInterval: (interval: ChartInterval) => void;
+  marks: TrendMarks | null;
 }) {
   const { chart, interval, intervals, comparison } = analytics;
   const metrics = goal ? GOAL_METRICS : METRICS;
@@ -644,6 +656,7 @@ function Trend({
             {metrics.find((item) => item.key === metric)?.label} per {per}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
+            {marks?.controls}
             {intervals.length > 1 && (
               <ToggleGroup
                 value={[interval]}
@@ -700,6 +713,7 @@ function Trend({
                 plotHeight={140}
                 pointLabel={names.title}
                 tickLabel={names.tick}
+                marks={marks?.chart}
                 comparison={
                   compared
                     ? {
@@ -741,6 +755,11 @@ function Trend({
                     )}
                   </React.Fragment>
                 ))}
+                {marks?.column != null && (
+                  <th scope="col" className="pb-2 pl-3 text-left font-normal">
+                    {marks.column.heading}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -763,6 +782,9 @@ function Trend({
                       )}
                     </React.Fragment>
                   ))}
+                  {marks?.column != null && (
+                    <td className="py-1.5 pl-3 text-ink">{marks.column.cell(index)}</td>
+                  )}
                 </tr>
               ))}
             </tbody>

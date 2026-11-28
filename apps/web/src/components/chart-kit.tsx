@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import type * as React from "react";
 import { usePlotArea } from "recharts";
 
 /*
@@ -69,10 +70,13 @@ export function ChartReadout({
   title,
   rows,
   footer,
+  extra,
 }: {
   title: string;
   rows: ReadoutRow[];
   footer?: string | undefined;
+  /** More under the values, such as a point's notes. */
+  extra?: React.ReactNode;
 }) {
   return (
     <div
@@ -102,6 +106,7 @@ export function ChartReadout({
         ))}
       </ul>
       {footer !== undefined && <p className="mt-1.5 text-ink-subtle">{footer}</p>}
+      {extra}
     </div>
   );
 }

@@ -129,7 +129,7 @@ A team runs the same app in several places: the live site, a staging site, a dev
 - **Release:** 1 to 200 characters without spaces or control characters, as the team names its versions: `1.4.2`, `web@2026.11.17+3f2a9c1`, a commit hash. Stored as sent.
 - Both belong to the batch, not to each event: one page runs in one environment and one release.
 
-Reports show one environment at a time, production unless another is chosen ([section 7](#one-environment-at-a-time)), so a test site never mixes into the live numbers. A release is a property of a visit, like its browser, with a breakdown and a filter. Errors (stage 2) will use releases to tell which version introduced a problem.
+Reports show one environment at a time, production unless another is chosen ([section 7](#one-environment-at-a-time)), so a test site never mixes into the live numbers. A release is a property of a visit, like its browser, with a breakdown and a filter, and the chart marks where each release first appeared ([section 7](#notes-and-releases-on-the-chart)). Errors (stage 2) will use releases to tell which version introduced a problem.
 
 ### Known users
 
@@ -943,6 +943,32 @@ The earlier period is seen as it stood at that time: every report ignores events
 
 Counts and averages change in percent, rounded; a change too small to round to 1% shows as "<1%", never as no change. The bounce rate, a share, changes in percentage points: from 24% to 30% is 6 points, where "25% more" would mislead. Points are worked out from the whole percentages shown, so the change always matches them. A number with nothing to compare with (nothing before, or 0) shows no change.
 
+### Notes and releases on the chart
+
+The chart can carry two kinds of marks: notes that people add, such as "Launched the new pricing page", and the moment each release first appeared. Code: `apps/api/src/annotations/`, and on the dashboard `features/analytics/chart-marks.tsx` and `chart-notes-dialog.tsx`.
+
+**Notes** (`annotations`, PostgreSQL migration 0035) belong to a project. Each has a day, or a day and a time to the minute, on the instance's clock; a text of 1 to 200 characters on one line; its author; and an environment, or none for every environment. The day and time are stored as wall-clock values, not instants, so a note stays on its day when the instance's timezone changes. A project has at most 500 notes (`MAX_ANNOTATIONS`; 409 `too_many_annotations` past it). The author is whoever last wrote the text; removing that user keeps the note, without an author. Every query names the project, and a note's ID reaches it only through its own project's routes, so a note of one project is never read or changed through another's.
+
+**Release marks** come from `release_first_seen` (ClickHouse migration 0017, [ClickHouse](clickhouse.md#first-seen-times)): for each project, environment, and release, its earliest event. Every stored event with a release counts, a server's and an error's too, so a release marks the moment it first reached that environment. The chart asks for the releases of the shown environment first seen in its days: a release seen before the range has no mark in it, even if its visits go on into the range. A release that reached staging on Monday and production on Wednesday is on Monday's point in staging and on Wednesday's in production. A retried event adds its own time again, which the earliest time ignores. At most 200 marks are answered, the earliest first.
+
+The read takes one row per release of the environment, never the events. Measured on the seeded Demo shop (`vp run seed`, the development stack on an Apple M4 Max): 14 rows in the whole table, 784 bytes read, 2 ms; working the same out from the events read 52,449 rows (2.3 MB) in 5 ms, and would grow with the project's history.
+
+```text
+GET    /api/projects/:id/annotations?from&to&environment     the notes of those days, the environment's and every environment's
+POST   /api/projects/:id/annotations                         { day, time, text, environment }; time and environment may be null
+PUT    /api/projects/:id/annotations/:annotationId           the same body
+DELETE /api/projects/:id/annotations/:annotationId
+GET    /api/projects/:id/release-marks?from&to&environment   { releases: [{ release, firstSeen, local }] }
+```
+
+Anyone who can read the project's Web analytics reads both; adding, changing, and deleting notes needs product analytics at manage, as goals do ([access](access.md#each-routes-need)). Changes need the dashboard's origin.
+
+**On the chart,** each mark falls on the point its moment is in (a whole-day note on an hour chart, on that day's first hour), in `ink-tertiary`, under the lines and their wash, so it never hides them. A note is a solid hairline with a circle at the top of the plot; a release a dashed hairline with a diamond; a point with both draws the solid line and both shapes, and a point with several marks shows how many. So the two kinds differ by shape and line, not by color. Hovering a point, a tap, or the keyboard's readout shows its notes (text, author, day and time) and its releases (name, when first seen) under the point's numbers, and "Show the numbers" adds a "Notes and releases" column. Two switches above the chart, Notes and Releases, hide or show each kind; this browser remembers the choice (`localStorage`), as it does the sidebar's, so the page's address and its links stay as they are. Hidden kinds are not asked for.
+
+With manage, Add note opens a small dialog for the chart's last point, and a click on a point, or Enter on the chart's keyboard input, opens that point's notes and releases: edit or delete a note there, or add one, its day and time taken from the point. A finger's tap only shows the tooltip, so a phone uses Add note. The dialog's code loads on its first opening.
+
+**Not on shared links.** Notes can hold internal plans and release names can say more than a client should see, so a shared link's page shows neither: its scope has no marks (`scope.ts`), the shared routes answer none, and the shared page's bundle does not hold their code.
+
 ### The numbers
 
 | Report          | What it counts                                                                                       |
@@ -1162,7 +1188,7 @@ A secret address, `/share/<token>`, that shows one project's Web analytics page 
 
 **What it shows.** The Web analytics page itself: the summary, the chart, every list and its Show all (outbound links, file downloads, and not found pages among them), custom events, the goals (read-only, shown once there are some: their names and counts, never what they match, which is Product analytics' setup), and Right now's live count, asked for once a minute (the dashboard asks every 15 seconds), for the environment chosen when the link was made (production by default). The period picker, the filters (every operator, several values, and their editor), and the goal filter work as on the dashboard; each is in the page's address. The shared routes take the same filter parameters and refuse what the dashboard's refuse: contains on a fixed value, more than 10 values, overlong values, and any unknown parameter, `environment` included. There is no environment picker, and the answers name no other environment.
 
-**What it never shows.** Users, Product analytics, Errors, Replays, Heatmaps, Speed, Monitoring, the project's settings and keys, and anything about members. No user ID, visitor ID, or replay is in any answer: the routes answer the same aggregates as the dashboard's report routes. No link leads into the dashboard: the heatmap and event links, the Right now view, Add goal, and the install hint are the dashboard's alone. There is no [CSV export](#csv-export) yet. The page names the project, with its icon, and says "Shared with Ottertrail. Read-only."
+**What it never shows.** Users, Product analytics, Errors, Replays, Heatmaps, Speed, Monitoring, the chart's notes and release marks ([above](#notes-and-releases-on-the-chart)), the project's settings and keys, and anything about members. No user ID, visitor ID, or replay is in any answer: the routes answer the same aggregates as the dashboard's report routes. No link leads into the dashboard: the heatmap and event links, the Right now view, Add goal, and the install hint are the dashboard's alone. There is no [CSV export](#csv-export) yet. The page names the project, with its icon, and says "Shared with Ottertrail. Read-only."
 
 **One page, two scopes.** The page's components (`analytics-page.tsx`, its lists, Show all, the goals, the filter links) read an `AnalyticsScope` (`scope.ts`): where the reports are read (`/api/projects/<id>` or `/api/share/<token>`), how a link changes the address, and the dashboard's extras, which a shared link has none of. The dashboard's scope is `dashboard-analytics-page.tsx`; a shared link's is `src/share/share-app.tsx`. On the API, the dashboard's routes and the shared link's call the same functions (`analyticsAnswer`, `listAnswer`, `nowAnswer`), and `projectAnalytics` returns the lists the cards show first, and `projectList` every list, those behind a tab included ([dashboard](dashboard.md#lists-that-load-with-their-tab)). So a list added to the page appears on shared links with no more work, through either route.
 

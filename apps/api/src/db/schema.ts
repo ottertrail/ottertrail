@@ -655,6 +655,22 @@ export interface SegmentsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/** A note on the Web analytics chart (annotations/annotations.ts), on the instance's clock. */
+export interface AnnotationsTable {
+  id: DatabaseDefault<string>;
+  project_id: ColumnType<string, string, never>;
+  /** "YYYY-MM-DD". */
+  day: string;
+  /** "HH:MM:SS", or null for the whole day. */
+  time: string | null;
+  text: string;
+  /** null: every environment. */
+  environment: string | null;
+  author_id: string | null;
+  created_at: DatabaseDefault<Date>;
+  updated_at: ColumnType<Date, never, Date>;
+}
+
 /** A saved heatmap view: one per project, page, and device class (heatmaps/snapshots.ts). */
 export interface HeatmapSnapshotsTable {
   project_id: string;
@@ -885,6 +901,7 @@ export interface Database {
   heatmap_snapshots: HeatmapSnapshotsTable;
   share_links: ShareLinksTable;
   segments: SegmentsTable;
+  annotations: AnnotationsTable;
   ingest_activity: IngestActivityTable;
   dashboard_member_access: DashboardMemberAccessTable;
   dashboard_member_projects: DashboardMemberProjectsTable;

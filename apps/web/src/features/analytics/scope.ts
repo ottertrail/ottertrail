@@ -3,8 +3,10 @@ import * as React from "react";
 
 import type { buttonVariants } from "@/components/ui/button";
 import type { ListReport } from "@/lib/analytics-api";
+import type { Analytics } from "@/lib/analytics-api";
 import type { ReportSource } from "@/lib/analytics-queries";
 
+import type { DayChartMarks } from "./day-chart";
 import type { OtherPageSearch, PageSearch } from "./list-rows";
 
 /*
@@ -28,6 +30,14 @@ export interface PageLinkProps {
   children: React.ReactNode;
 }
 
+/** The chart's notes and releases, with their controls and their column in the table. */
+export interface TrendMarks {
+  controls: React.ReactNode;
+  chart: DayChartMarks | undefined;
+  /** null when no mark is shown in the range. */
+  column: { heading: string; cell: (index: number) => React.ReactNode } | null;
+}
+
 /** What only the signed-in dashboard has: links to its other pages, and what the user may do. */
 export interface DashboardExtras {
   projectId: string;
@@ -35,7 +45,7 @@ export interface DashboardExtras {
   lastEventAt: string | null | undefined;
   /** Product analytics at view: the Goals table and saved goals. */
   showGoals: boolean;
-  /** Product analytics at manage: adding and deleting goals. */
+  /** Product analytics at manage: adding and deleting goals, and the chart's notes. */
   canManageGoals: boolean;
   /** The project's settings: installing the snippet. */
   canInstall: boolean;
@@ -57,6 +67,11 @@ export interface DashboardExtras {
   renderEventLink: ((search: OtherPageSearch, name: string) => React.ReactNode) | null;
   /** The filter bar's Segments menu (segments-menu.tsx). */
   renderSegments: (search: PageSearch) => React.ReactNode;
+  /** The chart's notes and releases, handed to `children` (chart-marks.tsx). */
+  ChartMarks: React.ComponentType<{
+    analytics: Analytics;
+    children: (marks: TrendMarks) => React.ReactNode;
+  }>;
 }
 
 export interface AnalyticsScope {

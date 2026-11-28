@@ -113,6 +113,7 @@ import { answerAccount, type FakeAccount, fakeAccount, sessionBody } from "./fak
 import { answerAiCalls, type FakeAiCalls, fakeAiCalls } from "./fake-ai-calls.ts";
 import { answerAiModels, type FakeAiModels, fakeAiModels } from "./fake-ai-models.ts";
 import { answerAi, type FakeAi, fakeAi } from "./fake-ai.ts";
+import { answerAnnotations, type FakeAnnotations } from "./fake-annotations.ts";
 import { answerBackups, type FakeBackups, fakeBackups } from "./fake-backups.ts";
 import {
   answerNotifications,
@@ -163,6 +164,8 @@ export interface FakeApi {
   backups: FakeBackups;
   /** The AI models tab's routes (the owner's and admins'): fake-ai-models.ts. */
   aiModels: FakeAiModels;
+  /** The Web analytics chart's notes and release marks: fake-annotations.ts. None by default. */
+  annotations: FakeAnnotations;
   /** Who is signed in and what they may reach (GET /api/me); the owner by default. */
   access: FakeAccess;
   /** Whether the instance has object storage, as GET /api/me says; true by default. */
@@ -5198,6 +5201,13 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
   if (backups !== null) return backups;
   const aiModels = answerAiModels(api.aiModels, url, init, api.access.role);
   if (aiModels !== null) return aiModels;
+  const annotations = answerAnnotations(
+    api.annotations,
+    url,
+    init,
+    api.access.areas.product_analytics === "manage",
+  );
+  if (annotations !== null) return annotations;
   const ai = await answerAi(api.ai, url, api.access.areas.users !== "none");
   if (ai !== null) return ai;
   const aiCalls = await answerAiCalls(api.aiCalls, url, api.access.areas.users !== "none");
@@ -5787,6 +5797,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     holdStorage: null,
     backups: fakeBackups(),
     aiModels: fakeAiModels(),
+    annotations: { notes: [], releases: [], requests: [] },
     access: OWNER_ACCESS,
     avatarUploads: true,
     userAvatarUrl: null,

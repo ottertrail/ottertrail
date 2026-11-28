@@ -191,11 +191,14 @@ describe("before the first paint", () => {
 
 describe("charts", () => {
   test("re-color when the theme changes, without a reload", async () => {
-    installFakeApi();
+    const api = installFakeApi();
     renderApp(`/projects/${PROJECT.id}/web-analytics`);
     await expect
       .poll(() => document.querySelector('svg path[stroke="var(--chart-1)"]'))
       .not.toBeNull();
+    // The chart's notes and releases load after it, and Recharts draws the line anew on that render.
+    await expect.poll(() => api.annotations.requests.length).toBe(2);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const line = document.querySelector('svg path[stroke="var(--chart-1)"]');
     if (line === null) throw new Error("no line");
     // chart-1's dark step.

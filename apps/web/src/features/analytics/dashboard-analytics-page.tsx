@@ -21,6 +21,7 @@ import { heatmapsSearchOf } from "../heatmaps/search";
 import { productSearchOf } from "../product/search";
 import { NoSuchProject } from "../projects/no-such-project";
 import { AnalyticsView } from "./analytics-page";
+import { ChartMarks } from "./chart-marks";
 import { DownloadListButton, ExportMenu } from "./csv-export";
 import { type OtherPageSearch, searchOf } from "./list-rows";
 import { NowIndicator } from "./now-indicator";
@@ -163,6 +164,7 @@ export function DashboardAnalyticsScope({
         renderSegments: (search) => (
           <SegmentsMenu projectId={projectId} search={search} canManageProject={canInstall} />
         ),
+        ChartMarks,
       },
     }),
     [projectId, navigate, canOpenEvents, canManageGoals, canInstall, lastEventAt],

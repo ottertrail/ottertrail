@@ -12,6 +12,7 @@ import { type ClickHouseClient, identifier } from "./clickhouse.ts";
 import {
   AI_CALLS_TABLE,
   firstSeenSelect,
+  RELEASE_FIRST_SEEN,
   TELEMETRY_TABLES,
   USER_FIRST_SEEN,
 } from "./migrations.ts";
@@ -33,14 +34,15 @@ function chunks<T>(items: readonly T[]): T[][] {
 
 /**
  * Every table that holds a project's rows: events, traces, logs, metrics,
- * check results, its signed-in users' first-seen times, its heatmaps, and
- * its AI calls.
+ * check results, its signed-in users' and its releases' first-seen times,
+ * its heatmaps, and its AI calls.
  */
 export const PROJECT_TABLES = [
   "events",
   ...TELEMETRY_TABLES,
   "check_results",
   USER_FIRST_SEEN,
+  RELEASE_FIRST_SEEN,
   "heatmaps",
   AI_CALLS_TABLE,
 ] as const;

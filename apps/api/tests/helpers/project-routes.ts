@@ -28,6 +28,7 @@ const SOME_SEGMENT = {
   filters: { country: ["DE"] },
   updatedAt: "2026-11-28T12:00:00.000Z",
 };
+const SOME_NOTE = { day: "2026-11-10", time: null, text: "Launch", environment: null };
 const FUNNEL_STEPS = encodeURIComponent(
   JSON.stringify([
     { type: "page", path: "/" },
@@ -96,6 +97,11 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   request("GET", "/analytics/export/summary", "/analytics/export/summary?period=7d"),
   request("GET", "/analytics/export/chart", "/analytics/export/chart?period=7d"),
   request("GET", "/analytics/now", "/analytics/now"),
+  request("GET", "/release-marks", "/release-marks?from=2026-11-01&to=2026-11-15"),
+  request("GET", "/annotations", "/annotations"),
+  request("POST", "/annotations", "/annotations", SOME_NOTE),
+  request("PUT", "/annotations/:annotationId", `/annotations/${SOME_ID}`, SOME_NOTE),
+  request("DELETE", "/annotations/:annotationId", `/annotations/${SOME_ID}`),
   request("GET", "/speed", "/speed?period=7d"),
   request("GET", "/heatmaps", "/heatmaps?period=7d&path=%2Fpricing"),
   request("GET", "/heatmaps/pages", "/heatmaps/pages?period=7d"),

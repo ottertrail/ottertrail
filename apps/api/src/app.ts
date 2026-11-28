@@ -14,6 +14,7 @@ import { aiModelRoutes } from "./ai/model-routes.ts";
 import { aiRoutes } from "./ai/routes.ts";
 import { evaluateCheckDown } from "./alerts/check-rules.ts";
 import { alertRoutes } from "./alerts/routes.ts";
+import { annotationRoutes } from "./annotations/routes.ts";
 import type { Auth } from "./auth/auth.ts";
 import { passwordTryLimiter } from "./auth/password-tries.ts";
 import { betterAuthRoutes, setupRoutes } from "./auth/routes.ts";
@@ -860,6 +861,14 @@ export function buildApp({
       auth: dashboard.auth,
       limiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(annotationRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      trustedOrigins: dashboard.trustedOrigins,
+      limiter,
     });
     app.register(nowRoutes, {
       prefix: "/api",

@@ -42,17 +42,31 @@ const COLOR = "var(--chart-1)";
 export const COMPARISON_COLOR = "var(--chart-2)";
 const CONFIG = { value: { color: COLOR }, previous: { color: COMPARISON_COLOR } };
 
+/** Marks over the points, drawn by the caller: the dashboard's notes and releases. */
+export interface DayChartMarks {
+  /** Drawn inside the plot, under the lines. */
+  layer: React.ReactNode;
+  /** A point's marks in its readout; "" for none. */
+  text: (index: number) => string;
+  /** A point's marks in its tooltip, under the values. */
+  tooltip: (index: number) => React.ReactNode;
+  /** A click on a point (not a finger's tap, which shows the tooltip), or Enter on it. */
+  onSelect?: ((index: number) => void) | undefined;
+}
+
 /** The tooltip: Recharts passes `active` and `label`, the day's index. */
 function Readout({
   active,
   label,
   title,
   rows,
+  marks,
 }: {
   active?: boolean;
   label?: unknown;
   title: (index: number) => string;
   rows: (index: number) => TooltipRow[];
+  marks?: DayChartMarks | undefined;
 }) {
   if (active !== true || typeof label !== "number") return null;
   return (
@@ -64,6 +78,7 @@ function Readout({
         value: row.value,
         label: row.label,
       }))}
+      extra={marks?.tooltip(label)}
     />
   );
 }
@@ -101,6 +116,7 @@ export function DayChart({
   pointLabel = (day) => formatDay(day, { weekday: true }),
   tickLabel = formatDay,
   comparison,
+  marks,
 }: {
   points: DayValue[];
   label: string;
@@ -114,8 +130,11 @@ export function DayChart({
   tickLabel?: (day: string) => string;
   /** The values compared with, one per point, and the names of both lines in the legend. */
   comparison?: { values: (number | null)[]; label: string; currentLabel: string } | undefined;
+  marks?: DayChartMarks | undefined;
 }) {
   const [keyed, setKeyed] = React.useState<number | null>(null);
+  const touched = React.useRef(false);
+  const select = marks?.onSelect;
   const [frameRef, width] = useWidth<HTMLDivElement>();
   const compared = comparison?.values ?? [];
   const ticks = niceTicks(
@@ -141,11 +160,12 @@ export function DayChart({
   };
   const readout = (index: number) => {
     const point = points[index];
+    const marked = marks?.text(index) ?? "";
     return point === undefined
       ? ""
       : `${pointLabel(point.day)}: ${tooltipRows(index)
           .map((row) => `${row.value} ${row.label}`)
-          .join(", ")}`;
+          .join(", ")}${marked === "" ? "" : `. ${marked}`}`;
   };
   const titleOf = (index: number) => {
     const point = points[index];
@@ -153,7 +173,14 @@ export function DayChart({
   };
 
   return (
-    <div ref={frameRef} className={PLOT_FRAME} data-slot="day-chart">
+    <div
+      ref={frameRef}
+      className={select === undefined ? PLOT_FRAME : `${PLOT_FRAME} cursor-pointer`}
+      data-slot="day-chart"
+      onPointerDown={(event) => {
+        touched.current = event.pointerType === "touch";
+      }}
+    >
       {comparison !== undefined && (
         <ul
           aria-label="Lines"
@@ -176,6 +203,7 @@ export function DayChart({
         fallback={last}
         valueText={readout}
         onIndex={setKeyed}
+        onEnter={select}
       />
       <ChartContainer
         config={CONFIG}
@@ -183,8 +211,17 @@ export function DayChart({
         className="aspect-auto w-full"
         style={{ height: MARGIN.top + plotHeight + AXIS_BAND }}
       >
-        <AreaChart data={data} margin={MARGIN} accessibilityLayer={false}>
+        <AreaChart
+          data={data}
+          margin={MARGIN}
+          accessibilityLayer={false}
+          onClick={(state) => {
+            const index = Number(state.activeTooltipIndex ?? Number.NaN);
+            if (select !== undefined && !touched.current && Number.isInteger(index)) select(index);
+          }}
+        >
           <CartesianGrid vertical={false} stroke="var(--hairline)" />
+          {marks?.layer}
           <XAxis
             {...X_AXIS}
             dataKey="index"
@@ -205,7 +242,7 @@ export function DayChart({
             position={{ y: 8 }}
             wrapperStyle={{ zIndex: 10 }}
             {...(keyed === null ? {} : { active: true, defaultIndex: keyed })}
-            content={<Readout title={titleOf} rows={tooltipRows} />}
+            content={<Readout title={titleOf} rows={tooltipRows} marks={marks} />}
           />
           {comparison !== undefined && (
             <Area

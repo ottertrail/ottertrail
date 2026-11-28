@@ -94,6 +94,9 @@ describe("ClickHouse migrations", () => {
       { name: "logs", sorting_key: "project_id, timestamp, id" },
       { name: "metric_histograms", sorting_key: "project_id, name, timestamp, id" },
       { name: "metric_points", sorting_key: "project_id, name, timestamp, id" },
+      // Each release's first event per environment (0017), filled by its view.
+      { name: "release_first_seen", sorting_key: "project_id, environment, release" },
+      { name: "release_first_seen_mv", sorting_key: "" },
       { name: "spans", sorting_key: "project_id, timestamp, id" },
       { name: "user_first_seen", sorting_key: "project_id, environment, user_id" },
       // The materialized view that fills user_first_seen as events are stored.
