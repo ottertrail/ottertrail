@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { FilterIcon, SearchXIcon, XIcon } from "lucide-react";
+import { ChartLineIcon, FilterIcon, SearchXIcon, XIcon } from "lucide-react";
+import * as React from "react";
 
 import { BreakdownTable } from "@/components/breakdown-table";
 import { ButtonLink } from "@/components/button-link";
@@ -16,21 +17,33 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DEFAULT_ENVIRONMENT, type PageRange } from "@/lib/analytics-api";
+import { useAccess } from "@/lib/access";
+import {
+  activeFilters,
+  DEFAULT_ENVIRONMENT,
+  type Filters,
+  type PageRange,
+} from "@/lib/analytics-api";
+import { canBeGoal } from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
+import {
+  type EventDimension,
+  type EventDimensionFilters,
+  eventDimensionsFrom,
+  type EventLists,
+  eventListsQuery,
+} from "@/lib/event-lists-api";
 import {
   MAX_FILTERS,
   type ProductEventDetail,
   type PropertyBreakdown,
   type PropertyFilter,
   productEventQuery,
-  productEventSourcesQuery,
-  type VisitSourceValue,
 } from "@/lib/product-api";
 
 import { DayChart } from "../analytics/day-chart";
 import { formatDay, formatWhole, relativeChange } from "../analytics/format";
-import { valueText } from "../analytics/list-rows";
+import { filterText as dimensionText, searchOf, valueText } from "../analytics/list-rows";
 import { ReportFilterBar } from "../errors/range-controls";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
 import { NoSuchProject } from "../projects/no-such-project";
@@ -41,12 +54,56 @@ import { filterSearchOf, type ProductSearch, productSearchOf } from "./search";
 
 interface EventSearch extends ProductSearch {
   filters: PropertyFilter[];
+  /** Only events with these values of their visit, location, device, or release. */
+  dimensions: EventDimensionFilters;
 }
 
-const eventSearchOf = ({ filters, ...search }: EventSearch) => ({
+const eventSearchOf = ({ filters, dimensions, ...search }: EventSearch) => ({
   ...productSearchOf(search),
+  ...dimensions,
   ...filterSearchOf(filters),
 });
+
+/** The chips of the lists' filters: "Source: google.com", each with a way to remove it. */
+function DimensionChips({
+  projectId,
+  name,
+  search,
+}: {
+  projectId: string;
+  name: string;
+  search: EventSearch;
+}) {
+  const active = activeFilters(search.dimensions);
+  if (active.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap items-center gap-2" aria-label="Filters">
+      {active.map(([dimension, value]) => {
+        const text = dimensionText(dimension, value);
+        return (
+          <li
+            key={dimension}
+            className="inline-flex h-7 items-center gap-1 rounded-4xl bg-muted pr-1 pl-3 text-sm text-ink"
+          >
+            <span>{text}</span>
+            <Link
+              to="/projects/$projectId/product/events/$name"
+              params={{ projectId, name }}
+              search={eventSearchOf({
+                ...search,
+                dimensions: { ...search.dimensions, [dimension]: undefined },
+              })}
+              className="inline-flex size-5 items-center justify-center rounded-4xl text-ink-subtle hover:bg-accent hover:text-ink focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              aria-label={`Remove the filter ${text}`}
+            >
+              <XIcon aria-hidden="true" className="size-3.5" />
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function FilterChips({
   filters,
@@ -156,48 +213,129 @@ function PropertyTable({
   );
 }
 
-/** One visit dimension's values: null is an event without a visit. */
-function VisitSourceTable({
+interface EventListTab {
+  value: EventDimension;
+  label: string;
+  nameHeading: string;
+}
+
+/** The lists, grouped and named as the Analytics page's. */
+const EVENT_LISTS: { title: string; tabs: EventListTab[] }[] = [
+  {
+    title: "Sources",
+    tabs: [
+      { value: "source", label: "Sources", nameHeading: "Source" },
+      { value: "utmCampaign", label: "Campaigns", nameHeading: "Campaign" },
+    ],
+  },
+  {
+    title: "Locations",
+    tabs: [
+      { value: "country", label: "Countries", nameHeading: "Country" },
+      { value: "region", label: "Regions", nameHeading: "Region" },
+      { value: "city", label: "Cities", nameHeading: "City" },
+    ],
+  },
+  {
+    title: "Devices",
+    tabs: [
+      { value: "deviceType", label: "Devices", nameHeading: "Device" },
+      { value: "browser", label: "Browsers", nameHeading: "Browser" },
+      { value: "os", label: "Systems", nameHeading: "Operating system" },
+    ],
+  },
+  { title: "Releases", tabs: [{ value: "release", label: "Releases", nameHeading: "Release" }] },
+];
+
+/**
+ * One group of lists, its tabs switching between them. A row filters the
+ * page by its value; "" is unknown, as on the Analytics page, except that
+ * a campaign's "" is a visit without one, so an event without a visit
+ * (null) is no filter there.
+ */
+function EventList({
   title,
+  tabs,
+  lists,
+  projectId,
   name,
-  values,
+  search,
 }: {
   title: string;
-  name: "source" | "utmCampaign";
-  values: VisitSourceValue[];
+  tabs: EventListTab[];
+  lists: EventLists;
+  projectId: string;
+  name: string;
+  search: EventSearch;
 }) {
+  const [first] = tabs;
+  const [shown, setShown] = React.useState(first?.value);
+  const tab = tabs.find((item) => item.value === shown) ?? first;
+  if (tab === undefined) return null;
+  const dimension = tab.value;
+  const filtered = search.dimensions[dimension] !== undefined;
   return (
     <BreakdownTable
       title={title}
       headingLevel={4}
-      caption={`${title}: the most frequent values of the events' visits`}
-      nameHeading={title}
-      figureHeadings={["Events"]}
-      rows={values.map((row) => {
-        const text = row.value === null ? "Unknown" : valueText(name, row.value);
+      caption={`${tab.label}, most visitors first`}
+      nameHeading={tab.nameHeading}
+      figureHeadings={["Visitors", "Events"]}
+      rows={lists[dimension].map((row) => {
+        const value = row.value ?? "";
+        const linked = !filtered && !(row.value === null && dimension === "utmCampaign");
+        const text = row.value === null ? "Unknown" : valueText(dimension, row.value);
         return {
           key: row.value === null ? "unknown" : `value:${row.value}`,
           title: text,
-          bar: row.events,
-          figures: [formatWhole(row.events)],
-          label: (
-            <span className={row.value === null || row.value === "" ? "text-ink-subtle" : ""}>
+          bar: row.visitors,
+          figures: [formatWhole(row.visitors), formatWhole(row.events)],
+          label: linked ? (
+            <Link
+              to="/projects/$projectId/product/events/$name"
+              params={{ projectId, name }}
+              search={eventSearchOf({
+                ...search,
+                dimensions: { ...search.dimensions, [dimension]: value },
+              })}
+              aria-label={`Filter by ${dimensionText(dimension, value)}`}
+              className={
+                value === ""
+                  ? "text-ink-subtle hover:text-ink hover:underline"
+                  : "hover:text-link hover:underline"
+              }
+            >
               {text}
-            </span>
+            </Link>
+          ) : (
+            <span className={value === "" ? "text-ink-subtle" : ""}>{text}</span>
           ),
         };
       })}
+      views={
+        tabs.length > 1
+          ? {
+              value: tab.value,
+              onValueChange: (next) => {
+                const picked = tabs.find((item) => item.value === next);
+                if (picked !== undefined) setShown(picked.value);
+              },
+              items: tabs.map((item) => ({ value: item.value, label: item.label })),
+            }
+          : undefined
+      }
       empty="No values."
+      layout="stack"
     />
   );
 }
 
 /**
- * The event by the source and campaign of the visit it happened in, as
- * the Analytics page counts them: its own request, so the rest of the
- * page does not wait for it.
+ * The event by its visit's source and campaign, as the Analytics page
+ * counts them, and by its own location, device, and release: its own
+ * request, so the rest of the page does not wait for it.
  */
-function VisitSources({
+function EventListsSection({
   projectId,
   name,
   search,
@@ -207,26 +345,33 @@ function VisitSources({
   search: EventSearch;
 }) {
   const query = useQuery(
-    productEventSourcesQuery(projectId, name, search.range, search.environment, search.filters),
+    eventListsQuery(
+      projectId,
+      name,
+      search.range,
+      search.environment,
+      search.filters,
+      search.dimensions,
+    ),
   );
   const data = query.data;
   return (
     <section
-      aria-labelledby="sources-heading"
+      aria-labelledby="lists-heading"
       className="@container flex flex-col gap-4 border-t pt-5"
     >
       <div className="flex flex-col gap-1">
-        <h3 id="sources-heading" className="text-sm font-medium text-ink">
-          Sources
+        <h3 id="lists-heading" className="text-sm font-medium text-ink">
+          Sources, locations, and devices
         </h3>
         <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
-          Where each event's visit came from. Events without a visit, such as a server's, are
-          Unknown.
+          Where each event&apos;s visit came from, and where and on what the event happened. Your
+          server&apos;s events have no visit, so they are Unknown. Select one to filter by it.
         </p>
       </div>
       {query.isError && (
         <LoadFailed
-          what="The sources"
+          what="The lists"
           message={query.error.message}
           hasData={data !== undefined}
           onRetry={() => void query.refetch()}
@@ -237,8 +382,16 @@ function VisitSources({
       ) : (
         <Refreshing stale={query.isPlaceholderData}>
           <div className="grid gap-x-8 gap-y-8 @3xl:grid-cols-2 @6xl:grid-cols-3">
-            <VisitSourceTable title="Source" name="source" values={data.source} />
-            <VisitSourceTable title="Campaign" name="utmCampaign" values={data.utmCampaign} />
+            {EVENT_LISTS.map((group) => (
+              <EventList
+                key={group.title}
+                {...group}
+                lists={data}
+                projectId={projectId}
+                name={name}
+                search={search}
+              />
+            ))}
           </div>
         </Refreshing>
       )}
@@ -329,7 +482,12 @@ function Detail({
   search: EventSearch;
 }) {
   if (detail.events === 0) {
-    return <NoMatch name={detail.name} filtered={search.filters.length > 0} />;
+    return (
+      <NoMatch
+        name={detail.name}
+        filtered={search.filters.length > 0 || activeFilters(search.dimensions).length > 0}
+      />
+    );
   }
   return (
     <>
@@ -367,7 +525,7 @@ function Detail({
           </div>
         )}
       </section>
-      <VisitSources projectId={projectId} name={detail.name} search={search} />
+      <EventListsSection projectId={projectId} name={detail.name} search={search} />
       <EventNotes />
     </>
   );
@@ -379,16 +537,30 @@ export function EventPage({
   range,
   environment = DEFAULT_ENVIRONMENT,
   filters,
+  dimensionSearch = {},
 }: {
   projectId: string;
   name: string;
   range: PageRange;
   environment?: string;
   filters: PropertyFilter[];
+  /** The address's filters, named as the Analytics page's; the lists' are used. */
+  dimensionSearch?: Filters;
 }) {
   const navigate = useNavigate();
-  const query = useQuery(productEventQuery(projectId, name, range, environment, filters));
-  const search: EventSearch = { range, environment, filters };
+  const access = useAccess();
+  const dimensions = eventDimensionsFrom(dimensionSearch);
+  const query = useQuery(
+    productEventQuery(
+      projectId,
+      name,
+      range,
+      environment,
+      filters,
+      Object.fromEntries(activeFilters(dimensions)),
+    ),
+  );
+  const search: EventSearch = { range, environment, filters, dimensions };
   const show = (next: Partial<EventSearch>) =>
     void navigate({
       to: "/projects/$projectId/product/events/$name",
@@ -404,19 +576,22 @@ export function EventPage({
   return (
     <div className="flex flex-col">
       <ReportFilterBar
-        label="Period, environment, and property filters"
+        label="Period, environment, and filters"
         range={range}
         environment={environment}
         answered={data}
         onRange={(next) => show({ range: next })}
         onEnvironment={(next) => show({ environment: next })}
         filters={
-          <FilterChips
-            filters={filters}
-            onRemove={(removed) =>
-              show({ filters: filters.filter((filter) => filter.key !== removed.key) })
-            }
-          />
+          <>
+            <DimensionChips projectId={projectId} name={name} search={search} />
+            <FilterChips
+              filters={filters}
+              onRemove={(removed) =>
+                show({ filters: filters.filter((filter) => filter.key !== removed.key) })
+              }
+            />
+          </>
         }
       />
       <div className="flex flex-col gap-6 px-gutter py-5">
@@ -439,8 +614,20 @@ export function EventPage({
             search={{ ...productSearchOf(search), start: name }}
           >
             <FilterIcon data-icon="inline-start" />
-            Start a funnel
+            {/* A phone has room for the icons only; the words stay the name. */}
+            <span className="max-sm:sr-only">Start a funnel</span>
           </ButtonLink>
+          {access.canUse("web_analytics") && canBeGoal(name) && (
+            <ButtonLink
+              variant="outline"
+              to="/projects/$projectId/web-analytics"
+              params={{ projectId }}
+              search={searchOf({ range, environment, filters: {}, goal: { event: name } })}
+            >
+              <ChartLineIcon data-icon="inline-start" />
+              <span className="max-sm:sr-only">Open in Web analytics</span>
+            </ButtonLink>
+          )}
         </PageActions>
         {query.isError && (
           <LoadFailed

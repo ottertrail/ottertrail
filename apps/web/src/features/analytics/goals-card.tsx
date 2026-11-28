@@ -2,6 +2,7 @@ import { PlusIcon, TargetIcon } from "lucide-react";
 import * as React from "react";
 
 import { TruncatedText } from "@/components/truncated-text";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -24,7 +25,9 @@ import { type GoalResult, goalStepText, MAX_GOALS } from "@/lib/goals-api";
 
 import { AddGoalDialog } from "./add-goal-dialog";
 import { DeleteGoalDialog } from "./delete-goal-dialog";
+import { GoalLink } from "./filter-link";
 import { formatConversion, formatWhole } from "./format";
+import type { PageSearch } from "./list-rows";
 
 function AddGoalButton({ atLimit, onClick }: { atLimit: boolean; onClick: () => void }) {
   const reasonId = React.useId();
@@ -59,11 +62,15 @@ function GoalTable({
   projectId,
   returnFocus,
   canManage,
+  search,
+  selected,
 }: {
   goals: GoalResult[];
   projectId: string;
   returnFocus: React.RefObject<HTMLHeadingElement | null>;
   canManage: boolean;
+  search: PageSearch | undefined;
+  selected: string | undefined;
 }) {
   return (
     <Table className="table-fixed max-sm:block">
@@ -101,7 +108,25 @@ function GoalTable({
                 scope="row"
                 className="py-1.5 pr-3 pl-0 text-left align-top font-normal max-sm:block max-sm:pr-0"
               >
-                <TruncatedText text={goal.name} className="text-ink" render={<div />} />
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <TruncatedText text={goal.name} className="min-w-0 text-ink" render={<div />}>
+                    {search === undefined ? (
+                      goal.name
+                    ) : (
+                      <GoalLink
+                        projectId={projectId}
+                        search={search}
+                        goal={{ id: goal.id }}
+                        name={goal.name}
+                      />
+                    )}
+                  </TruncatedText>
+                  {selected === goal.id && (
+                    <Badge variant="secondary" className="shrink-0">
+                      Selected
+                    </Badge>
+                  )}
+                </div>
                 <TruncatedText
                   text={reached}
                   className="text-xs text-ink-subtle"
@@ -146,16 +171,22 @@ function GoalTable({
   );
 }
 
-/** Adding and deleting require product analytics manage access (docs/access.md). */
+/**
+ * Adding and deleting require product analytics manage access
+ * (docs/access.md). With `search`, each goal's name makes it the page's goal.
+ */
 export function GoalsCard({
   goals,
   projectId,
   eventNames,
+  search,
 }: {
   goals: GoalResult[];
   projectId: string;
   eventNames: readonly string[];
+  search?: PageSearch;
 }) {
+  const selected = search?.goal !== undefined && "id" in search.goal ? search.goal.id : undefined;
   const canManage = useAccess().canUse("product_analytics", "manage");
   const [adding, setAdding] = React.useState(false);
   // Refetching may remove the trigger, so return focus to the heading.
@@ -198,6 +229,8 @@ export function GoalsCard({
             projectId={projectId}
             returnFocus={headingRef}
             canManage={canManage}
+            search={search}
+            selected={selected}
           />
           <p className="text-xs text-ink-subtle">
             Visitors count once per day. Events count every time.

@@ -54,6 +54,7 @@ export function BreakdownTable({
   caption,
   nameHeading,
   figureHeadings,
+  barFigure = 0,
   rows,
   views,
   showAll,
@@ -68,8 +69,10 @@ export function BreakdownTable({
   /** Says what the rows are and how they are ordered, for screen readers. */
   caption: string;
   nameHeading: string;
-  /** The first figure is the one the bars show. */
+  /** The figure the bars show, in ink, is the first unless `barFigure` names another. */
   figureHeadings: string[];
+  /** The index of the figure the bars show, such as converted visitors after visitors. */
+  barFigure?: number;
   rows: BreakdownRow[];
   /** Lists of one kind the table switches between (Top pages, Entry, Exit). */
   views?: BreakdownViews;
@@ -203,7 +206,7 @@ export function BreakdownTable({
                         key={index}
                         className={cn(
                           "py-1.5 pr-0 text-right tabular-nums",
-                          index === 0 ? "text-ink" : "text-ink-subtle",
+                          index === barFigure ? "text-ink" : "text-ink-subtle",
                           stack &&
                             "max-sm:col-span-2 max-sm:flex max-sm:justify-between max-sm:px-0 max-sm:py-0.5",
                         )}

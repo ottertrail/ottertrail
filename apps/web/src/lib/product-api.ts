@@ -66,25 +66,6 @@ export interface PropertyBreakdown {
   values: { value: string; events: number }[];
 }
 
-/**
- * One value of an event's visit source or campaign: null for events
- * without a visit, "" for visits without a campaign.
- */
-export interface VisitSourceValue {
-  value: string | null;
-  events: number;
-}
-
-/**
- * GET /api/projects/:id/events/:name/sources: the event by its visit's
- * source and campaign, as the Analytics page names them, 10 values each.
- */
-export interface ProductEventSources extends Answered {
-  filters: PropertyFilter[];
-  source: VisitSourceValue[];
-  utmCampaign: VisitSourceValue[];
-}
-
 /** GET /api/projects/:id/events/:name: zeros, never 404, when nothing matches. */
 export interface ProductEventDetail extends Answered, ProductEventRow {
   previous: PeriodBefore & ProductEventCounts;
@@ -334,16 +315,6 @@ const isBreakdown = (value: unknown): value is PropertyBreakdown =>
   isNumber(value.events) &&
   isListOf(value.values, isValueRow);
 
-const isSourceValue = (value: unknown): value is VisitSourceValue =>
-  isRecord(value) && (value.value === null || isText(value.value)) && isNumber(value.events);
-
-const isEventSources = (value: unknown): value is ProductEventSources =>
-  isRecord(value) &&
-  isAnswered(value) &&
-  isListOf(value.filters, isFilter) &&
-  isListOf(value.source, isSourceValue) &&
-  isListOf(value.utmCampaign, isSourceValue);
-
 const isDay = (value: unknown): value is ProductEventDetail["days"][number] =>
   isRecord(value) && isText(value.day) && isNumber(value.events);
 
@@ -492,17 +463,19 @@ export const productEventsQuery = (
     placeholderData: keepPreviousData,
   });
 
+/** An event's page: the range, its property filters, and its dimensions' filters (`more`). */
 export const productEventQuery = (
   projectId: string,
   name: string,
   range: PageRange,
   environment: string,
   filters: readonly PropertyFilter[],
+  more: Record<string, string> = {},
 ) =>
   queryOptions({
-    queryKey: ["product-event", projectId, name, range, environment, filters],
+    queryKey: ["product-event", projectId, name, range, environment, filters, more],
     queryFn: ({ signal }) => {
-      const query = new URLSearchParams(rangeQuery(range, environment));
+      const query = new URLSearchParams({ ...rangeQuery(range, environment), ...more });
       for (const filter of filters) {
         query.append(`p.${filter.key}`, filter.value);
       }
@@ -511,31 +484,6 @@ export const productEventQuery = (
         query,
         signal,
         isEventDetail,
-      );
-    },
-    placeholderData: keepPreviousData,
-  });
-
-/** The event by its visit's source and campaign: its own request, with the page's filters. */
-export const productEventSourcesQuery = (
-  projectId: string,
-  name: string,
-  range: PageRange,
-  environment: string,
-  filters: readonly PropertyFilter[],
-) =>
-  queryOptions({
-    queryKey: ["product-event", projectId, name, range, environment, filters, "sources"],
-    queryFn: ({ signal }) => {
-      const query = new URLSearchParams(rangeQuery(range, environment));
-      for (const filter of filters) {
-        query.append(`p.${filter.key}`, filter.value);
-      }
-      return get(
-        `${projectPath(projectId)}/events/${encodeURIComponent(name)}/sources`,
-        query,
-        signal,
-        isEventSources,
       );
     },
     placeholderData: keepPreviousData,

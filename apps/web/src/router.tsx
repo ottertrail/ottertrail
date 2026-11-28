@@ -362,15 +362,23 @@ const webAnalyticsRoute = createRoute({
   // override the period; invalid days fall back to the default period.
   // Omit the default production environment.
   validateSearch: (
-    search: { period?: unknown; from?: unknown; to?: unknown; env?: unknown } & Partial<
-      Record<keyof Filters, unknown>
-    > &
+    search: {
+      period?: unknown;
+      from?: unknown;
+      to?: unknown;
+      env?: unknown;
+      goal?: unknown;
+      goalEvent?: unknown;
+    } & Partial<Record<keyof Filters, unknown>> &
       SearchSchemaInput,
   ): {
     period: Period | undefined;
     from: string | undefined;
     to: string | undefined;
     env: string | undefined;
+    // The goal filter; the page checks it (goalChoiceFrom).
+    goal: string | undefined;
+    goalEvent: string | undefined;
   } & Filters => {
     const range = rangeFrom(search);
     const environment = environmentFrom(search.env);
@@ -379,18 +387,21 @@ const webAnalyticsRoute = createRoute({
       from: "from" in range ? range.from : undefined,
       to: "to" in range ? range.to : undefined,
       env: environment === DEFAULT_ENVIRONMENT ? undefined : environment,
+      goal: selectionFrom(search.goal),
+      goalEvent: selectionFrom(search.goalEvent),
       ...filtersFrom(search),
     };
   },
   component: withPage(AnalyticsPage, function WebAnalyticsRouteComponent() {
     const { projectId } = webAnalyticsRoute.useParams();
-    const { period, from, to, env, ...filters } = webAnalyticsRoute.useSearch();
+    const { period, from, to, env, goal, goalEvent, ...filters } = webAnalyticsRoute.useSearch();
     return (
       <AnalyticsPage
         projectId={projectId}
         range={rangeFrom({ period, from, to })}
         filters={filters}
         environment={env ?? DEFAULT_ENVIRONMENT}
+        goalSearch={{ goal, goalEvent }}
       />
     );
   }),
@@ -1305,8 +1316,10 @@ const productEventRoute = createRoute({
   path: "/events/$name",
   validateSearch: (
     search: ErrorSearchInput & Record<string, unknown>,
-  ): ReturnType<typeof productRangeSearch> & FilterSearch => ({
+  ): ReturnType<typeof productRangeSearch> & FilterSearch & Filters => ({
     ...productRangeSearch(search),
+    // The lists' filters, named as the Analytics page's.
+    ...filtersFrom(search),
     ...filterSearchOf(propertyFiltersFrom(search)),
   }),
   component: withPage(EventPage, function ProductEventRouteComponent() {
@@ -1319,6 +1332,7 @@ const productEventRoute = createRoute({
         range={rangeFrom({ period, from, to })}
         environment={env ?? DEFAULT_ENVIRONMENT}
         filters={propertyFiltersFrom(rest)}
+        dimensionSearch={rest}
       />
     );
   }),

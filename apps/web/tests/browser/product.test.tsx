@@ -41,6 +41,21 @@ const tableRows = (name: string) =>
       .map((cell) => cell.textContent),
   );
 
+/** A stacked breakdown's rows: each cell's text without its phone label. */
+const listRows = (name: string) =>
+  [...page.getByRole("table", { name }).element().querySelectorAll("tbody tr")].map((row) =>
+    [...row.querySelectorAll("td")]
+      .filter((cell) => cell.querySelector("[data-slot=breakdown-bar]") === null)
+      .map((cell) =>
+        [...cell.childNodes]
+          .filter(
+            (node) => !(node instanceof Element && node.matches("[data-slot=breakdown-label]")),
+          )
+          .map((node) => node.textContent)
+          .join(""),
+      ),
+  );
+
 const EVENT_LIST = "Product events, most frequent first";
 
 /**
@@ -297,13 +312,14 @@ describe("product events", () => {
     expect(router.state.location.search).toEqual({ period: "30d" });
   });
 
-  test("an event's properties come before its sources, and its notes are folded", async () => {
+  test("an event's properties come before its lists, and its notes are folded", async () => {
     installFakeApi();
     renderApp(SIGNUP);
-    await expect.element(page.getByRole("heading", { name: "Sources" })).toBeVisible();
+    const lists = "Sources, locations, and devices";
+    await expect.element(page.getByRole("heading", { name: lists })).toBeVisible();
 
     const headings = [...document.querySelectorAll("h3")].map((heading) => heading.textContent);
-    expect(headings.indexOf("Properties")).toBeLessThan(headings.indexOf("Sources"));
+    expect(headings.indexOf("Properties")).toBeLessThan(headings.indexOf(lists));
     await expect.element(page.getByText("How events are counted")).toBeVisible();
     await expect.element(page.getByText(/Users are your site's IDs/)).not.toBeVisible();
   });
@@ -344,26 +360,114 @@ describe("product events", () => {
     expect(router.state.location.search).toEqual({});
   });
 
-  test("an event's sources: its visit's source and campaign, with the page's filters", async () => {
+  test("an event's lists: as the Analytics page's, with visitors and events", async () => {
     const api = installFakeApi();
     renderApp(`${SIGNUP}?p.plan=team`);
 
-    const source = "Source: the most frequent values of the events' visits";
-    await expect.element(page.getByRole("table", { name: source })).toBeVisible();
-    expect(lastQuery(api, "/events/signup/sources")).toEqual({ period: "7d", "p.plan": "team" });
+    const sources = "Sources, most visitors first";
+    await expect.element(page.getByRole("table", { name: sources })).toBeVisible();
+    expect(lastQuery(api, "/events/signup/breakdowns")).toEqual({
+      period: "7d",
+      "p.plan": "team",
+    });
     // Named as the Analytics page names them; a server's events are Unknown.
-    expect(tableRows(source)).toEqual([
-      ["Direct / none", "52"],
-      ["google.com", "41"],
-      ["newsletter", "25"],
-      ["news.ycombinator.com", "14"],
-      ["Unknown", "8"],
+    expect(listRows(sources)).toEqual([
+      ["Direct / none", "47", "52"],
+      ["google.com", "37", "41"],
+      ["newsletter", "22", "25"],
+      ["news.ycombinator.com", "12", "14"],
+      ["Unknown", "0", "8"],
     ]);
-    expect(tableRows("Campaign: the most frequent values of the events' visits")).toEqual([
-      ["No campaign", "107"],
-      ["launch-week", "25"],
-      ["Unknown", "8"],
+    await page.getByRole("button", { name: "Campaigns" }).click();
+    expect(listRows("Campaigns, most visitors first")).toEqual([
+      ["No campaign", "96", "107"],
+      ["launch-week", "22", "25"],
+      ["Unknown", "0", "8"],
     ]);
+    // A campaign's Unknown is an event without a visit: nothing to filter by.
+    const campaigns = page.getByRole("table", { name: "Campaigns, most visitors first" });
+    expect(campaigns.getByRole("link").elements()).toHaveLength(2);
+    for (const [group, tabs] of [
+      ["Locations", ["Countries", "Regions", "Cities"]],
+      ["Devices", ["Devices", "Browsers", "Systems"]],
+    ] as const) {
+      const toggles = page.getByRole("group", { name: `Which ${group.toLowerCase()} to list` });
+      expect(
+        toggles
+          .getByRole("button")
+          .elements()
+          .map((item) => item.textContent),
+      ).toEqual(tabs);
+    }
+    expect(listRows("Countries, most visitors first")[0]).toEqual(["Germany", "41", "46"]);
+    expect(listRows("Releases, most visitors first")[0]).toEqual(["1.4.2", "90", "101"]);
+  });
+
+  test("a list's row filters the event's page, shown as a chip beside the property filters", async () => {
+    const api = installFakeApi();
+    const router = renderApp(`${SIGNUP}?p.plan=team`);
+    await expect
+      .element(page.getByRole("table", { name: "Sources, most visitors first" }))
+      .toBeVisible();
+
+    await page.getByRole("link", { name: "Filter by Source: google.com" }).click();
+
+    await expect
+      .poll(() => router.state.location.search)
+      .toEqual({ source: "google.com", "p.plan": "team" });
+    await expect
+      .poll(() => lastQuery(api, "/events/signup"))
+      .toEqual({ period: "7d", source: "google.com", "p.plan": "team" });
+    expect(lastQuery(api, "/events/signup/breakdowns")).toEqual({
+      period: "7d",
+      source: "google.com",
+      "p.plan": "team",
+    });
+    const filters = page.getByRole("list", { name: "Filters" });
+    await expect.element(filters.getByText("Source: google.com")).toBeVisible();
+    await expect
+      .element(page.getByRole("list", { name: "Property filters" }).getByText("plan = team"))
+      .toBeVisible();
+    // The filtered list shows its one value, which no longer filters.
+    await expect
+      .poll(() => listRows("Sources, most visitors first"))
+      .toEqual([["google.com", "37", "41"]]);
+    expect(
+      page
+        .getByRole("table", { name: "Sources, most visitors first" })
+        .getByRole("link")
+        .elements(),
+    ).toHaveLength(0);
+
+    await page.getByRole("link", { name: "Remove the filter Source: google.com" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({ "p.plan": "team" });
+  });
+
+  test("an unknown value filters by the unknown, as on the Analytics page", async () => {
+    const api = installFakeApi();
+    const router = renderApp(SIGNUP);
+    await expect
+      .element(page.getByRole("table", { name: "Sources, most visitors first" }))
+      .toBeVisible();
+    await page.getByRole("link", { name: "Filter by Source: Unknown" }).click();
+    await expect.poll(() => router.state.location.search).toEqual({ source: "" });
+    await expect.poll(() => lastQuery(api, "/events/signup")).toEqual({ period: "7d", source: "" });
+    await expect.poll(() => stat("Events")).toBe("8");
+  });
+
+  test("Open in Web analytics shows Web analytics with the event as the goal", async () => {
+    installFakeApi();
+    const router = renderApp(`${SIGNUP}?period=30d`);
+
+    await page.getByRole("link", { name: "Open in Web analytics" }).click();
+
+    await expect
+      .poll(() => router.state.location.pathname)
+      .toBe(`/projects/${PROJECT.id}/web-analytics`);
+    expect(router.state.location.search).toEqual({ period: "30d", goalEvent: "signup" });
+    await expect
+      .element(page.getByRole("list", { name: "Filters" }).getByText("Goal: signup"))
+      .toBeVisible();
   });
 
   test("a value adds a filter to the address and the request; its chip removes it", async () => {

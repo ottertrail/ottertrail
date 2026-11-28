@@ -1,7 +1,5 @@
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
-
-import { ApiError, apiRequest, expectShape } from "./api";
-import { type GoalResult, isGoalResult } from "./goals-api";
+import type { GoalResult } from "./goals-api";
+import type { Step } from "./steps";
 
 /** Ranges the analytics page offers; each ends today in the timezone set in Settings. */
 export const PERIODS = [
@@ -78,6 +76,8 @@ export interface DayPoint {
   visitors: number;
   pageviews: number;
   visits: number;
+  /** With a goal: the visitors with a goal event that day. */
+  converted?: number;
 }
 
 export interface PageRow {
@@ -85,6 +85,8 @@ export interface PageRow {
   pageviews: number;
   visitors: number;
   avgEngagedMs: number | null;
+  /** With a goal: the visitors who viewed the page in a visit that reached it. */
+  converted?: number;
 }
 
 export interface BreakdownRow {
@@ -93,6 +95,8 @@ export interface BreakdownRow {
   visitors: number;
   visits: number;
   bounceRate: number | null;
+  /** With a goal: the visitors with a visit of this value that reached it. */
+  converted?: number;
 }
 
 export interface CustomEventRow {
@@ -155,77 +159,26 @@ export interface Analytics {
   customEvents: CustomEventRow[];
   /** The project's saved goals, in the order added, counted in the same visits. */
   goals: GoalResult[];
+  /** The goal the page is filtered by, with its counts; null without one. */
+  goal: PageGoalResult | null;
   previous: PreviousPeriod;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-const isNumber = (value: unknown): value is number => typeof value === "number";
-const isNumberOrNull = (value: unknown) => value === null || isNumber(value);
-const isListOf = <T>(value: unknown, isItem: (item: unknown) => item is T): value is T[] =>
-  Array.isArray(value) && value.every(isItem);
+/** A saved goal (`id`) or a custom event by name (`id` null), with its conversions. */
+export interface PageGoalResult {
+  id: string | null;
+  name: string;
+  step: Step;
+  /** Daily visitor IDs that reached it. */
+  converted: number;
+  events: number;
+  /** converted / the summary's visitors: 0 to 1. */
+  conversionRate: number;
+  previous: { converted: number; events: number };
+}
 
-const isSummary = (value: unknown): value is Summary =>
-  isRecord(value) &&
-  isNumber(value.visitors) &&
-  isNumber(value.pageviews) &&
-  isNumber(value.visits) &&
-  isNumberOrNull(value.viewsPerVisit) &&
-  isNumberOrNull(value.bounceRate) &&
-  isNumberOrNull(value.avgDurationMs) &&
-  isNumberOrNull(value.avgEngagedMs);
-
-const isDayPoint = (value: unknown): value is DayPoint =>
-  isRecord(value) &&
-  typeof value.day === "string" &&
-  isNumber(value.visitors) &&
-  isNumber(value.pageviews) &&
-  isNumber(value.visits);
-
-const isPageRow = (value: unknown): value is PageRow =>
-  isRecord(value) &&
-  typeof value.path === "string" &&
-  isNumber(value.pageviews) &&
-  isNumber(value.visitors) &&
-  isNumberOrNull(value.avgEngagedMs);
-
-const isBreakdownRow = (value: unknown): value is BreakdownRow =>
-  isRecord(value) &&
-  (value.value === null || typeof value.value === "string") &&
-  isNumber(value.visitors) &&
-  isNumber(value.visits) &&
-  isNumberOrNull(value.bounceRate);
-
-const isCustomEventRow = (value: unknown): value is CustomEventRow =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  isNumber(value.events) &&
-  isNumber(value.visitors);
-
-const isPreviousPeriod = (value: unknown): value is PreviousPeriod =>
-  isRecord(value) &&
-  typeof value.firstDay === "string" &&
-  typeof value.lastDay === "string" &&
-  (value.until === null || typeof value.until === "string") &&
-  isSummary(value.summary);
-
-export const isAnalytics = (value: unknown): value is Analytics =>
-  isRecord(value) &&
-  typeof value.timeZone === "string" &&
-  typeof value.environment === "string" &&
-  isListOf(value.environments, (item): item is string => typeof item === "string") &&
-  typeof value.firstDay === "string" &&
-  typeof value.lastDay === "string" &&
-  isSummary(value.summary) &&
-  isListOf(value.days, isDayPoint) &&
-  isListOf(value.pages, isPageRow) &&
-  isListOf(value.customEvents, isCustomEventRow) &&
-  isListOf(value.goals, isGoalResult) &&
-  isPreviousPeriod(value.previous) &&
-  isRecord(value.breakdowns) &&
-  BREAKDOWNS.every((name) =>
-    isListOf(isRecord(value.breakdowns) ? value.breakdowns[name] : undefined, isBreakdownRow),
-  );
+/** Every list of the analytics page; each can be read in full (analytics-queries.ts). */
+export type ListReport = "pages" | "customEvents" | Breakdown;
 
 /** "page" matches visits that viewed that page. Other filters match exact property values. */
 export const FILTER_NAMES = [
@@ -312,139 +265,3 @@ export function activeFilters(filters: Filters): [FilterName, string][] {
     return value === undefined ? [] : [[name, value] as [FilterName, string]];
   });
 }
-
-/** How often a page that shows today refreshes on its own. */
-const REFRESH_MS = 60_000;
-
-const environmentParams = (environment: string): Record<string, string> =>
-  environment === DEFAULT_ENVIRONMENT ? {} : { environment };
-
-export const analyticsQuery = (
-  projectId: string,
-  range: PageRange,
-  filters: Filters = {},
-  environment = DEFAULT_ENVIRONMENT,
-) =>
-  queryOptions({
-    queryKey: ["analytics", projectId, range, filters, environment],
-    queryFn: async ({ signal }) => {
-      const query = new URLSearchParams({
-        ...rangeParams(range),
-        ...environmentParams(environment),
-        ...Object.fromEntries(activeFilters(filters)),
-      });
-      return expectShape(
-        await apiRequest(
-          `/api/projects/${encodeURIComponent(projectId)}/analytics?${query.toString()}`,
-          { signal },
-        ),
-        isAnalytics,
-      );
-    },
-    // While another period loads, keep showing this one (dimmed), not skeletons.
-    placeholderData: keepPreviousData,
-    refetchInterval: REFRESH_MS,
-  });
-
-/** Every list of the analytics page; each can be read in full with listQuery. */
-export type ListReport = "pages" | "customEvents" | Breakdown;
-
-/** Rows a list shows on the page; a list this long may have more ("Show all"). */
-export const LIST_PREVIEW_ROWS = 10;
-/** Rows one page of a full list holds. */
-export const LIST_PAGE_SIZE = 50;
-
-/** A row of any list, in one shape: its name, visitors, and the second number (views, visits, or events). */
-export interface ListRow {
-  /** null: unknown. */
-  name: string | null;
-  visitors: number;
-  second: number;
-}
-
-export interface ListPage {
-  rows: ListRow[];
-  hasMore: boolean;
-}
-
-const hasMore = (value: Record<string, unknown>) => typeof value.hasMore === "boolean";
-
-/** The API's rows for `report`, in the shape every list uses, or null when they do not match. */
-function listPage(report: ListReport, value: unknown): ListPage | null {
-  if (!isRecord(value) || !hasMore(value) || !Array.isArray(value.rows)) {
-    return null;
-  }
-  const more = value.hasMore === true;
-  if (report === "pages") {
-    return isListOf(value.rows, isPageRow)
-      ? {
-          hasMore: more,
-          rows: value.rows.map((row) => ({
-            name: row.path,
-            visitors: row.visitors,
-            second: row.pageviews,
-          })),
-        }
-      : null;
-  }
-  if (report === "customEvents") {
-    return isListOf(value.rows, isCustomEventRow)
-      ? {
-          hasMore: more,
-          rows: value.rows.map((row) => ({
-            name: row.name,
-            visitors: row.visitors,
-            second: row.events,
-          })),
-        }
-      : null;
-  }
-  return isListOf(value.rows, isBreakdownRow)
-    ? {
-        hasMore: more,
-        rows: value.rows.map((row) => ({
-          name: row.value,
-          visitors: row.visitors,
-          second: row.visits,
-        })),
-      }
-    : null;
-}
-
-/** One list in full, LIST_PAGE_SIZE rows at a time, with the page's period, environment, and filters. */
-export const listQuery = (
-  projectId: string,
-  range: PageRange,
-  filters: Filters,
-  environment: string,
-  report: ListReport,
-  search: string,
-) =>
-  infiniteQueryOptions({
-    queryKey: ["analytics-list", projectId, range, filters, environment, report, search],
-    queryFn: async ({ pageParam, signal }) => {
-      const query = new URLSearchParams({
-        ...rangeParams(range),
-        ...environmentParams(environment),
-        ...Object.fromEntries(activeFilters(filters)),
-        report,
-        offset: String(pageParam),
-        limit: String(LIST_PAGE_SIZE),
-        ...(search === "" ? {} : { search }),
-      });
-      const body = await apiRequest(
-        `/api/projects/${encodeURIComponent(projectId)}/analytics/list?${query.toString()}`,
-        { signal },
-      );
-      const page = listPage(report, body);
-      if (page === null) {
-        throw new ApiError(0, "The API sent an unexpected response.");
-      }
-      return page;
-    },
-    initialPageParam: 0,
-    getNextPageParam: (last, pages) =>
-      last.hasMore ? pages.reduce((rows, page) => rows + page.rows.length, 0) : undefined,
-    // While a new search loads, keep showing the last results.
-    placeholderData: keepPreviousData,
-  });

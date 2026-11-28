@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  ArrowUpRightIcon,
   ChartLineIcon,
   FilterXIcon,
   MousePointerClickIcon,
@@ -15,6 +16,7 @@ import { FilterBar, FilterBarRange } from "@/components/filter-bar";
 import { type Stat, StatStrip } from "@/components/stat-strip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -24,6 +26,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAccess } from "@/lib/access";
@@ -31,14 +42,21 @@ import {
   activeFilters,
   type Analytics,
   type Breakdown,
-  analyticsQuery,
   type DayPoint,
   DEFAULT_ENVIRONMENT,
   type Filters,
-  LIST_PREVIEW_ROWS,
   type ListReport,
+  type PageGoalResult,
   type PageRange,
 } from "@/lib/analytics-api";
+import {
+  analyticsQuery,
+  canBeGoal,
+  type GoalChoice,
+  goalChoiceFrom,
+  LIST_PREVIEW_ROWS,
+  sameGoal,
+} from "@/lib/analytics-queries";
 import { ApiError } from "@/lib/api";
 import { MISSING } from "@/lib/missing";
 import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
@@ -46,10 +64,12 @@ import { projectQuery, type ProjectSummary } from "@/lib/projects-api";
 import { EnvironmentSelect, PeriodSelect } from "../errors/range-controls";
 import { heatmapsSearchOf } from "../heatmaps/search";
 import { MIN_LOADS_FOR_CHANGE } from "../overview/format";
+import { productSearchOf } from "../product/search";
 import { NoSuchProject } from "../projects/no-such-project";
 import { DayChart } from "./day-chart";
-import { FilterLink } from "./filter-link";
+import { FilterLink, GoalLink } from "./filter-link";
 import {
+  formatConversion,
   formatCount,
   formatDay,
   formatDayRange,
@@ -68,8 +88,10 @@ import {
   fromBreakdown,
   fromEvents,
   fromPages,
+  goalText,
   type PageSearch,
   rankedRows,
+  rowRate,
   searchOf,
 } from "./list-rows";
 import type { RankedRow } from "./ranked-list";
@@ -81,10 +103,23 @@ const METRICS = [
   { key: "pageviews", label: "Pageviews" },
 ] as const satisfies readonly { key: keyof DayPoint; label: string }[];
 
-type Metric = (typeof METRICS)[number]["key"];
+/** With a goal, the chart opens on its converted visitors. */
+const GOAL_METRICS = [{ key: "converted", label: "Converted" } as const, ...METRICS];
+
+type Metric = (typeof GOAL_METRICS)[number]["key"];
 
 const isMetric = (value: unknown): value is Metric =>
-  METRICS.some((metric) => metric.key === value);
+  GOAL_METRICS.some((metric) => metric.key === value);
+
+const dayValue = (day: DayPoint, metric: Metric) => day[metric] ?? 0;
+
+/** A goal's name: a saved goal's, or the custom event's. */
+function goalName(goal: GoalChoice, analytics: Analytics | undefined): string {
+  if ("event" in goal) return goal.event;
+  return (
+    analytics?.goal?.name ?? analytics?.goals.find((item) => item.id === goal.id)?.name ?? "Goal"
+  );
+}
 
 interface ListTab {
   value: string;
@@ -142,19 +177,47 @@ function HeatmapLink({
   );
 }
 
-/** A full LIST_PREVIEW_ROWS preview may have more rows. */
+/** A custom event's own page, under Product analytics. */
+function EventPageLink({
+  projectId,
+  search,
+  name,
+}: {
+  projectId: string;
+  search: PageSearch;
+  name: string;
+}) {
+  return (
+    <Link
+      to="/projects/$projectId/product/events/$name"
+      params={{ projectId, name }}
+      search={productSearchOf(search)}
+      aria-label={`Open the ${name} event`}
+      title={`Open the ${name} event`}
+      className="flex size-6 items-center justify-center rounded-md text-ink-subtle transition-colors hover:bg-accent hover:text-ink max-sm:size-8"
+    >
+      <ArrowUpRightIcon aria-hidden="true" className="size-3.5" />
+    </Link>
+  );
+}
+
+/**
+ * A full LIST_PREVIEW_ROWS preview may have more rows. With a goal (`goal`),
+ * each row shows its visitors, converted visitors, and rate, most converted
+ * first, and the bar the converted.
+ */
 function BreakdownSection({
   title,
   tabs,
   projectId,
   search,
-  heatmapLinks = false,
+  goal = false,
 }: {
   title: string;
   tabs: ListTab[];
   projectId: string;
   search: PageSearch;
-  heatmapLinks?: boolean;
+  goal?: boolean;
 }) {
   const [first] = tabs;
   const [shownValue, setShownValue] = React.useState(first?.value ?? "");
@@ -166,23 +229,24 @@ function BreakdownSection({
       <BreakdownTable
         title={title}
         headingLevel={2}
-        caption={`${tab.label}, most visitors first`}
+        caption={`${tab.label}, ${goal ? "most converted" : "most visitors"} first`}
         nameHeading={tab.nameHeading}
-        figureHeadings={["Visitors", tab.secondaryHeading]}
+        figureHeadings={
+          goal ? ["Visitors", "Converted", "Rate"] : ["Visitors", tab.secondaryHeading]
+        }
+        barFigure={goal ? 1 : 0}
         rows={tab.rows.map((row) => ({
           key: row.key,
           label: row.label,
           title: row.title,
-          // A row without a path ("Unknown") has no page to show.
-          action:
-            heatmapLinks && row.key.startsWith("/") ? (
-              <HeatmapLink projectId={projectId} search={search} path={row.key} />
-            ) : undefined,
-          bar: row.primary,
-          figures: [
-            formatWhole(row.primary),
-            row.secondary === undefined ? MISSING : formatWhole(row.secondary),
-          ],
+          action: row.action,
+          bar: goal ? (row.converted ?? 0) : row.primary,
+          figures: goal
+            ? [formatWhole(row.primary), formatWhole(row.converted ?? 0), rowRate(row)]
+            : [
+                formatWhole(row.primary),
+                row.secondary === undefined ? MISSING : formatWhole(row.secondary),
+              ],
         }))}
         views={
           tabs.length > 1
@@ -310,17 +374,75 @@ function Summary({ analytics }: { analytics: Analytics }) {
   );
 }
 
-function Trend({ days }: { days: DayPoint[] }) {
-  const [metric, setMetric] = React.useState<Metric>("visitors");
+/**
+ * With a goal: the visitors, those who reached it, their share, and the
+ * goal's events, each compared with the period before.
+ */
+function GoalSummary({ analytics, goal }: { analytics: Analytics; goal: PageGoalResult }) {
+  const visitors = analytics.summary.visitors;
+  const before = analytics.previous.summary.visitors;
+  const converted = { current: goal.converted, previous: goal.previous.converted };
+  const rateBefore = before === 0 ? null : goal.previous.converted / before;
+  const stats: Stat[] = [
+    {
+      label: "Visitors",
+      value: formatCount(visitors),
+      change: relativeChange(visitors, before),
+      before: formatWhole(before),
+      counts: { current: visitors, previous: before },
+    },
+    {
+      label: "Converted",
+      value: formatCount(goal.converted),
+      change: relativeChange(goal.converted, goal.previous.converted),
+      before: formatWhole(goal.previous.converted),
+      counts: converted,
+    },
+    {
+      label: "Conversion rate",
+      value: formatConversion(goal.conversionRate),
+      // A share changes in percentage points.
+      change: pointsChange(visitors === 0 ? null : goal.conversionRate, rateBefore),
+      before: rateBefore === null ? MISSING : formatConversion(rateBefore),
+      counts: converted,
+    },
+    {
+      label: "Events",
+      value: formatCount(goal.events),
+      change: relativeChange(goal.events, goal.previous.events),
+      before: formatWhole(goal.previous.events),
+      counts: { current: goal.events, previous: goal.previous.events },
+    },
+  ];
+  return (
+    <section aria-label="Summary" className="flex flex-col gap-3">
+      <StatStrip
+        label="Figures"
+        stats={stats}
+        minCount={MIN_LOADS_FOR_CHANGE}
+        className="lg:max-w-3xl"
+      />
+      <p className="max-w-4xl text-xs text-pretty text-ink-subtle">
+        {comparisonNote(analytics)} Converted visitors reached the goal in this period. Your
+        server&apos;s events have no visitor, so they are not counted. A person who returns on
+        another day counts again.
+      </p>
+    </section>
+  );
+}
+
+function Trend({ days, goal = false }: { days: DayPoint[]; goal?: boolean }) {
+  const metrics = goal ? GOAL_METRICS : METRICS;
+  const [metric, setMetric] = React.useState<Metric>(goal ? "converted" : "visitors");
   const [showTable, setShowTable] = React.useState(false);
   const tableId = React.useId();
   const headingId = React.useId();
 
   const tooltipRows = (plotted: Metric) => (index: number) => {
     const day = days[index];
-    return METRICS.map((item) => ({
+    return metrics.map((item) => ({
       label: item.label,
-      value: day === undefined ? MISSING : formatWhole(day[item.key]),
+      value: day === undefined ? MISSING : formatWhole(dayValue(day, item.key)),
       plotted: item.key === plotted,
     }));
   };
@@ -338,12 +460,12 @@ function Trend({ days }: { days: DayPoint[] }) {
       >
         <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <h2 id={headingId} className="text-sm font-medium text-ink">
-            {METRICS.find((item) => item.key === metric)?.label} per day
+            {metrics.find((item) => item.key === metric)?.label} per day
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             {days.length >= 2 && (
               <TabsList aria-label="Metric to chart">
-                {METRICS.map((item) => (
+                {metrics.map((item) => (
                   <TabsTrigger key={item.key} value={item.key}>
                     {item.label}
                   </TabsTrigger>
@@ -361,7 +483,7 @@ function Trend({ days }: { days: DayPoint[] }) {
             </Button>
           </div>
         </div>
-        {METRICS.map((item) => (
+        {metrics.map((item) => (
           <TabsContent key={item.key} value={item.key}>
             {days.length < 2 ? (
               <p className="py-8 text-center text-sm text-ink-subtle">
@@ -369,7 +491,7 @@ function Trend({ days }: { days: DayPoint[] }) {
               </p>
             ) : (
               <DayChart
-                points={days.map((day) => ({ day: day.day, value: day[item.key] }))}
+                points={days.map((day) => ({ day: day.day, value: dayValue(day, item.key) }))}
                 label={`${item.label} per day`}
                 tooltipRows={tooltipRows(item.key)}
                 plotHeight={140}
@@ -381,13 +503,16 @@ function Trend({ days }: { days: DayPoint[] }) {
       <div id={tableId} hidden={!showTable} className="max-h-80 max-w-xl overflow-y-auto">
         {showTable && (
           <table className="w-full text-sm">
-            <caption className="sr-only">Visitors, visits, and pageviews per day</caption>
+            <caption className="sr-only">
+              {goal ? "Converted visitors, visitors, visits," : "Visitors, visits,"} and pageviews
+              per day
+            </caption>
             <thead className="sticky top-0 bg-[var(--block-surface,var(--background))]">
               <tr className="text-xs text-ink-subtle">
                 <th scope="col" className="pb-2 text-left font-normal">
                   Day
                 </th>
-                {METRICS.map((item) => (
+                {metrics.map((item) => (
                   <th key={item.key} scope="col" className="pb-2 text-right font-normal">
                     {item.label}
                   </th>
@@ -400,9 +525,9 @@ function Trend({ days }: { days: DayPoint[] }) {
                   <th scope="row" className="py-1.5 text-left font-normal text-ink">
                     {formatDay(day.day, { weekday: true })}
                   </th>
-                  {METRICS.map((item) => (
+                  {metrics.map((item) => (
                     <td key={item.key} className="py-1.5 text-right text-ink tabular-nums">
-                      {formatWhole(day[item.key])}
+                      {formatWhole(dayValue(day, item.key))}
                     </td>
                   ))}
                 </tr>
@@ -425,22 +550,66 @@ function Reports({
   search: PageSearch;
 }) {
   const { breakdowns } = analytics;
+  // The answer's goal, not the address's: while a new one loads, the old numbers stay.
+  const goal = analytics.goal;
+  const canOpenEvents = useAccess().canUse("product_analytics");
   const link: FilterLinkFor = (name, value) => (
     <FilterLink projectId={projectId} search={search} name={name} value={value} />
   );
+  const eventLink = (name: string) => (
+    <GoalLink projectId={projectId} search={search} goal={{ event: name }} name={name} />
+  );
   const rows = (report: Breakdown) => rankedRows(report, fromBreakdown(breakdowns[report]), link);
-  const card = { projectId, search };
+  // A row without a path ("Unknown") has no page to show.
+  const withHeatmaps = (list: RankedRow[]) =>
+    list.map((row) =>
+      row.key.startsWith("/")
+        ? {
+            ...row,
+            action: <HeatmapLink projectId={projectId} search={search} path={row.key} />,
+          }
+        : row,
+    );
+  const chosenEvent =
+    search.goal !== undefined && "event" in search.goal ? search.goal.event : undefined;
+  const eventRows = rankedRows(
+    "customEvents",
+    fromEvents(analytics.customEvents),
+    link,
+    eventLink,
+  ).map((row) => {
+    const name = row.title ?? row.key;
+    return {
+      ...row,
+      action: (
+        <>
+          {chosenEvent === name && (
+            <Badge variant="secondary" className="mr-1">
+              Goal
+            </Badge>
+          )}
+          {canOpenEvents && <EventPageLink projectId={projectId} search={search} name={name} />}
+        </>
+      ),
+    };
+  });
+  const card = { projectId, search, goal: goal !== null };
   return (
     <>
-      <Summary analytics={analytics} />
-      <Trend days={analytics.days} />
-      {/* Use content width; the sidebar takes 16rem. */}
+      {goal === null ? (
+        <Summary analytics={analytics} />
+      ) : (
+        <GoalSummary analytics={analytics} goal={goal} />
+      )}
+      <Trend key={goal === null ? "visits" : "goal"} days={analytics.days} goal={goal !== null} />
+      {/* Use content width; the sidebar takes 16rem. Three figures need half of it. */}
       <div className="@container border-t pt-5">
-        <div className="grid gap-x-8 gap-y-8 @3xl:grid-cols-2 @5xl:grid-cols-3">
+        <div
+          className={`grid gap-x-8 gap-y-8 @3xl:grid-cols-2 ${goal === null ? "@5xl:grid-cols-3" : ""}`}
+        >
           <BreakdownSection
             {...card}
             title="Pages"
-            heatmapLinks
             tabs={[
               {
                 value: "top",
@@ -449,10 +618,10 @@ function Reports({
                 secondaryHeading: "Views",
                 empty: "No pageviews in this period.",
                 report: "pages",
-                rows: rankedRows("pages", fromPages(analytics.pages), link),
+                rows: withHeatmaps(rankedRows("pages", fromPages(analytics.pages), link)),
               },
-              visitsTab("entry", "Entry", "Path", "entryPage", rows("entryPage")),
-              visitsTab("exit", "Exit", "Path", "exitPage", rows("exitPage")),
+              visitsTab("entry", "Entry", "Path", "entryPage", withHeatmaps(rows("entryPage"))),
+              visitsTab("exit", "Exit", "Path", "exitPage", withHeatmaps(rows("exitPage"))),
             ]}
           />
           <BreakdownSection
@@ -501,6 +670,8 @@ function Reports({
           />
           <BreakdownSection
             {...card}
+            // A custom event's own numbers: a goal adds none to them.
+            goal={false}
             title="Custom events"
             tabs={[
               {
@@ -510,13 +681,13 @@ function Reports({
                 secondaryHeading: "Events",
                 empty: "No custom events in this period.",
                 report: "customEvents",
-                rows: rankedRows("customEvents", fromEvents(analytics.customEvents), link),
+                rows: eventRows,
               },
             ]}
           />
         </div>
       </div>
-      <GoalsSection analytics={analytics} projectId={projectId} />
+      <GoalsSection analytics={analytics} projectId={projectId} search={search} />
     </>
   );
 }
@@ -525,7 +696,15 @@ function Reports({
  * Goals belong to product analytics (docs/access.md). They show without data too, so a project
  * can set its goals before its first event arrives.
  */
-function GoalsSection({ analytics, projectId }: { analytics: Analytics; projectId: string }) {
+function GoalsSection({
+  analytics,
+  projectId,
+  search,
+}: {
+  analytics: Analytics;
+  projectId: string;
+  search: PageSearch;
+}) {
   const showGoals = useAccess().canUse("product_analytics");
   if (!showGoals) return null;
   return (
@@ -533,7 +712,81 @@ function GoalsSection({ analytics, projectId }: { analytics: Analytics; projectI
       goals={analytics.goals}
       projectId={projectId}
       eventNames={analytics.customEvents.map((event) => event.name)}
+      search={search}
     />
+  );
+}
+
+const NO_GOAL = "none";
+
+/** A goal as one of the Goal picker's values. */
+const valueOf = (goal: GoalChoice) => ("id" in goal ? `goal:${goal.id}` : `event:${goal.event}`);
+
+/**
+ * The Goal picker: the saved goals and the period's custom events, so a
+ * goal is a choice away on a phone too, where the lists are far down.
+ */
+function GoalSelect({
+  analytics,
+  search,
+  onGoal,
+}: {
+  analytics: Analytics | undefined;
+  search: PageSearch;
+  onGoal: (goal: GoalChoice | undefined) => void;
+}) {
+  const goals = analytics?.goals ?? [];
+  const events = (analytics?.customEvents ?? [])
+    .map((event) => event.name)
+    .filter((name) => canBeGoal(name));
+  const chosen = search.goal;
+  if (chosen !== undefined && "event" in chosen && !events.includes(chosen.event)) {
+    events.push(chosen.event);
+  }
+  if (goals.length === 0 && events.length === 0) return null;
+  const items = [
+    { value: NO_GOAL, label: "No goal" },
+    ...goals.map((goal) => ({ value: valueOf({ id: goal.id }), label: goal.name })),
+    ...events.map((name) => ({ value: valueOf({ event: name }), label: name })),
+  ];
+  return (
+    <Select
+      items={items}
+      value={chosen === undefined ? NO_GOAL : valueOf(chosen)}
+      onValueChange={(value) => {
+        if (typeof value !== "string") return;
+        if (value.startsWith("goal:")) onGoal({ id: value.slice("goal:".length) });
+        else if (value.startsWith("event:")) onGoal({ event: value.slice("event:".length) });
+        else onGoal(undefined);
+      }}
+    >
+      <SelectTrigger aria-label="Goal" className="w-40">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NO_GOAL}>No goal</SelectItem>
+        {goals.length > 0 && (
+          <SelectGroup>
+            <SelectLabel>Goals</SelectLabel>
+            {goals.map((goal) => (
+              <SelectItem key={goal.id} value={valueOf({ id: goal.id })}>
+                {goal.name}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        )}
+        {events.length > 0 && (
+          <SelectGroup>
+            <SelectLabel>Custom events</SelectLabel>
+            {events.map((name) => (
+              <SelectItem key={name} value={valueOf({ event: name })}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        )}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -562,18 +815,43 @@ function LoadingReports() {
   );
 }
 
-function ActiveFilters({ projectId, search }: { projectId: string; search: PageSearch }) {
+function ActiveFilters({
+  projectId,
+  search,
+  analytics,
+}: {
+  projectId: string;
+  search: PageSearch;
+  analytics: Analytics | undefined;
+}) {
   const active = activeFilters(search.filters);
-  if (active.length === 0) {
+  const { goal } = search;
+  if (active.length === 0 && goal === undefined) {
     return (
       <p className="text-sm text-ink-subtle">
         No filters. Select a name in a table to filter by it.
       </p>
     );
   }
+  const goalChip = goal === undefined ? undefined : goalText(goalName(goal, analytics));
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <ul aria-label="Filters" className="flex flex-wrap items-center gap-2">
+        {goalChip !== undefined && (
+          <li className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-sm text-ink">
+            <TruncatedText text={goalChip} />
+
+            <Link
+              to="/projects/$projectId/web-analytics"
+              params={{ projectId }}
+              search={searchOf({ ...search, goal: undefined })}
+              aria-label={`Remove the filter ${goalChip}`}
+              className="rounded p-1 text-ink-subtle hover:bg-background/60 hover:text-ink"
+            >
+              <XIcon aria-hidden="true" className="size-3.5" />
+            </Link>
+          </li>
+        )}
         {active.map(([name, value]) => {
           const text = filterText(name, value);
           const others = Object.fromEntries(active.filter(([other]) => other !== name));
@@ -600,7 +878,7 @@ function ActiveFilters({ projectId, search }: { projectId: string; search: PageS
       <Link
         to="/projects/$projectId/web-analytics"
         params={{ projectId }}
-        search={searchOf({ ...search, filters: {} })}
+        search={searchOf({ ...search, filters: {}, goal: undefined })}
         className="text-sm whitespace-nowrap text-link hover:underline"
       >
         Clear filters
@@ -691,6 +969,10 @@ function NoData({
   );
 }
 
+/** A goal the API will not count: deleted since the link was made, or not the user's to see. */
+const isGoalRefusal = (error: Error) =>
+  error instanceof ApiError && (error.code === "unknown_goal" || error.status === 403);
+
 const hasData = (analytics: Analytics) =>
   analytics.summary.pageviews > 0 ||
   analytics.summary.visits > 0 ||
@@ -702,16 +984,20 @@ export function AnalyticsPage({
   range,
   filters,
   environment = DEFAULT_ENVIRONMENT,
+  goalSearch = {},
 }: {
   projectId: string;
   range: PageRange;
   filters: Filters;
   environment?: string;
+  /** The goal filter in the address (docs/web-analytics.md, "The goal filter"), unchecked. */
+  goalSearch?: { goal?: string | undefined; goalEvent?: string | undefined };
 }) {
+  const goal = goalChoiceFrom(goalSearch);
   const navigate = useNavigate();
   const project = useQuery(projectQuery(projectId));
-  const analytics = useQuery(analyticsQuery(projectId, range, filters, environment));
-  const search: PageSearch = { range, filters, environment };
+  const analytics = useQuery(analyticsQuery(projectId, range, filters, environment, goal));
+  const search: PageSearch = { range, filters, environment, goal };
   const show = (next: Partial<PageSearch>) =>
     void navigate({
       to: "/projects/$projectId/web-analytics",
@@ -744,7 +1030,18 @@ export function AnalyticsPage({
             />
           )
         }
-        filters={<ActiveFilters projectId={projectId} search={search} />}
+        filters={
+          <>
+            <GoalSelect
+              analytics={data}
+              search={search}
+              onGoal={(next) => {
+                if (!sameGoal(next, goal)) show({ goal: next });
+              }}
+            />
+            <ActiveFilters projectId={projectId} search={search} analytics={data} />
+          </>
+        }
         range={
           data !== undefined && (
             <FilterBarRange
@@ -767,9 +1064,21 @@ export function AnalyticsPage({
               {data !== undefined && " The numbers below are from the last successful load."}
             </AlertDescription>
             <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => void analytics.refetch()}>
-                Retry
-              </Button>
+              {goal !== undefined && isGoalRefusal(analytics.error) ? (
+                <ButtonLink
+                  variant="outline"
+                  size="sm"
+                  to="/projects/$projectId/web-analytics"
+                  params={{ projectId }}
+                  search={searchOf({ ...search, goal: undefined })}
+                >
+                  Remove the goal
+                </ButtonLink>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => void analytics.refetch()}>
+                  Retry
+                </Button>
+              )}
             </AlertAction>
           </Alert>
         )}
@@ -796,7 +1105,7 @@ export function AnalyticsPage({
                   search={search}
                   otherEnvironments={data.environments.some((name) => name !== environment)}
                 />
-                <GoalsSection analytics={data} projectId={projectId} />
+                <GoalsSection analytics={data} projectId={projectId} search={search} />
               </>
             )}
           </div>

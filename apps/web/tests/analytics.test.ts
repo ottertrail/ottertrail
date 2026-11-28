@@ -13,7 +13,8 @@ import {
   relativeChange,
   niceTicks,
 } from "../src/features/analytics/format.ts";
-import { isAnalytics, isDay, rangeFrom, rangeProblem } from "../src/lib/analytics-api.ts";
+import { isDay, rangeFrom, rangeProblem } from "../src/lib/analytics-api.ts";
+import { goalChoiceFrom, isAnalytics } from "../src/lib/analytics-queries.ts";
 
 describe("formatting", () => {
   test.each([
@@ -179,6 +180,7 @@ describe("isAnalytics", () => {
         conversionRate: 1,
       },
     ],
+    goal: null,
     previous: {
       firstDay: "2026-11-05",
       lastDay: "2026-11-11",
@@ -210,6 +212,43 @@ describe("isAnalytics", () => {
       false,
     );
     expect(isAnalytics({ ...valid, previous: { ...valid.previous, until: 5 } })).toBe(false);
+  });
+
+  test("accepts a goal's counts, and refuses a missing goal or a bad count", () => {
+    const goal = {
+      id: null,
+      name: "signup",
+      step: { type: "event", name: "signup" },
+      converted: 1,
+      events: 2,
+      conversionRate: 1,
+      previous: { converted: 0, events: 0 },
+    };
+    const withGoal = {
+      ...valid,
+      goal,
+      days: [{ ...valid.days[0], converted: 1 }],
+      pages: [{ ...valid.pages[0], converted: 1 }],
+    };
+    expect(isAnalytics(withGoal)).toBe(true);
+    expect(isAnalytics({ ...valid, goal: undefined })).toBe(false);
+    expect(isAnalytics({ ...withGoal, goal: { ...goal, previous: undefined } })).toBe(false);
+    expect(isAnalytics({ ...withGoal, pages: [{ ...valid.pages[0], converted: "1" }] })).toBe(
+      false,
+    );
+  });
+});
+
+describe("goalChoiceFrom", () => {
+  test("takes a saved goal's ID or a custom event, and drops what the API would refuse", () => {
+    const id = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA1";
+    expect(goalChoiceFrom({ goal: id })).toEqual({ id: id.toLowerCase() });
+    expect(goalChoiceFrom({ goalEvent: "signup" })).toEqual({ event: "signup" });
+    expect(goalChoiceFrom({ goal: id, goalEvent: "signup" })).toEqual({ id: id.toLowerCase() });
+    expect(goalChoiceFrom({ goal: "signup" })).toBeUndefined();
+    expect(goalChoiceFrom({ goalEvent: "pageview" })).toBeUndefined();
+    expect(goalChoiceFrom({ goalEvent: "a\tb" })).toBeUndefined();
+    expect(goalChoiceFrom({ goalEvent: "x".repeat(201) })).toBeUndefined();
   });
 });
 

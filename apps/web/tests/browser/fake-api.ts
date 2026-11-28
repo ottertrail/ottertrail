@@ -8,7 +8,12 @@ import {
   type Rule,
   type SaveWarning,
 } from "../../src/lib/alerts-api.ts";
-import type { Analytics, BreakdownRow, DayPoint } from "../../src/lib/analytics-api.ts";
+import {
+  type Analytics,
+  BREAKDOWNS,
+  type BreakdownRow,
+  type DayPoint,
+} from "../../src/lib/analytics-api.ts";
 import type { Channel, Delivery } from "../../src/lib/channels-api.ts";
 import type {
   DatabaseList,
@@ -25,6 +30,7 @@ import {
   isStatusFilter,
   type ResolvedFrame,
 } from "../../src/lib/errors-api.ts";
+import { EVENT_DIMENSIONS, type EventLists } from "../../src/lib/event-lists-api.ts";
 import type { SavedFunnel } from "../../src/lib/funnels-api.ts";
 import type { GoalResult } from "../../src/lib/goals-api.ts";
 import type { Ping } from "../../src/lib/heartbeat-api.ts";
@@ -68,7 +74,6 @@ import {
   MAX_STEPS,
   type ProductEventDetail,
   type ProductEvents,
-  type ProductEventSources,
   type Retention,
   type SavedFunnelResults,
 } from "../../src/lib/product-api.ts";
@@ -248,8 +253,8 @@ export interface FakeApi {
   productEvents: (query: URLSearchParams) => ProductEvents | Response;
   /** Answers GET /api/projects/:id/events/:name; by default, fakeProductEvent. */
   productEvent: (name: string, query: URLSearchParams) => ProductEventDetail | Response;
-  /** Answers GET /api/projects/:id/events/:name/sources; by default, fakeProductEventSources. */
-  productEventSources: (name: string, query: URLSearchParams) => ProductEventSources | Response;
+  /** Answers GET /api/projects/:id/events/:name/breakdowns; by default, fakeEventLists. */
+  eventLists: (name: string, query: URLSearchParams) => EventLists | Response;
   /** Answers GET /api/projects/:id/funnel; by default, fakeFunnel. A promise holds it. */
   funnel: (query: URLSearchParams) => Funnel | Response | Promise<Funnel | Response>;
   /** Answers GET /api/projects/:id/funnel/breakdown; by default, fakeFunnelBreakdown. */
@@ -2493,12 +2498,15 @@ export function fakeList(query: URLSearchParams) {
   const names = Array.from({ length: 120 }, (_, i) =>
     report === "pages" ? `/page-${i + 1}` : `${report}-${i + 1}`,
   ).filter((name) => name.toLowerCase().includes(search));
+  // With a goal, a tenth of each row's visitors converted, so the order stays.
+  const goal = query.has("goal") || query.has("goalEvent");
   const rows = names.slice(offset, offset + limit).map((name, i) => {
     const visitors = 500 - offset - i;
+    const converted = goal ? { converted: Math.round(visitors / 10) } : {};
     if (report === "pages")
-      return { path: name, pageviews: visitors * 2, visitors, avgEngagedMs: null };
+      return { path: name, pageviews: visitors * 2, visitors, avgEngagedMs: null, ...converted };
     if (report === "customEvents") return { name, events: visitors * 2, visitors };
-    return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5 };
+    return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5, ...converted };
   });
   return { rows, hasMore: offset + limit < names.length };
 }
@@ -2810,6 +2818,7 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
     },
     customEvents: [{ name: "signup", events: 140, visitors: 127 }],
     goals: fakeGoals(),
+    goal: null,
     // The same week before, up to 15:00 on its last day (07:00 UTC).
     previous: {
       firstDay: "2026-11-03",
@@ -2826,6 +2835,90 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
       },
     },
     ...overrides,
+  };
+}
+
+/**
+ * A row's share of the goal's overall rate, from 0.4 to 1.6 times it,
+ * the same for the same name every time, so the lists look like data.
+ */
+function rowShare(name: string | null): number {
+  let hash = 7;
+  for (const character of name ?? "unknown") hash = (hash * 31 + character.charCodeAt(0)) % 997;
+  return 0.4 + (hash % 13) / 10;
+}
+
+const convertedOf = (visitors: number, rate: number, name: string | null) =>
+  Math.min(visitors, Math.round(visitors * rate * rowShare(name)));
+
+/**
+ * The answer with the goal the query names (`goal` or `goalEvent`), as the
+ * API counts it: the summary's converted visitors from the goal (or the
+ * custom event's visitors), every list's converted visitors at about the
+ * goal's rate, most converted first. An unknown goal is refused, as the API does.
+ */
+export function withGoal(
+  analytics: Analytics,
+  query: URLSearchParams,
+  goals: readonly GoalResult[],
+): Analytics | Response {
+  const goalId = query.get("goal");
+  const goalEvent = query.get("goalEvent");
+  if (goalId === null && goalEvent === null) return { ...analytics, goal: null };
+  const saved = goals.find((goal) => goal.id === goalId);
+  if (goalId !== null && saved === undefined) {
+    return json(
+      { error: "unknown_goal", message: "This goal does not exist. It may have been deleted." },
+      400,
+    );
+  }
+  const event = analytics.customEvents.find((item) => item.name === goalEvent);
+  const converted = saved?.visitors ?? event?.visitors ?? 0;
+  const events = saved?.events ?? event?.events ?? 0;
+  const visitors = analytics.summary.visitors;
+  const rate = visitors === 0 ? 0 : converted / visitors;
+  const rows = <Row extends { visitors: number; converted?: number }>(
+    list: readonly Row[],
+    name: (item: Row) => string | null,
+  ) =>
+    list
+      .map((item) => ({ ...item, converted: convertedOf(item.visitors, rate, name(item)) }))
+      .toSorted((a, b) => b.converted - a.converted || b.visitors - a.visitors);
+  // A visit has one value of each, so a list's rows share the goal's visitors.
+  const breakdowns = { ...analytics.breakdowns };
+  for (const breakdown of BREAKDOWNS) {
+    const list = breakdowns[breakdown];
+    const weights = list.map((item) => item.visitors * rowShare(item.value));
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const shown = list.reduce((sum, item) => sum + item.visitors, 0);
+    const reached = Math.round(converted * Math.min(1, visitors === 0 ? 0 : shown / visitors));
+    breakdowns[breakdown] = list
+      .map((item, index) => ({
+        ...item,
+        converted: Math.min(
+          item.visitors,
+          Math.floor((total === 0 ? 0 : (weights[index] ?? 0) / total) * reached),
+        ),
+      }))
+      .toSorted((a, b) => b.converted - a.converted || b.visitors - a.visitors);
+  }
+  return {
+    ...analytics,
+    goal: {
+      id: saved?.id ?? null,
+      name: saved?.name ?? goalEvent ?? "",
+      step: saved?.step ?? { type: "event", name: goalEvent ?? "" },
+      converted,
+      events,
+      conversionRate: rate,
+      previous: { converted: Math.round(converted * 0.8), events: Math.round(events * 0.8) },
+    },
+    days: analytics.days.map((day) => ({
+      ...day,
+      converted: convertedOf(day.visitors, rate, day.day),
+    })),
+    pages: rows(analytics.pages, (item) => item.path),
+    breakdowns,
   };
 }
 
@@ -3157,12 +3250,14 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
   const filters = [...query.entries()]
     .filter(([param]) => param.startsWith("p."))
     .map(([param, value]) => ({ key: param.slice(2), value }));
-  const events = (name === "signup" ? SIGNUPS : []).filter((event) =>
+  const matching = (name === "signup" ? SIGNUPS : []).filter((event) =>
     filters.every((filter) => {
       const value = event.properties[filter.key];
       return value !== undefined && asText(value) === filter.value;
     }),
   );
+  // The lists' filters keep their share of the events (fakeEventLists).
+  const events = matching.slice(0, Math.round(matching.length * listShare(query)));
   const names = events.length === 0 ? [] : ["plan", "seats", "invited"];
   return {
     ...WEEK,
@@ -3200,35 +3295,95 @@ export function fakeProductEvent(name: string, query: URLSearchParams): ProductE
   };
 }
 
+const listValue = (value: string | null, visitors: number, events: number) => ({
+  value,
+  visitors,
+  events,
+});
+
 /**
- * One event by its visit's source and campaign: signup's 140 events, the
- * rest with no events. Unknown (null) holds a server's events.
+ * signup's 140 events by each list of its page. Unknown (null) holds a
+ * server's 8 events, which have no visitor, visit, location, or device.
  */
-export function fakeProductEventSources(name: string, query: URLSearchParams): ProductEventSources {
+const SIGNUP_LISTS: EventLists = {
+  source: [
+    listValue("Direct / none", 47, 52),
+    listValue("google.com", 37, 41),
+    listValue("newsletter", 22, 25),
+    listValue("news.ycombinator.com", 12, 14),
+    listValue(null, 0, 8),
+  ],
+  utmCampaign: [listValue("", 96, 107), listValue("launch-week", 22, 25), listValue(null, 0, 8)],
+  country: [
+    listValue("DE", 41, 46),
+    listValue("US", 35, 39),
+    listValue("GB", 22, 24),
+    listValue("SG", 20, 23),
+    listValue(null, 0, 8),
+  ],
+  region: [
+    listValue("Bavaria, DE", 24, 27),
+    listValue("California, US", 19, 21),
+    listValue("England, GB", 18, 20),
+    listValue(null, 4, 8),
+  ],
+  city: [
+    listValue("Munich, DE", 21, 24),
+    listValue("San Francisco, US", 15, 17),
+    listValue("London, GB", 14, 16),
+    listValue(null, 4, 8),
+  ],
+  deviceType: [listValue("desktop", 78, 87), listValue("mobile", 40, 45), listValue(null, 0, 8)],
+  browser: [
+    listValue("Chrome", 64, 71),
+    listValue("Safari", 33, 37),
+    listValue("Firefox", 21, 24),
+    listValue(null, 0, 8),
+  ],
+  os: [
+    listValue("macOS", 49, 55),
+    listValue("Windows", 31, 34),
+    listValue("iOS", 26, 29),
+    listValue("Android", 12, 14),
+    listValue(null, 0, 8),
+  ],
+  release: [listValue("1.4.2", 90, 101), listValue("1.4.1", 28, 31), listValue(null, 0, 8)],
+};
+
+/** The share of signup's events a query's list filters keep, as the API would narrow them. */
+function listShare(query: URLSearchParams): number {
+  let share = 1;
+  for (const [dimension, values] of Object.entries(SIGNUP_LISTS)) {
+    const wanted = query.get(dimension);
+    if (wanted === null) continue;
+    const match = values.find(
+      (item) =>
+        (item.value ?? "") === wanted && !(dimension === "utmCampaign" && item.value === null),
+    );
+    share *= (match?.events ?? 0) / 140;
+  }
+  return share;
+}
+
+/** One event's lists: signup's, narrowed by the query's list filters; any other name, none. */
+export function fakeEventLists(name: string, query: URLSearchParams): EventLists {
   const signup = name === "signup";
-  return {
-    ...WEEK,
-    environment: query.get("environment") ?? "production",
-    filters: [...query.entries()]
-      .filter(([param]) => param.startsWith("p."))
-      .map(([param, value]) => ({ key: param.slice(2), value })),
-    source: signup
-      ? [
-          { value: "Direct / none", events: 52 },
-          { value: "google.com", events: 41 },
-          { value: "newsletter", events: 25 },
-          { value: "news.ycombinator.com", events: 14 },
-          { value: null, events: 8 },
-        ]
-      : [],
-    utmCampaign: signup
-      ? [
-          { value: "", events: 107 },
-          { value: "launch-week", events: 25 },
-          { value: null, events: 8 },
-        ]
-      : [],
-  };
+  const share = signup ? listShare(query) : 0;
+  const lists = { ...SIGNUP_LISTS };
+  for (const dimension of EVENT_DIMENSIONS) {
+    const wanted = query.get(dimension);
+    // A filtered list keeps its own value whole; the others shrink to the filter's share.
+    const factor = wanted === null ? share : signup ? 1 : 0;
+    lists[dimension] = SIGNUP_LISTS[dimension]
+      .filter((item) => wanted === null || (item.value ?? "") === wanted)
+      .map((item) => ({
+        value: item.value,
+        visitors: Math.round(item.visitors * factor),
+        events: Math.round(item.events * factor),
+      }))
+      .filter((item) => item.events > 0);
+  }
+  return lists;
 }
 
 /** People reaching each step: 1,000 start, fewer at each next one. */
@@ -4610,9 +4765,9 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.productEvents(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
-  const sourcesPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)\/sources$/.exec(path);
-  if (sourcesPath?.[1] !== undefined) {
-    const result = api.productEventSources(decodeURIComponent(sourcesPath[1]), url.searchParams);
+  const listsPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)\/breakdowns$/.exec(path);
+  if (listsPath?.[1] !== undefined) {
+    const result = api.eventLists(decodeURIComponent(listsPath[1]), url.searchParams);
     return result instanceof Response ? result : json(result);
   }
   const productEventPath = /^\/api\/projects\/[^/]+\/events\/([^/]+)$/.exec(path);
@@ -5069,7 +5224,8 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     resetRequest: "accepted",
     projects: [PROJECT],
     starred: [],
-    analytics: (_projectId, _period, _query, api) => analyticsFixture({ goals: api.goals }),
+    analytics: (_projectId, _period, query, api) =>
+      withGoal(analyticsFixture({ goals: api.goals }), query, api.goals),
     goals: fakeGoals(),
     savedFunnels: fakeSavedFunnels(),
     list: fakeList,
@@ -5088,7 +5244,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     deleteHeatmapSnapshot: () => new Response(null, { status: 204 }),
     productEvents: fakeProductEvents,
     productEvent: fakeProductEvent,
-    productEventSources: fakeProductEventSources,
+    eventLists: fakeEventLists,
     funnel: fakeFunnel,
     funnelBreakdown: fakeFunnelBreakdown,
     funnelPeople: fakeFunnelPeople,

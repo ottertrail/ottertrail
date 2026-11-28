@@ -1,8 +1,10 @@
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 
 import type { FilterName } from "@/lib/analytics-api";
+import type { GoalChoice } from "@/lib/analytics-queries";
 
-import { filterText, type PageSearch, searchOf, valueText } from "./list-rows";
+import { filterText, goalText, type PageSearch, searchOf, valueText } from "./list-rows";
 
 export function FilterLink({
   projectId,
@@ -32,6 +34,37 @@ export function FilterLink({
       }
     >
       {valueText(name, value)}
+    </Link>
+  );
+}
+
+/** Makes a saved goal or a custom event the page's goal, keeping the other filters. */
+export function GoalLink({
+  projectId,
+  search,
+  goal,
+  name,
+  onClick,
+  children = name,
+}: {
+  projectId: string;
+  search: PageSearch;
+  goal: GoalChoice;
+  /** The goal's name, or the event's. */
+  name: string;
+  onClick?: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Link
+      to="/projects/$projectId/web-analytics"
+      params={{ projectId }}
+      search={searchOf({ ...search, goal })}
+      aria-label={`Filter by ${goalText(name)}`}
+      onClick={onClick}
+      className="hover:text-link hover:underline"
+    >
+      {children}
     </Link>
   );
 }

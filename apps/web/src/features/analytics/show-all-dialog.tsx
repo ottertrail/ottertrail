@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettled } from "@/hooks/use-settled";
-import { type ListReport, listQuery } from "@/lib/analytics-api";
+import type { ListReport } from "@/lib/analytics-api";
+import { listQuery } from "@/lib/analytics-queries";
 
-import { FilterLink } from "./filter-link";
+import { FilterLink, GoalLink } from "./filter-link";
 import { type PageSearch, rankedRows } from "./list-rows";
 import { RankedList } from "./ranked-list";
 
@@ -36,7 +37,15 @@ export function ShowAllDialog({
   const [text, setText] = React.useState("");
   const query = useSettled(text.trim(), 250);
   const list = useInfiniteQuery({
-    ...listQuery(projectId, search.range, search.filters, search.environment, report, query),
+    ...listQuery(
+      projectId,
+      search.range,
+      search.filters,
+      search.environment,
+      report,
+      query,
+      search.goal,
+    ),
     enabled: open,
   });
   const close = () => onOpenChange(false);
@@ -46,7 +55,18 @@ export function ShowAllDialog({
     (name, value) => (
       <FilterLink projectId={projectId} search={search} name={name} value={value} onClick={close} />
     ),
+    (name) => (
+      <GoalLink
+        projectId={projectId}
+        search={search}
+        goal={{ event: name }}
+        name={name}
+        onClick={close}
+      />
+    ),
   );
+  // Custom events keep their own numbers under a goal.
+  const withGoal = search.goal !== undefined && report !== "customEvents";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,10 +107,11 @@ export function ShowAllDialog({
           ) : (
             <RankedList
               rows={rows}
-              caption={`${title}, most visitors first`}
+              caption={`${title}, ${withGoal ? "most converted" : "most visitors"} first`}
               nameHeading={nameHeading}
               primaryHeading="Visitors"
               secondaryHeading={secondaryHeading}
+              goal={withGoal}
               empty={query === "" ? "Nothing in this period." : `Nothing matches “${query}”.`}
             />
           )}
