@@ -90,7 +90,7 @@ const MAX_SEARCH_LENGTH = 200;
  * Reject unknown parameters before Fastify drops them; otherwise a
  * mistyped filter would silently return unfiltered counts.
  */
-function refuseUnknownParameters(names: readonly string[]) {
+export function refuseUnknownParameters(names: readonly string[]) {
   const known = new Set(names);
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const { query } = request;
@@ -120,7 +120,7 @@ export const RANGE_PROPERTIES = {
   environment: { type: "string", pattern: ENVIRONMENT_PATTERN },
 };
 
-const PARAMS_SCHEMA = {
+export const PARAMS_SCHEMA = {
   type: "object",
   required: ["id"],
   properties: { id: { type: "string", pattern: UUID_PATTERN } },
@@ -173,7 +173,7 @@ const GOAL_PROPERTIES = {
   goalEvent: EVENT_NAME_SCHEMA,
 };
 
-function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
+export function accessOf(request: { projectAccess: ProjectAccess | null }): ProjectAccess {
   if (request.projectAccess === null) {
     throw new Error("requireProjectAccess must run before this route");
   }

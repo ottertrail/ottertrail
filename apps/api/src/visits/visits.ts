@@ -136,6 +136,14 @@ export interface VisitsQueryOptions {
    * events reads only their visitors' events (visit-source.ts).
    */
   visitorsIn?: string;
+  /**
+   * How long before `from` to read events, so that events there that
+   * belong to a visit started earlier are not taken for a new visit's
+   * start. VISIT_CONTEXT_MS by default; 0 when `from` is a midnight in the
+   * instance's timezone, where visitor IDs change, so no visit of the IDs
+   * read started before it.
+   */
+  contextMs?: number;
 }
 
 /**
@@ -145,9 +153,13 @@ export interface VisitsQueryOptions {
 export function visitsSql(
   { projectId, environment, from, to, until }: VisitRange,
   params: QueryParams,
-  { firstEventColumns = "separately", visitorsIn }: VisitsQueryOptions = {},
+  {
+    firstEventColumns = "separately",
+    visitorsIn,
+    contextMs = VISIT_CONTEXT_MS,
+  }: VisitsQueryOptions = {},
 ): string {
-  const readFrom = new Date(from.getTime() - VISIT_CONTEXT_MS);
+  const readFrom = new Date(from.getTime() - contextMs);
   const contextEnd = to.getTime() + VISIT_CONTEXT_MS;
   const readTo = new Date(until === undefined ? contextEnd : Math.min(contextEnd, until.getTime()));
   const order = "occurred_at, order_rank, event_id";

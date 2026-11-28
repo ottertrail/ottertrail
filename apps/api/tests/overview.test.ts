@@ -636,7 +636,7 @@ describe("who reaches which widget", () => {
     });
   });
 
-  test("a member with only web analytics reaches speed, traffic, and sources, and no other widget", async () => {
+  test("a member with only web analytics reaches speed, traffic, and sources, and sees Right now", async () => {
     const { cookie } = await member("web-only@example.com", { web_analytics: "view" });
     const statuses: Record<string, number> = {};
     for (const name of Object.keys(WIDGET_AREAS)) {
@@ -661,6 +661,7 @@ describe("who reaches which widget", () => {
     ).json();
     expect(layout.widgets.map((item: { id: string }) => item.id)).toEqual([
       "speed",
+      "now",
       "traffic",
       "sources",
     ]);
@@ -813,6 +814,7 @@ describe("each user's own layout", () => {
       { id: "errors", hidden: false },
       { id: "speed", hidden: true },
       { id: "main-goal", hidden: false },
+      { id: "now", hidden: false },
       { id: "traffic", hidden: false },
       { id: "goals", hidden: false },
       { id: "users", hidden: false },
@@ -830,6 +832,7 @@ describe("each user's own layout", () => {
       "ai-cost",
       "speed",
       "main-goal",
+      "now",
       "traffic",
       "goals",
       "users",

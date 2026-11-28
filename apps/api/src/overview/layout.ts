@@ -7,6 +7,9 @@ import type { Database } from "../db/schema.ts";
 /**
  * Each widget requires its area both in the layout and data route
  * (routes.ts), preventing unauthorized reads (docs/dashboard.md, "Overview").
+ * Right now ("now") reads the Web analytics page's live route instead
+ * (reports/routes.ts), which needs the same area, so the page and the
+ * widget share one poll.
  */
 export const WIDGETS = [
   { id: "attention", area: "uptime_alerts" },
@@ -16,6 +19,7 @@ export const WIDGETS = [
   { id: "ai-cost", area: "ai" },
   { id: "speed", area: "web_analytics" },
   { id: "main-goal", area: "product_analytics" },
+  { id: "now", area: "web_analytics" },
   { id: "traffic", area: "web_analytics" },
   { id: "goals", area: "product_analytics" },
   { id: "users", area: "product_analytics" },

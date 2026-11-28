@@ -84,6 +84,7 @@ export const PROJECT_REQUESTS: readonly ProjectRequest[] = [
   }),
   request("GET", "/analytics", "/analytics?period=7d"),
   request("GET", "/analytics/list", "/analytics/list?report=pages&period=7d"),
+  request("GET", "/analytics/now", "/analytics/now"),
   request("GET", "/speed", "/speed?period=7d"),
   request("GET", "/heatmaps", "/heatmaps?period=7d&path=%2Fpricing"),
   request("GET", "/heatmaps/pages", "/heatmaps/pages?period=7d"),

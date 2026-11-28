@@ -51,6 +51,7 @@ import { productRoutes } from "./product/routes.ts";
 import { projectRoutes } from "./projects/routes.ts";
 import { replayPlayerScriptRoute, replayRoutes } from "./replays/dashboard-routes.ts";
 import { replayCollectionRoutes } from "./replays/routes.ts";
+import { nowRoutes } from "./reports/now-routes.ts";
 import { reportRoutes } from "./reports/routes.ts";
 import { healthRoutes } from "./routes/health.ts";
 import { ServerLogBuffer } from "./server-log/buffer.ts";
@@ -65,7 +66,7 @@ import { speedRoutes } from "./speed/routes.ts";
 import type { ObjectStore } from "./storage/object-store.ts";
 import { storageRoutes } from "./storage/routes.ts";
 import type { StorageSources } from "./storage/usage.ts";
-import { DashboardQueryLimiter } from "./telemetry/dashboard-limit.ts";
+import { DashboardQueryLimiter, liveQueryLimiter } from "./telemetry/dashboard-limit.ts";
 import { telemetryDashboardRoutes } from "./telemetry/dashboard-routes.ts";
 import { SecretKeyLookups } from "./telemetry/key-lookups.ts";
 import { type TelemetryOptions, telemetryBudget, telemetryRoutes } from "./telemetry/routes.ts";
@@ -578,6 +579,8 @@ export function buildApp({
     });
     // One limit on the dashboard's ClickHouse queries, shared by every page that reads them.
     const limiter = new DashboardQueryLimiter();
+    // Live polls (Logs and Traces' Live, Right now) share one slot of it.
+    const liveLimiter = liveQueryLimiter();
     app.register(productRoutes, {
       prefix: "/api",
       db,
@@ -619,6 +622,7 @@ export function buildApp({
       auth: dashboard.auth,
       maxRetentionDays: telemetryMaxDays,
       limiter,
+      liveLimiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(aiRoutes, {
@@ -830,6 +834,15 @@ export function buildApp({
       clickhouse: dashboard.clickhouse,
       auth: dashboard.auth,
       limiter,
+      ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
+    });
+    app.register(nowRoutes, {
+      prefix: "/api",
+      db,
+      clickhouse: dashboard.clickhouse,
+      auth: dashboard.auth,
+      limiter,
+      liveLimiter,
       ...(dashboard.now === undefined ? {} : { now: dashboard.now }),
     });
     app.register(serverLogRoutes, {
