@@ -470,8 +470,8 @@ describe("blocked addresses", () => {
 
 describe("referrer spam", () => {
   test.each([
-    ["Matomo's list", "https://semalt.com/"],
-    ["Matomo's list, a subdomain", "https://www.semalt.com/promo"],
+    ["the community list", "https://semalt.com/"],
+    ["the community list, a subdomain", "https://www.semalt.com/promo"],
     ["Ottertrail's additions", "https://check-additions.ottertrail.invalid/"],
   ])("a domain from %s is answered 202, counted, and not stored", async (_source, referrer) => {
     const project = await newProject();
@@ -508,7 +508,7 @@ describe("referrer spam", () => {
   });
 
   test("a referrer on the project's own site is never spam, whatever the lists hold", async () => {
-    // A site whose own domain is on Matomo's list: its pages refer each other.
+    // A site whose own domain is on the community list: its pages refer each other.
     const project = await insertProject(dashboard.db, {
       name: "Listed site",
       allowed_hostnames: ["semalt.com"],

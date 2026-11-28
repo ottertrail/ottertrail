@@ -59,4 +59,4 @@ Third-party code, data, and fonts are listed in [THIRD_PARTY_NOTICES.md](THIRD_P
 
 IP geolocation by [DB-IP](https://db-ip.com), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The worker or `vp run geo:update` downloads the database; it is not part of this repository.
 
-Referrer spam domains come from Matomo's community [referrer spam list](https://github.com/matomo-org/referrer-spam-list), in the public domain (CC0-1.0), shipped in `apps/api/src/enrichment/referrer-spam/` ([how it's updated](docs/development.md#the-referrer-spam-list)).
+Referrer spam domains come from the community-maintained [referrer spam list](https://github.com/matomo-org/referrer-spam-list), in the public domain (CC0-1.0), shipped in `apps/api/src/enrichment/referrer-spam/` ([how it's updated](docs/development.md#the-referrer-spam-list)).

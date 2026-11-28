@@ -1,4 +1,4 @@
-# Refresh apps/api/src/enrichment/referrer-spam/list.ts from Matomo.
+# Refresh apps/api/src/enrichment/referrer-spam/list.ts from the community referrer spam list.
 # PRs opened with GITHUB_TOKEN start no other workflows, so run checks here.
 # The bot owns bot/referrer-spam-list and force-updates it.
 # Enable "Allow GitHub Actions to create and approve pull requests"
@@ -84,9 +84,9 @@ jobs:
             push --force origin "$BRANCH"
 
           {
-            echo "Updates the referrer spam list shipped in the repository from Matomo's community list (\`vp run referrer-spam:update\`)."
+            echo "Updates the referrer spam list shipped in the repository from the community referrer spam list (\`vp run referrer-spam:update\`)."
             echo
-            grep -E '^(Matomo commit|Added|Removed)' "$RUNNER_TEMP/update.txt" | cut -c1-3000 | sed 's/^/- /'
+            grep -E '^(Upstream commit|Added|Removed)' "$RUNNER_TEMP/update.txt" | cut -c1-3000 | sed 's/^/- /'
             echo
             echo "Review the added domains before merging: a listed domain drops every visit it refers, so make sure none is a real site."
           } > "$RUNNER_TEMP/body.md"

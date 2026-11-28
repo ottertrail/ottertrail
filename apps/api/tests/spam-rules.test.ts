@@ -147,7 +147,7 @@ describe("blocked referrers", () => {
 });
 
 describe("referrer spam lists", () => {
-  test("Matomo's list is shipped, pinned to a commit", () => {
+  test("the community list is shipped, pinned to a commit", () => {
     expect(REFERRER_SPAM_COMMIT).toMatch(/^[0-9a-f]{40}$/);
     expect(parseSpamList(REFERRER_SPAM_LIST).size).toBeGreaterThanOrEqual(MIN_SPAM_DOMAINS);
     expect(checkSpamList(REFERRER_SPAM_LIST).ok).toBe(true);

@@ -1,6 +1,6 @@
 /**
  * Refreshes the referrer spam list shipped in the repository
- * (src/enrichment/referrer-spam/list.ts) from Matomo's community list,
+ * (src/enrichment/referrer-spam/list.ts) from the community referrer spam list,
  * github.com/matomo-org/referrer-spam-list, at one commit. For
  * maintainers, before a release: instances never download the list, and
  * it reaches them with each release.
@@ -18,7 +18,7 @@
  * Exit codes, for the weekly workflow (.github/workflows/referrer-spam.yml):
  *   0  the list changed and the file was rewritten;
  *   2  no domain changed, and the file was left as it was (a new commit
- *      that only touched Matomo's other files changes nothing here);
+ *      that only touched the list's other files changes nothing here);
  *   1  failed: the download, or its checks; the file was left as it was.
  *
  * It needs no installed packages: plain Node.js runs it
@@ -35,7 +35,7 @@ const REPOSITORY = "matomo-org/referrer-spam-list";
 
 /**
  * Exclude upstream entries that would drop real visits, before running guards
- * (referrer-spam-check.ts). Print each exclusion and remove it when Matomo removes the entry.
+ * (referrer-spam-check.ts). Print each exclusion and remove it when upstream removes the entry.
  */
 const IGNORED_UPSTREAM: ReadonlyMap<string, string> = new Map<string, string>([
   // ["example.com", "Real referrer: listed upstream by mistake (link to the upstream issue)."],
@@ -115,7 +115,7 @@ async function main(): Promise<number> {
     console.log(`Left out on purpose: ${domain} (${IGNORED_UPSTREAM.get(domain) ?? ""})`);
   }
   const source = `/**
- * Referrer spam domains: spammers.txt of Matomo's community list, at commit
+ * Referrer spam domains: spammers.txt of the community referrer spam list, at commit
  * ${sha} (${date}):
  * https://github.com/${REPOSITORY}/blob/${sha}/spammers.txt
  *
@@ -132,7 +132,7 @@ ${domains.join("\n")}
 \`;
 `;
   const { added, removed } = listChanges(parseSpamList(REFERRER_SPAM_LIST), domains);
-  console.log(`Matomo commit: ${sha} (${date})`);
+  console.log(`Upstream commit: ${sha} (${date})`);
   console.log(`Added ${added.length}${added.length > 0 ? `: ${added.join(", ")}` : ""}`);
   console.log(`Removed ${removed.length}${removed.length > 0 ? `: ${removed.join(", ")}` : ""}`);
   if (added.length === 0 && removed.length === 0) {

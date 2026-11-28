@@ -3,7 +3,7 @@ import { REFERRER_SPAM_LIST } from "./referrer-spam/list.ts";
 
 /**
  * Normalizes hostnames to lowercase without trailing dots. Skips blank lines,
- * # comments, and invalid domains. Used by shipped lists and Matomo's refresh script.
+ * # comments, and invalid domains. Used for the shipped lists and by their refresh script.
  */
 export function parseSpamList(text: string): Set<string> {
   const domains = new Set<string>();
@@ -35,7 +35,7 @@ export function isListedHostname(hostname: string, domains: ReadonlySet<string>)
 }
 
 /**
- * The shared lists, shipped in the repository: Matomo's community list
+ * The shared lists, shipped in the repository: the community referrer spam list
  * (referrer-spam/list.ts, refreshed by a script) and Ottertrail's own
  * additions (referrer-spam/additions.ts, edited by hand).
  */
