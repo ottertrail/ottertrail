@@ -40,6 +40,8 @@ const EVENTS: NewEvent[] = [
   pv("winter", "2026-11-01T06:30:00Z"),
   // 10:00 on 20 November: a week before the 27th.
   pv("week", "2026-11-20T15:00:00Z"),
+  // 11:00 on 5 October: month to date's month before.
+  pv("october", "2026-10-05T15:00:00Z"),
   // 11:00 on 27 November 2025: a year before the last 24 hours' first hours.
   pv("year", "2025-11-27T16:00:00Z"),
   // 09:20 on 27 November: the 24 hours before the last 24.
@@ -151,7 +153,7 @@ describe("ranges in the instance's timezone", () => {
       previous: null,
     });
     expect(body.chart[0]).toMatchObject({ start: "2023-02-27", end: "2023-02-28", partial: true });
-    expect(body.summary.visitors).toBe(9);
+    expect(body.summary.visitors).toBe(10);
   });
 
   test("All time without events is today, and reads ten years back at most", async () => {
@@ -328,6 +330,45 @@ describe("comparison", () => {
       ["2024-02-29", 0],
       ["2024-03-01", 1],
     ]);
+  });
+
+  test("month to date compares with the same days of the month before", async () => {
+    const body = await analytics("period=mtd");
+    expect(body.previous).toMatchObject({
+      firstDay: "2026-10-01",
+      lastDay: "2026-10-28",
+      // 10:30 in New York, in summer time on 28 October.
+      until: "2026-10-28T14:30:00.000Z",
+      summary: { visitors: 1 },
+    });
+    // 5 October's visitor, on 5 November.
+    expect(point(body, "2026-11-05")).toMatchObject({ visitors: 0, previous: { visitors: 1 } });
+  });
+
+  test("year to date compares with the same days of the year before", async () => {
+    expect((await analytics("period=ytd")).previous).toMatchObject({
+      firstDay: "2025-01-01",
+      lastDay: "2025-11-28",
+      until: "2025-11-28T15:30:00.000Z",
+    });
+  });
+
+  test("a month before stops at the shorter month's end, and keeps a running day's time", async () => {
+    const back = { years: 0, months: 1, days: 0 };
+    expect(
+      await shiftedDays(dashboard.db, "2026-03-01", "2026-03-31", TIME_ZONE, NOW, back),
+    ).toMatchObject({ firstDay: "2026-02-01", lastDay: "2026-02-28", until: null });
+    // 15:00 on 31 March: up to 15:00 on 28 February, in winter time.
+    const running = new Date("2026-03-31T19:00:00Z");
+    expect(
+      await shiftedDays(dashboard.db, "2026-03-01", "2026-03-31", TIME_ZONE, running, back),
+    ).toEqual({
+      firstDay: "2026-02-01",
+      lastDay: "2026-02-28",
+      from: new Date("2026-02-01T05:00:00Z"),
+      to: new Date("2026-02-28T20:00:00Z"),
+      until: new Date("2026-02-28T20:00:00Z"),
+    });
   });
 
   test("a year before 29 February is the 28th", async () => {

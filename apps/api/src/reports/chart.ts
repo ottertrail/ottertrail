@@ -74,7 +74,7 @@ export interface ChartBucket {
 }
 
 /** How the comparison's events move onto the chart's points: forward by this much. */
-export type ChartShift = { unit: "day" | "hour" | "year"; amount: number };
+export type ChartShift = { unit: "day" | "hour" | "month" | "year"; amount: number };
 
 function addDays(day: string, days: number): string {
   const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
@@ -178,7 +178,9 @@ function bucketSql(
         ? `addDays(${local}, ${shift.amount})`
         : shift.unit === "hour"
           ? `addHours(${local}, ${shift.amount})`
-          : `addYears(${local}, ${shift.amount})`;
+          : shift.unit === "month"
+            ? `addMonths(${local}, ${shift.amount})`
+            : `addYears(${local}, ${shift.amount})`;
   const keys: Record<ChartInterval, string> = {
     hour: `toString(toUnixTimestamp(toStartOfHour(${moved})))`,
     day: `toString(toDate(${moved}))`,

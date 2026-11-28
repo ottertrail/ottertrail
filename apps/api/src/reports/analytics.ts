@@ -342,8 +342,10 @@ const daysBetween = (first: string, last: string) =>
 
 /**
  * Where the comparison reads: as many days right before, or the same days
- * a year before, each up to the same moment while the range runs. A
- * rolling window moves back by its length in hours, or by a year.
+ * a year before, each up to the same moment while the range runs. Month
+ * to date and year to date compare their previous period with the same
+ * days of the month or year before (`calendar`). A rolling window moves
+ * back by its length in hours, or by a year.
  */
 async function comparedRange(
   db: Kysely<Database>,
@@ -354,14 +356,20 @@ async function comparedRange(
     now: Date;
     window: { from: Date; to: Date } | undefined;
     comparison: Exclude<Comparison, "off">;
+    calendar: "month" | "year" | undefined;
   },
 ): Promise<Compared> {
-  const { firstDay, lastDay, timeZone, now, window, comparison } = options;
+  const { firstDay, lastDay, timeZone, now, window, comparison, calendar } = options;
   if (window === undefined) {
-    if (comparison === "year") {
+    const by = comparison === "year" ? "year" : calendar;
+    if (by !== undefined) {
       return {
-        days: await shiftedDays(db, firstDay, lastDay, timeZone, now, { years: 1, days: 0 }),
-        shift: { unit: "year", amount: 1 },
+        days: await shiftedDays(db, firstDay, lastDay, timeZone, now, {
+          years: by === "year" ? 1 : 0,
+          months: by === "month" ? 1 : 0,
+          days: 0,
+        }),
+        shift: { unit: by, amount: 1 },
       };
     }
     const days = await previousDays(db, firstDay, lastDay, timeZone, now);
@@ -413,6 +421,12 @@ export async function projectAnalytics(
     interval?: ChartInterval | undefined;
     /** "previous" when left out. */
     comparison?: Comparison | undefined;
+    /**
+     * The previous period of month to date (`month`) or year to date
+     * (`year`): the same days of the month or year before, not as many
+     * days right before.
+     */
+    previousCalendar?: "month" | "year" | undefined;
     /** The clock, for comparing a running period up to the same time of day. */
     now?: Date;
     /** Runs the queries, such as within the dashboard's query limit; a plain reader by default. */
@@ -444,7 +458,15 @@ export async function projectAnalytics(
     dayRange(db, { projectId, environment, firstDay, lastDay, timeZone, filters, window }),
     comparison === "off"
       ? undefined
-      : comparedRange(db, { firstDay, lastDay, timeZone, now, window, comparison }),
+      : comparedRange(db, {
+          firstDay,
+          lastDay,
+          timeZone,
+          now,
+          window,
+          comparison,
+          calendar: options.previousCalendar,
+        }),
     listGoals(db, projectId),
   ]);
   const before: ReportRange | undefined =

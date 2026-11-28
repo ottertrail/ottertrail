@@ -142,8 +142,10 @@ export async function previousDays(
 
 /**
  * The days `firstDay` to `lastDay` moved back on the calendar by `shift`:
- * as many days before (previousDays), or a year before, where 29 February
- * becomes the 28th. A running period stops at now, moved back the same way.
+ * as many days before (previousDays), a month before, or a year before.
+ * A day the earlier month lacks becomes its last (31 March is 28 or 29
+ * February a month before, 29 February is the 28th a year before). A running
+ * period stops at now, moved back the same way.
  */
 export async function shiftedDays(
   db: Kysely<Database>,
@@ -151,9 +153,9 @@ export async function shiftedDays(
   lastDay: string,
   timeZone: string,
   now: Date,
-  shift: { years: number; days: number },
+  shift: { years: number; months?: number; days: number },
 ): Promise<PreviousDays> {
-  const back = sql`make_interval(years => ${shift.years}::int, days => ${shift.days}::int)`;
+  const back = sql`make_interval(years => ${shift.years}::int, months => ${shift.months ?? 0}::int, days => ${shift.days}::int)`;
   const { rows } = await sql<{
     first_day: string;
     last_day: string;

@@ -494,6 +494,8 @@ export async function analyticsAnswer(
     goal: goal.goal,
     interval,
     comparison: query.period === "all" ? "off" : query.compare,
+    previousCalendar:
+      query.period === "mtd" ? "month" : query.period === "ytd" ? "year" : undefined,
     now,
     reader,
     ...(limit === undefined ? {} : { limit }),
