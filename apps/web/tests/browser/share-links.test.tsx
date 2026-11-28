@@ -221,7 +221,9 @@ describe("a shared link's page", () => {
           path.startsWith(`/api/share/${FAKE_SHARE_TOKEN}/analytics/list?`),
         ),
       )
-      .toBe(true);
+      .toBe(true); // No CSV export on a shared link, for now (docs/web-analytics.md, "CSV export").
+    expect(page.getByRole("button", { name: /Download .* as CSV/ }).query()).toBeNull();
+    expect(page.getByRole("button", { name: "Export" }).query()).toBeNull();
   });
 
   test("fits a phone, 390 wide", async () => {

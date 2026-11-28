@@ -377,6 +377,16 @@ Behind "Show all": one list of the page (`pages`, `customEvents`, or one of the 
 
 `search` keeps rows whose name contains the text, ignoring case, in the database, so a site with thousands of pages stays quick. `%` and `_` match themselves. Countries are stored as codes and shown as names, so for them the search finds codes whose English name contains the text (`germ` finds `DE`), from the same country names the dashboard shows.
 
+### CSV export
+
+```text
+GET /api/projects/:id/analytics/export/list?report=pages&period=7d[&search=…][&filters …][&goal=<id> | &goalEvent=<name>]
+GET /api/projects/:id/analytics/export/summary?period=7d[&interval=day][&compare=year][&filters …][&goal …]
+GET /api/projects/:id/analytics/export/chart?period=7d[&interval=day][&compare=year][&filters …][&goal …]
+```
+
+The list route takes the list route's query without `offset` and `limit`, and the other two the page's query without `limit`; anything else answers 400, as there. They need Web analytics view, and a saved goal Product analytics view, as the page does. The answer is a CSV file, never stored (`no-store`), named after the project, the list or part, and the days; a list holds at most 10,000 rows, and says when it was cut with `X-Export-Cut`. What each file holds and the formula rule: [web analytics](web-analytics.md#csv-export).
+
 ### Visits worked out once
 
 Most reports count visits, and working out visits is the expensive part: it sorts every event in the range (section 7 of [web analytics](web-analytics.md)). Run separately, each report did that again. The endpoint works the visits out once, into a temporary table of a ClickHouse session that belongs to the request, and every report reads that table. With a goal, a second table holds the visits that reached it (`analytics_goal_visits`), and each list reads both. The session runs its queries one after another, and the endpoint drops the table when the reports are done (ClickHouse also drops it when the session expires).
@@ -436,6 +446,8 @@ The calendar is shadcn's `Calendar`, built on react-day-picker, with its parts m
 ### Show all
 
 "Show all" opens a list in a dialog, with the page's period and filters: 50 rows at first, then "Load more", and a search by name, sent once typing pauses (a quarter of a second). While a new search loads, the last results stay, dimmed. A row's link filters the page by it and closes the dialog. The search box has the focus when the dialog opens, and Escape closes it.
+
+Beside the search, Download CSV saves the whole list as a file, with the search once it has settled, up to 10,000 rows; a note under it says when the list had more. On a phone it shows its icon only, and keeps its name ("Download pages: top pages as CSV"). If the API refuses (a 503 when the reports are busy, or any other error), the dialog shows "The file could not download" with the API's message. The page's title row has Export beside the live count (its icon only on a phone): a popover with Summary and Chart, each a file of its own, and the same alert when one fails. Neither shows on a shared link. What the files hold: [web analytics](web-analytics.md#csv-export); `csv-export.test.tsx` covers both, a cut list, a refusal, and a phone 390 wide. The code is in the dashboard's Web analytics chunk, so a first visit loads none of it, and the dashboard's scope passes Download CSV to Show all (`renderListDownload`), so a shared link's page never loads it.
 
 ### Filters
 

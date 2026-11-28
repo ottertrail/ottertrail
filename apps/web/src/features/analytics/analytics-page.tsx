@@ -1278,7 +1278,7 @@ export function AnalyticsView({
 
   return (
     <div className="flex flex-col">
-      {scope.renderHeaderActions(environment)}
+      {scope.renderHeaderActions(search)}
       <FilterBar
         label="Period, environment, and filters"
         period={

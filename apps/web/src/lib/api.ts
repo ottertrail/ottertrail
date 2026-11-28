@@ -78,21 +78,30 @@ export async function apiRequest(
     if (signal?.aborted) {
       throw error;
     }
-    throw new ApiError(
-      0,
-      "Could not reach the API. Check that it is running, then try again.",
-      UNREACHABLE,
-    );
+    throw unreachableError();
   }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const record = typeof payload === "object" && payload !== null ? payload : {};
-    const message =
-      "message" in record && typeof record.message === "string"
-        ? record.message
-        : `The request failed (HTTP ${response.status}).`;
-    const code = "error" in record && typeof record.error === "string" ? record.error : undefined;
-    throw new ApiError(response.status, message, code);
+    throw errorOf(response.status, payload);
   }
   return payload;
+}
+
+/** What a request that got no answer at all throws. */
+export const unreachableError = () =>
+  new ApiError(
+    0,
+    "Could not reach the API. Check that it is running, then try again.",
+    UNREACHABLE,
+  );
+
+/** The ApiError for a failed answer, with the API's message and code when its body has them. */
+export function errorOf(status: number, payload: unknown): ApiError {
+  const record = typeof payload === "object" && payload !== null ? payload : {};
+  const message =
+    "message" in record && typeof record.message === "string"
+      ? record.message
+      : `The request failed (HTTP ${status}).`;
+  const code = "error" in record && typeof record.error === "string" ? record.error : undefined;
+  return new ApiError(status, message, code);
 }

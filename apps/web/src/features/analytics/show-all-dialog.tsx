@@ -36,7 +36,7 @@ export function ShowAllDialog({
   rateHeading?: string | undefined;
   search: PageSearch;
 }) {
-  const { source } = useAnalyticsScope();
+  const { source, dashboard } = useAnalyticsScope();
   const [text, setText] = React.useState("");
   const query = useSettled(text.trim(), 250);
   const list = useInfiniteQuery({
@@ -67,14 +67,18 @@ export function ShowAllDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <Input
-          type="search"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="Search"
-          aria-label={`Search ${title.toLowerCase()}`}
-          autoComplete="off"
-        />
+        <div className="flex flex-wrap gap-2">
+          <Input
+            type="search"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="Search"
+            aria-label={`Search ${title.toLowerCase()}`}
+            autoComplete="off"
+            className="min-w-0 flex-1"
+          />
+          {dashboard?.renderListDownload({ search, report, text: query, title })}
+        </div>
         <div
           className="min-h-0 flex-1 overflow-y-auto transition-opacity data-[stale=true]:opacity-60"
           data-stale={list.isPlaceholderData}

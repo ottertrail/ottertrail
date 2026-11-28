@@ -2,6 +2,7 @@ import type { VariantProps } from "class-variance-authority";
 import * as React from "react";
 
 import type { buttonVariants } from "@/components/ui/button";
+import type { ListReport } from "@/lib/analytics-api";
 import type { ReportSource } from "@/lib/analytics-queries";
 
 import type { OtherPageSearch, PageSearch } from "./list-rows";
@@ -42,6 +43,16 @@ export interface DashboardExtras {
   installLink: React.ReactNode;
   /** A page's heatmap, at the end of its row. */
   renderHeatmapLink: (search: OtherPageSearch, path: string) => React.ReactNode;
+  /**
+   * Show all's Download CSV for a list, with the search typed (csv-export.tsx),
+   * passed in so a shared link's page never loads the export's code.
+   */
+  renderListDownload: (props: {
+    search: PageSearch;
+    report: ListReport;
+    text: string;
+    title: string;
+  }) => React.ReactNode;
   /** A custom event's own page, at the end of its row; null without product analytics. */
   renderEventLink: ((search: OtherPageSearch, name: string) => React.ReactNode) | null;
   /** The filter bar's Segments menu (segments-menu.tsx). */
@@ -57,8 +68,8 @@ export interface AnalyticsScope {
   show: (search: PageSearch) => void;
   /** What shows when the API answers 404: an unknown project, or a link that no longer works. */
   notFound: React.ReactNode;
-  /** Drawn into the page's title row: the live count. */
-  renderHeaderActions: (environment: string) => React.ReactNode;
+  /** Drawn into the page's title row, for the page's address: the live count, and Export. */
+  renderHeaderActions: (search: PageSearch) => React.ReactNode;
   /** The dashboard's extras; null on a shared link. */
   dashboard: DashboardExtras | null;
 }

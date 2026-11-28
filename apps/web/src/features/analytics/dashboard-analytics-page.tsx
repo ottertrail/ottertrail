@@ -21,6 +21,7 @@ import { heatmapsSearchOf } from "../heatmaps/search";
 import { productSearchOf } from "../product/search";
 import { NoSuchProject } from "../projects/no-such-project";
 import { AnalyticsView } from "./analytics-page";
+import { DownloadListButton, ExportMenu } from "./csv-export";
 import { type OtherPageSearch, searchOf } from "./list-rows";
 import { NowIndicator } from "./now-indicator";
 import { type AnalyticsScope, AnalyticsScopeContext, type PageLinkProps } from "./scope";
@@ -132,9 +133,10 @@ export function DashboardAnalyticsScope({
           params: { projectId },
           search: searchOf(search),
         }),
-      renderHeaderActions: (environment) => (
+      renderHeaderActions: (search) => (
         <PageActions>
-          <NowIndicator projectId={projectId} environment={environment} />
+          <NowIndicator projectId={projectId} environment={search.environment} />
+          <ExportMenu source={projectReports(projectId)} search={search} />
         </PageActions>
       ),
       notFound: <NoSuchProject />,
@@ -151,6 +153,9 @@ export function DashboardAnalyticsScope({
         ),
         renderHeatmapLink: (search, path) => (
           <HeatmapLink projectId={projectId} search={search} path={path} />
+        ),
+        renderListDownload: (props) => (
+          <DownloadListButton source={projectReports(projectId)} {...props} />
         ),
         renderEventLink: canOpenEvents
           ? (search, name) => <EventPageLink projectId={projectId} search={search} name={name} />

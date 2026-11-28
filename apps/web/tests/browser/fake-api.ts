@@ -216,6 +216,11 @@ export interface FakeApi {
   savedFunnels: SavedFunnel[];
   /** Answers GET /api/projects/:id/analytics/list; by default, fakeList. */
   list: (query: URLSearchParams) => unknown;
+  /**
+   * Answers GET /api/projects/:id/analytics/export/:part (list, summary, or
+   * chart); by default, fakeCsvExport. A Response stands for an error.
+   */
+  csvExport: (part: string, query: URLSearchParams) => Response;
   /** Answers GET /api/projects/:id/analytics/now; by default, fakeNow. A Response stands for an error. */
   now: (query: URLSearchParams) => RightNow | Response;
   /** Answers GET /api/projects/:id/users; by default, fakeUsers. */
@@ -5665,6 +5670,10 @@ async function answer(api: FakeApi, url: URL, init: RequestInit | undefined): Pr
     const result = api.now(url.searchParams);
     return result instanceof Response ? result : json(result);
   }
+  const csvExport = /^\/api\/projects\/[^/]+\/analytics\/export\/([a-z]+)$/.exec(path);
+  if (csvExport?.[1] !== undefined) {
+    return api.csvExport(csvExport[1], url.searchParams);
+  }
   if (/^\/api\/projects\/[^/]+\/analytics\/list$/.test(path)) {
     const result: unknown = await api.list(url.searchParams);
     return result instanceof Response ? result : json(result);
@@ -5754,6 +5763,17 @@ export async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): P
 }
 
 /** Sets up the fake API for the current test; removeFakeApi() takes it down. */
+/** A CSV export as the API sends it: a file named after the part, with one row. */
+export function fakeCsvExport(part: string, query: URLSearchParams): Response {
+  const name = part === "list" ? (query.get("report") ?? "list") : part;
+  return new Response('"Name","Visitors"\r\n"/pricing",3\r\n', {
+    headers: {
+      "content-type": "text/csv; charset=utf-8; header=present",
+      "content-disposition": `attachment; filename="demo-${name}.csv"; filename*=UTF-8''demo-${name}.csv`,
+    },
+  });
+}
+
 export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   active = {
     signedIn: true,
@@ -5783,6 +5803,7 @@ export function installFakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
     goals: fakeGoals(),
     savedFunnels: fakeSavedFunnels(),
     list: fakeList,
+    csvExport: fakeCsvExport,
     now: fakeNow,
     users: fakeUsers,
     user: fakeUser,
