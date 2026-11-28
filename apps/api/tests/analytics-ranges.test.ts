@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import type { NewEvent } from "../src/collection/event-store.ts";
 import { chartBuckets } from "../src/reports/chart.ts";
 import { shiftedDays } from "../src/reports/reports.ts";
-import { signedInDashboard } from "./helpers/dashboard.ts";
+import { PUBLIC_URL, signedInDashboard } from "./helpers/dashboard.ts";
 import { insertProject } from "./helpers/projects.ts";
 
 /** Daylight saving ends on 1 November 2026 and starts on 8 March 2026. */
@@ -377,5 +377,56 @@ describe("comparison", () => {
       days: 0,
     });
     expect(days).toMatchObject({ firstDay: "2023-02-28", lastDay: "2023-02-28", until: null });
+  });
+});
+
+const list = (base: string, query: string, headers: Record<string, string> = {}) =>
+  dashboard.app.inject({ url: `${base}/analytics/list?${query}`, headers });
+
+describe("a tab's list follows the range", () => {
+  let token = "";
+
+  beforeAll(async () => {
+    const made = await dashboard.app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/share-links`,
+      headers: { cookie: dashboard.cookie, origin: PUBLIC_URL },
+      payload: { name: "Ranges" },
+    });
+    token = new URL(made.json().url).pathname.slice("/share/".length);
+  });
+
+  test.each(["yesterday", "24h", "mtd", "ytd", "all"])(
+    "%s: the same rows as the page's, on the dashboard and on a shared link",
+    async (period) => {
+      const page = await analytics(`period=${period}`);
+      const pages = await list(
+        `/api/projects/${projectId}`,
+        `report=pages&period=${period}&limit=10`,
+        { cookie: dashboard.cookie },
+      );
+      expect(pages.json().rows).toEqual(page.pages);
+      for (const report of ["pages", "channel", "hostname"]) {
+        const query = `report=${report}&period=${period}&limit=10`;
+        const own = await list(`/api/projects/${projectId}`, query, { cookie: dashboard.cookie });
+        const shared = await list(`/api/share/${token}`, query);
+        expect({ report, own: own.statusCode, shared: shared.statusCode }).toEqual({
+          report,
+          own: 200,
+          shared: 200,
+        });
+        expect(shared.json()).toEqual(own.json());
+      }
+    },
+  );
+
+  test("the list routes take no interval or comparison: the page's chart has its own", async () => {
+    const query = "report=channel&period=24h&interval=hour";
+    expect(
+      (await list(`/api/projects/${projectId}`, query, { cookie: dashboard.cookie })).statusCode,
+    ).toBe(400);
+    expect(
+      (await list(`/api/share/${token}`, "report=channel&period=7d&compare=year")).statusCode,
+    ).toBe(400);
   });
 });

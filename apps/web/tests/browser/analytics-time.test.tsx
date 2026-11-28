@@ -190,3 +190,17 @@ describe("the comparison", () => {
     expect(page.getByText(/Changes compare with/).elements()).toEqual([]);
   });
 });
+
+describe("a tab's list", () => {
+  test("follows the range, without the chart's interval and comparison", async () => {
+    const api = installFakeApi();
+    renderApp(`${ANALYTICS}?period=24h&interval=hour&compare=year`);
+    await page
+      .getByRole("group", { name: "Which sources to list" })
+      .getByRole("button", { name: "Channels" })
+      .click();
+    await expect
+      .poll(() => api.requests.filter((path) => path.includes("/analytics/list?")))
+      .toEqual([`${API}/list?period=24h&report=channel&limit=10`]);
+  });
+});
