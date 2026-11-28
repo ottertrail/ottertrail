@@ -18,6 +18,7 @@ import {
   type HeatmapPage,
   HEATMAP_PROPERTY,
 } from "./heatmap-names.ts";
+import { FILE_DOWNLOAD, linkClick, NOT_FOUND, OUTBOUND_LINK } from "./links.ts";
 import { watchNavigation } from "./navigation.ts";
 import {
   currentScriptReader,
@@ -64,6 +65,8 @@ export interface OttertrailApi {
    * new, empty recording. The last call wins.
    */
   replay(on: boolean): void;
+  /** Records the page shown now as not found, once per page view. */
+  notFound(): void;
 }
 
 declare global {
@@ -330,7 +333,8 @@ const REAL = Symbol.for("ottertrail.tracker");
     };
 
     const pageview = () => {
-      if (current !== undefined) {
+      const landed = current === undefined;
+      if (!landed) {
         reportEngagement(); // The page being left, before the new one.
       }
       // After the first page, the "referrer" is the previous page in the app,
@@ -352,6 +356,10 @@ const REAL = Symbol.for("ottertrail.tracker");
       requestsTraced = tracesOn && Math.random() < (tracesSample ?? 1);
       landedOn ??= { page: current, user, trace: pageTrace };
       tracker.track("pageview", current, undefined, { trace: pageTrace });
+      // Only on a page load: an app's later pages keep the head the server sent.
+      if (landed && document.querySelector('meta[name="ottertrail"][content="not-found"]')) {
+        notFound();
+      }
       // Heatmaps: this pageview is in the sample or not, decided now, kept nowhere.
       if (heatmapsDeclared) {
         heatmapPage =
@@ -433,6 +441,41 @@ const REAL = Symbol.for("ottertrail.tracker");
       window.addEventListener("unhandledrejection", (event) => errors.rejected(event.reason));
     }
 
+    // Pages the site marks as not found, and clicks on links to other
+    // sites and on files (links.ts), unless the snippet turns them off.
+    const notFoundOn = script?.dataset.notFound !== "off";
+    let notFoundPage: Page | undefined;
+    const notFound = () => {
+      if (notFoundOn && current !== undefined && notFoundPage !== current) {
+        notFoundPage = current;
+        tracker.track(NOT_FOUND, current);
+      }
+    };
+    const linksOn = {
+      outbound: script?.dataset.outbound !== "off",
+      downloads: script?.dataset.downloads !== "off",
+    };
+    // One listener for every link, in the capture phase, so a page's own
+    // handler that stops the click cannot hide it. It never delays the
+    // navigation: the event leaves at once, in a request that outlives the page.
+    const clicked = (event: MouseEvent) => {
+      try {
+        // The main button, or the middle one (auxclick), which opens a new tab; not the menu's.
+        const { target } = event;
+        const link =
+          event.button < 2 && target instanceof Element ? target.closest("a[href]") : null;
+        const click = link && linkClick(link, location.hostname, linksOn);
+        if (click)
+          tracker.track(click.name, current ?? landing(), { url: click.url }, { now: true });
+      } catch {
+        // Never break the page the tracker runs on.
+      }
+    };
+    if (linksOn.outbound || linksOn.downloads) {
+      document.addEventListener("click", clicked, true);
+      document.addEventListener("auxclick", clicked, true);
+    }
+
     if (beside && script?.dataset.vitals !== "off") {
       // A page restored from the back/forward cache is a new page load. In
       // the capture phase, and added before v.js runs, this goes first: the
@@ -508,6 +551,7 @@ const REAL = Symbol.for("ottertrail.tracker");
       reset: () => setUser(undefined, undefined, "reset()"),
       captureError: errors.handled,
       // Unknown: a page's script may pass anything. Only true starts.
+      notFound,
       replay: (on: unknown) => {
         try {
           // On the owner's page, opened for the overlay, nothing records.
@@ -536,7 +580,11 @@ const REAL = Symbol.for("ottertrail.tracker");
       },
       track: (name, properties) => {
         // The tracker sends these itself; a page sending them would distort reports.
-        if (name === "pageview" || name === ENGAGEMENT || name === ERROR || name === VITALS) {
+        if (
+          ["pageview", ENGAGEMENT, ERROR, VITALS, OUTBOUND_LINK, FILE_DOWNLOAD, NOT_FOUND].includes(
+            name,
+          )
+        ) {
           console.warn(`Ottertrail: "${name}" is reserved. Use a different event name.`);
           return;
         }

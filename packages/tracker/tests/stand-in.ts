@@ -13,5 +13,6 @@ export const STAND_IN = `window.ottertrail = window.ottertrail || (function () {
     identify: noop,
     reset: noop,
     captureError: noop,
+    notFound: noop,
   };
 })();`;

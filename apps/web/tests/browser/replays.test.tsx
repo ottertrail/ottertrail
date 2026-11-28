@@ -235,6 +235,7 @@ describe("the project's Session replay card", () => {
       identify: noop,
       reset: noop,
       captureError: noop,
+      notFound: noop,
     };
   })();
 </script>`);

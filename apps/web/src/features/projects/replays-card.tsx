@@ -48,6 +48,7 @@ export const EARLY_CALLS = `<script>
       identify: noop,
       reset: noop,
       captureError: noop,
+      notFound: noop,
     };
   })();
 </script>`;

@@ -122,6 +122,7 @@ The rule is the same without `data-replay-consent`: recording starts on load, as
         identify: noop,
         reset: noop,
         captureError: noop,
+        notFound: noop,
       };
     })();
 </script>
@@ -149,6 +150,7 @@ A plain HTML banner, for a site without a consent tool, that asks on each page l
         identify: noop,
         reset: noop,
         captureError: noop,
+        notFound: noop,
       };
     })();
 </script>

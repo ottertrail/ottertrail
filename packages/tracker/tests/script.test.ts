@@ -36,6 +36,22 @@ class FakeErrorEvent {
   }
 }
 
+/**
+ * Stands in for an element clicked inside a link: closest("a[href]") finds
+ * the link, given as its href and attributes, or none.
+ */
+class FakeElement {
+  link: { href: unknown; attributes?: string[] } | undefined;
+  constructor(link?: { href: unknown; attributes?: string[] }) {
+    this.link = link;
+  }
+  closest(selector: string) {
+    if (selector !== "a[href]" || this.link === undefined) return null;
+    const { href, attributes = [] } = this.link;
+    return { href, hasAttribute: (name: string) => attributes.includes(name) };
+  }
+}
+
 /** Just enough of a browser page to run src/script.ts as a <script> tag would. */
 function fakePage(
   href: string,
@@ -63,6 +79,9 @@ function fakePage(
     },
     get search() {
       return new URL(this.href).search;
+    },
+    get hostname() {
+      return new URL(this.href).hostname;
     },
     get hash() {
       return new URL(this.href).hash;
@@ -95,6 +114,13 @@ function fakePage(
     referrer,
     visibilityState: "visible" as "visible" | "hidden",
     prerendering: false,
+    // Whether the page has <meta name="ottertrail" content="not-found">.
+    markedNotFound: false,
+    querySelector(selector: string) {
+      return this.markedNotFound && selector === 'meta[name="ottertrail"][content="not-found"]'
+        ? {}
+        : null;
+    },
     addEventListener: on,
   };
   const window = {
@@ -110,6 +136,7 @@ function fakePage(
     ottertrail: undefined as
       | {
           track(name: string, properties?: object): void;
+          notFound(): void;
           identify(userId: string, signature?: string): void;
           reset(): void;
           captureError(error: unknown, properties?: object): void;
@@ -133,6 +160,7 @@ function fakePage(
   };
 
   vi.stubGlobal("ErrorEvent", FakeErrorEvent);
+  vi.stubGlobal("Element", FakeElement);
   vi.stubGlobal("document", document);
   vi.stubGlobal("location", location);
   vi.stubGlobal("window", window);
@@ -1979,5 +2007,178 @@ describe("traces", () => {
     expect(warn).toHaveBeenCalledWith(
       "Ottertrail: data-traces-origins takes origins such as https://api.example.com. Other entries are ignored.",
     );
+  });
+});
+
+/** A click on a link, as the browser dispatches it to the document. */
+function clickLink(
+  page: ReturnType<typeof fakePage>,
+  href: unknown,
+  { type = "click", button = 0, attributes = [] as string[], ctrlKey = false } = {},
+) {
+  const event = {
+    button,
+    ctrlKey,
+    target: new FakeElement({ href, attributes }),
+    preventDefault: vi.fn<() => void>(),
+  };
+  page.fire(type, event);
+  return event;
+}
+
+/**
+ * The events other than pageviews, each once: one sent at once is still in
+ * flight when the page hides, so it goes again, and the API stores it once.
+ */
+function sentOnce(page: ReturnType<typeof fakePage>) {
+  const ids = new Set<string>();
+  return page.events
+    .filter((event) => event.name !== "pageview" && !ids.has(event.id) && ids.add(event.id))
+    .map((event) => [event.name, event.url, event.properties]);
+}
+
+describe("links and not found pages", () => {
+  const click = clickLink;
+  const sent = sentOnce;
+
+  test("a click on a link to another site sends its origin and path at once, without delaying it", async () => {
+    const page = fakePage("https://example.com/pricing?plan=team");
+    await runScript();
+    const event = click(page, "https://github.com/acme/widgets?ref=pricing#readme");
+
+    // Sent before any timer runs: the request starts before the navigation does.
+    expect(sent(page)).toEqual([
+      ["outbound_link", "https://example.com/pricing", { url: "https://github.com/acme/widgets" }],
+    ]);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  test("a middle click and a click with a modifier key count; the menu's button does not", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    click(page, "https://a.example.org/", { type: "auxclick", button: 1 });
+    click(page, "https://b.example.org/", { ctrlKey: true });
+    click(page, "https://c.example.org/", { type: "auxclick", button: 2 });
+    page.hide();
+    await page.settle();
+
+    expect(sent(page).map(([name, , properties]) => [name, properties])).toEqual([
+      ["outbound_link", { url: "https://a.example.org/" }],
+      ["outbound_link", { url: "https://b.example.org/" }],
+    ]);
+  });
+
+  test("links on the page's own host, links that are not http(s), and clicks off links send nothing", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    click(page, "https://example.com/pricing");
+    click(page, "mailto:team@example.com");
+    click(page, "tel:+15551234567");
+    click(page, { baseVal: "https://svg.example.org/" }); // An SVG link.
+    page.fire("click", { button: 0, target: new FakeElement() }); // Not in a link.
+    page.fire("click", { button: 0, target: {} }); // Not an element.
+    page.hide();
+    await page.settle();
+
+    expect(sent(page)).toEqual([]);
+  });
+
+  test("a file is a download on any host, and never also an outbound link", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    click(page, "https://example.com/files/Price-List.PDF?v=3");
+    click(page, "https://cdn.example.net/app/setup.dmg");
+    click(page, "https://example.com/export", { attributes: ["download"] });
+    click(page, "https://example.com/docs/readme.html");
+    page.hide();
+    await page.settle();
+
+    expect(sent(page).map(([name, , properties]) => [name, properties])).toEqual([
+      ["file_download", { url: "https://example.com/files/Price-List.PDF" }],
+      ["file_download", { url: "https://cdn.example.net/app/setup.dmg" }],
+      ["file_download", { url: "https://example.com/export" }],
+    ]);
+  });
+
+  test("a link longer than the API takes is not sent", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    click(page, `https://example.org/${"a".repeat(481)}`);
+    page.hide();
+    await page.settle();
+
+    expect(sent(page)).toEqual([]);
+  });
+
+  test("a page marked with the meta tag sends not_found with its pageview, once", async () => {
+    const page = fakePage("https://example.com/old-pricing?from=mail");
+    page.document.markedNotFound = true;
+    await runScript();
+    page.window.ottertrail?.notFound();
+    // An in-app page after it keeps the head, but is not marked.
+    page.window.location.href = "https://example.com/";
+    page.window.history.pushState();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => [event.name, event.url, event.properties])).toEqual([
+      ["pageview", "https://example.com/old-pricing", undefined],
+      ["not_found", "https://example.com/old-pricing", undefined],
+      ["pageview", "https://example.com/", undefined],
+    ]);
+  });
+
+  test("notFound() marks the page shown now, in a single-page app", async () => {
+    const page = fakePage("https://example.com/");
+    await runScript();
+    page.window.location.href = "https://example.com/blog/2019";
+    page.window.history.pushState();
+    page.window.ottertrail?.notFound();
+    page.window.ottertrail?.notFound();
+    page.hide();
+    await page.settle();
+
+    expect(sent(page).filter(([name]) => name === "not_found")).toEqual([
+      ["not_found", "https://example.com/blog/2019", undefined],
+    ]);
+  });
+
+  test.each([
+    ["outbound", ["file_download"]],
+    ["downloads", ["outbound_link"]],
+  ])('data-%s="off" turns that kind off, and leaves the other', async (attribute, names) => {
+    const page = fakePage("https://example.com/", "", { attributes: { [attribute]: "off" } });
+    await runScript();
+    click(page, "https://github.com/acme/widgets");
+    click(page, "https://example.com/files/report.pdf");
+    page.hide();
+    await page.settle();
+
+    expect(sent(page).map(([name]) => name)).toEqual(names);
+  });
+
+  test('data-not-found="off" sends no not_found, from the meta tag or notFound()', async () => {
+    const page = fakePage("https://example.com/missing", "", { attributes: { notFound: "off" } });
+    page.document.markedNotFound = true;
+    await runScript();
+    page.window.ottertrail?.notFound();
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+  });
+
+  test("a page cannot send these events itself", async () => {
+    const page = fakePage("https://example.com/");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runScript();
+    for (const name of ["outbound_link", "file_download", "not_found"]) {
+      page.window.ottertrail?.track(name, { url: "https://example.org/" });
+    }
+    page.hide();
+    await page.settle();
+
+    expect(page.events.map((event) => event.name)).toEqual(["pageview"]);
+    expect(warn).toHaveBeenCalledTimes(3);
   });
 });
