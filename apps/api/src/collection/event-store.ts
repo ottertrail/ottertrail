@@ -23,6 +23,8 @@ export interface NewEvent {
   occurredAt: Date;
   /** Page path; left out for a server-side event that names no page. */
   path?: string;
+  /** The page's hostname, lower case; left out for a server-side event. */
+  hostname?: string;
   referrer?: string;
   utm?: Utm;
   properties?: JsonObject;
@@ -83,6 +85,7 @@ export interface EventRow {
   occurred_at: Date;
   received_at: Date;
   path: string | null;
+  hostname: string | null;
   referrer: string | null;
   utm_source: string | null;
   utm_medium: string | null;
@@ -126,6 +129,7 @@ export function toClickHouse(event: EventRow) {
     received_at: clickHouseTime(event.received_at),
     // ClickHouse's path is not nullable: a server-side event without a page has "".
     path: event.path ?? "",
+    hostname: event.hostname,
     referrer: event.referrer,
     utm_source: event.utm_source,
     utm_medium: event.utm_medium,
@@ -167,6 +171,7 @@ export function toRow(projectId: string, event: NewEvent, receivedAt: Date): Eve
     occurred_at: event.occurredAt,
     received_at: receivedAt,
     path: event.path ?? null,
+    hostname: event.hostname ?? null,
     referrer: event.referrer ?? null,
     utm_source: event.utm?.source ?? null,
     utm_medium: event.utm?.medium ?? null,

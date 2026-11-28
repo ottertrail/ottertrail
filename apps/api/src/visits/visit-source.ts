@@ -20,6 +20,25 @@ const REFERRER_HOST_PATTERN = String.raw`^[a-zA-Z][a-zA-Z0-9+.-]*://(\[[^\]]*\]|
  * visit's `referrer` and `utm_source` (visits.ts, FIRST_EVENT_COLUMNS).
  */
 export function visitSourceSql(ownHostnames: readonly string[], params: QueryParams): string {
+  return `coalesce(utm_source, ${referrerHostSql(ownHostnames, params)}, ${params.add(DIRECT, "String")})`;
+}
+
+/**
+ * How a visit got its source (visitSourceSql): "tag" from its utm_source,
+ * "referrer" from another site's referrer, "none" for Direct / none. A
+ * source's drill-down lists its visits by it (docs/web-analytics.md).
+ */
+export function visitSourceKindSql(ownHostnames: readonly string[], params: QueryParams): string {
+  return `multiIf(utm_source IS NOT NULL, 'tag', ${referrerHostSql(ownHostnames, params)} IS NOT NULL, 'referrer', 'none')`;
+}
+
+/**
+ * A visit's referrer's host, lower case, without www.; NULL without a
+ * referrer, or when it is one of the project's own hostnames (a tab left
+ * open for over 30 minutes is not a source). Android apps send their
+ * package name as the host, such as com.google.android.gm.
+ */
+export function referrerHostSql(ownHostnames: readonly string[], params: QueryParams): string {
   const host = `nullIf(lower(replaceRegexpOne(extract(ifNull(referrer, ''), ${params.add(
     REFERRER_HOST_PATTERN,
     "String",
@@ -28,7 +47,7 @@ export function visitSourceSql(ownHostnames: readonly string[], params: QueryPar
     ownHostnames.map((hostname) => hostname.toLowerCase().replace(/^www\./, "")),
     "Array(String)",
   );
-  return `coalesce(utm_source, if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL), ${params.add(DIRECT, "String")})`;
+  return `if(${host} IS NOT NULL AND NOT has(${own}, ${host}), ${host}, NULL)`;
 }
 
 /**

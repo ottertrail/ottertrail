@@ -64,7 +64,8 @@ describe("the web analytics report", () => {
 
     for (const [title, views] of [
       ["Pages", ["Top pages", "Entry", "Exit"]],
-      ["Sources", ["Sources", "Campaigns"]],
+      ["Sources", ["Sources", "Channels"]],
+      ["Campaigns", ["Campaign", "Source", "Medium", "Term", "Content"]],
       ["Locations", ["Countries", "Regions", "Cities"]],
       ["Devices", ["Devices", "Browsers", "Systems"]],
     ] as const) {
@@ -76,8 +77,8 @@ describe("the web analytics report", () => {
         views.map((_, index) => (index === 0 ? "true" : "false")),
       );
     }
-    // Releases and custom events have one list each: no toggle.
-    for (const title of ["Releases", "Custom events"]) {
+    // Hostnames, releases, and custom events have one list each: no toggle.
+    for (const title of ["Hostnames", "Releases", "Custom events"]) {
       await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
       expect(
         page.getByRole("group", { name: `Which ${title.toLowerCase()} to list` }).elements(),
@@ -144,13 +145,15 @@ describe("the web analytics report fits", () => {
     await expect.element(topPages()).toBeVisible();
     expectNoSidewaysScroll(1440);
     expect(getComputedStyle(filterBar().element()).position).toBe("sticky");
-    const tops = ["Pages", "Sources", "Locations"].map((title) =>
+    const tops = ["Pages", "Sources", "Campaigns"].map((title) =>
       Math.round(
         page.getByRole("heading", { name: title, exact: true }).element().getBoundingClientRect()
           .top,
       ),
     );
-    expect(new Set(tops).size).toBe(1);
+    // Campaigns' five toggles wrap under its title, which then sits a little higher.
+    const [pages = 0, ...others] = tops;
+    for (const top of others) expect(Math.abs(top - pages)).toBeLessThan(16);
   });
 });
 

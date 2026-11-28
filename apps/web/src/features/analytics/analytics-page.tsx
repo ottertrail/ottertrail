@@ -34,6 +34,7 @@ import {
   type DayPoint,
   DEFAULT_ENVIRONMENT,
   type EventList,
+  type FilterName,
   type Filters,
   type ListReport,
   type PageGoalResult,
@@ -79,6 +80,7 @@ import {
   type PageSearch,
   rankedRows,
   rowRate,
+  valueText,
 } from "./list-rows";
 import type { RankedRow } from "./ranked-list";
 import { useAnalyticsScope } from "./scope";
@@ -108,11 +110,27 @@ function goalName(goal: GoalChoice, analytics: Analytics | undefined): string {
   );
 }
 
+/** The one value a filter keeps with "is", if the page has such a filter; else undefined. */
+function onlyValue(filters: Filters, name: FilterName): string | undefined {
+  const matching = filters.filter((filter) => filter.name === name);
+  const [only] = matching;
+  return matching.length === 1 && only?.operator === "is" && only.values.length === 1
+    ? only.values[0]
+    : undefined;
+}
+
+/** The source of a visit with no tag and no referrer from another site (visits/visit-source.ts). */
+const DIRECT = "Direct / none";
+
 interface ListTab {
   value: string;
   label: string;
   nameHeading: string;
   secondaryHeading: string;
+  /** A third figure without a goal: each row's exit rate (exit pages). */
+  rateHeading?: string;
+  /** A line under the card's title while this list shows. */
+  description?: string;
   empty: string;
   report: ListReport;
   rows: RankedRow[];
@@ -202,7 +220,13 @@ function BreakdownSection({
         caption={`${tab.label}, ${goal ? "most converted" : "most visitors"} first`}
         nameHeading={tab.nameHeading}
         figureHeadings={
-          goal ? ["Visitors", "Converted", "Rate"] : ["Visitors", tab.secondaryHeading]
+          goal
+            ? ["Visitors", "Converted", "Rate"]
+            : [
+                "Visitors",
+                tab.secondaryHeading,
+                ...(tab.rateHeading === undefined ? [] : [tab.rateHeading]),
+              ]
         }
         barFigure={goal ? 1 : 0}
         rows={tab.rows.map((row) => ({
@@ -216,6 +240,7 @@ function BreakdownSection({
             : [
                 formatWhole(row.primary),
                 row.secondary === undefined ? MISSING : formatWhole(row.secondary),
+                ...(tab.rateHeading === undefined ? [] : [formatPercent(row.exitRate ?? null)]),
               ],
         }))}
         views={
@@ -241,6 +266,7 @@ function BreakdownSection({
           ) : undefined
         }
         empty={tab.empty}
+        description={tab.description}
         layout="stack"
       />
       {showing !== undefined && (
@@ -253,6 +279,7 @@ function BreakdownSection({
           report={showing.report}
           nameHeading={showing.nameHeading}
           secondaryHeading={showing.secondaryHeading}
+          rateHeading={showing.rateHeading}
           search={search}
         />
       )}
@@ -555,6 +582,49 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
     };
   });
   const card = { search, goal: goal !== null };
+  const channels = visitsTab("channel", "Channels", "Channel", "channel", rows("channel"));
+  // Filtered by one source, the card drills into it: how its visits got it, and from where.
+  const source = onlyValue(search.filters, "source");
+  const tagged = breakdowns.sourceKind.some((row) => row.value === "tag");
+  const sourceTabs: ListTab[] =
+    source === undefined
+      ? [
+          {
+            ...visitsTab("source", "Sources", "Source", "source", rows("source")),
+            description:
+              "A visit's source is its utm_source tag (or ref), else the referrer's site, else Direct / none.",
+          },
+          channels,
+        ]
+      : [
+          {
+            ...visitsTab("how", "How", "How it came", "sourceKind", rows("sourceKind")),
+            description:
+              source === DIRECT
+                ? "Direct / none: visits with no utm_source or ref tag and no referrer from another site."
+                : `${valueText("source", source)}: how its visits got this source, and their referrers.`,
+          },
+          visitsTab("referrers", "Referrers", "Referrer", "referrer", rows("referrer")),
+          ...(tagged
+            ? [
+                visitsTab("medium", "Medium", "UTM medium", "utmMedium", rows("utmMedium")),
+                visitsTab("campaign", "Campaign", "Campaign", "utmCampaign", rows("utmCampaign")),
+              ]
+            : []),
+          channels,
+        ];
+  // A browser's row drills down: filtered by it, the Browsers list shows its versions.
+  const browser = onlyValue(search.filters, "browser");
+  const browsers =
+    browser === undefined || browser === ""
+      ? visitsTab("browser", "Browsers", "Browser", "browser", rows("browser"))
+      : visitsTab(
+          "browser",
+          "Browsers",
+          `${browser} version`,
+          "browserVersion",
+          rows("browserVersion"),
+        );
   return (
     <>
       {goal === null ? (
@@ -582,15 +652,24 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
                 rows: withHeatmaps(rankedRows("pages", fromPages(analytics.pages), link)),
               },
               visitsTab("entry", "Entry", "Path", "entryPage", withHeatmaps(rows("entryPage"))),
-              visitsTab("exit", "Exit", "Path", "exitPage", withHeatmaps(rows("exitPage"))),
+              {
+                ...visitsTab("exit", "Exit", "Path", "exitPage", withHeatmaps(rows("exitPage"))),
+                secondaryHeading: "Exits",
+                rateHeading: "Exit rate",
+              },
             ]}
           />
+          <BreakdownSection {...card} title="Sources" tabs={sourceTabs} />
           <BreakdownSection
             {...card}
-            title="Sources"
+            title="Campaigns"
             tabs={[
-              visitsTab("source", "Sources", "Source", "source", rows("source")),
-              visitsTab("campaign", "Campaigns", "Campaign", "utmCampaign", rows("utmCampaign")),
+              // Each UTM tag alone; Sources mixes utm_source with referrer hosts.
+              visitsTab("campaign", "Campaign", "Campaign", "utmCampaign", rows("utmCampaign")),
+              visitsTab("utm-source", "Source", "UTM source", "utmSource", rows("utmSource")),
+              visitsTab("medium", "Medium", "UTM medium", "utmMedium", rows("utmMedium")),
+              visitsTab("term", "Term", "Term", "utmTerm", rows("utmTerm")),
+              visitsTab("content", "Content", "Content", "utmContent", rows("utmContent")),
             ]}
           />
           <BreakdownSection
@@ -607,9 +686,14 @@ function Reports({ analytics, search }: { analytics: Analytics; search: PageSear
             title="Devices"
             tabs={[
               visitsTab("device", "Devices", "Device", "deviceType", rows("deviceType")),
-              visitsTab("browser", "Browsers", "Browser", "browser", rows("browser")),
+              browsers,
               visitsTab("os", "Systems", "Operating system", "os", rows("os")),
             ]}
+          />
+          <BreakdownSection
+            {...card}
+            title="Hostnames"
+            tabs={[visitsTab("hostname", "Hostnames", "Hostname", "hostname", rows("hostname"))]}
           />
           <BreakdownSection
             {...card}

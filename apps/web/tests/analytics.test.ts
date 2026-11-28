@@ -138,7 +138,15 @@ describe("isAnalytics", () => {
   const empty = Object.fromEntries(
     [
       "source",
+      "sourceKind",
+      "referrer",
+      "channel",
+      "utmSource",
+      "utmMedium",
       "utmCampaign",
+      "utmTerm",
+      "utmContent",
+      "hostname",
       "entryPage",
       "exitPage",
       "country",
@@ -146,6 +154,7 @@ describe("isAnalytics", () => {
       "city",
       "deviceType",
       "browser",
+      "browserVersion",
       "os",
       "release",
     ].map((name) => [name, []]),

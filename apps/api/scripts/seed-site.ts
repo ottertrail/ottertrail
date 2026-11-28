@@ -16,6 +16,8 @@ import type { Random } from "./seed-random.ts";
 
 export const SITE_HOST = "demo-shop.example";
 export const STAGING_HOST = "staging.demo-shop.example";
+/** The live blog has a host of its own, so the Hostnames list has two sites. */
+export const BLOG_HOST = "blog.demo-shop.example";
 /** The release before the last deploy, the last deploy, and what staging runs. */
 export const RELEASES = { previous: "2026.11.1", current: "2026.11.2", staging: "2026.11.3-rc.1" };
 /** The days before today the current release went out, at 10:00 UTC. */
@@ -67,13 +69,22 @@ const USER_AGENTS = {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
       12,
     ],
+    // Not updated yet: a version list has more than one row.
+    [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      8,
+    ],
     ["Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0", 8],
     ["Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0", 3],
   ],
   mobile: [
     [
       "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
-      50,
+      38,
+    ],
+    [
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+      12,
     ],
     [
       "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
@@ -268,20 +279,41 @@ const SOURCES: Source[] = [
   },
   {
     name: "newsletter",
-    weight: 7,
-    utm: "utm_source=newsletter&utm_medium=email&utm_campaign=november-picks",
+    weight: 4,
+    utm: "utm_source=newsletter&utm_medium=email&utm_campaign=november-picks&utm_content=top-banner",
     entry: [
       ["/products", 2],
       ["/", 1],
     ],
   },
   {
+    name: "newsletter grid",
+    weight: 3,
+    utm: "utm_source=newsletter&utm_medium=email&utm_campaign=november-picks&utm_content=product-grid",
+    entry: [["/products", 1]],
+  },
+  {
     name: "search ads",
-    weight: 5,
+    weight: 3,
     referrer: "https://www.google.com/",
     utm: "utm_source=google&utm_medium=cpc&utm_campaign=brand-search&utm_term=demo%20shop",
     entry: [["/", 1]],
   },
+  {
+    name: "kettle ads",
+    weight: 2,
+    referrer: "https://www.google.com/",
+    utm: "utm_source=google&utm_medium=cpc&utm_campaign=brand-search&utm_term=enamel%20kettle",
+    entry: [["/products", 1]],
+  },
+  {
+    name: "chatgpt",
+    weight: 3,
+    referrer: "https://chatgpt.com/",
+    utm: "utm_source=chatgpt.com",
+    entry: [["/products", 1]],
+  },
+  { name: "perplexity", weight: 1, referrer: "https://www.perplexity.ai/", entry: [["/", 1]] },
   {
     name: "instagram",
     weight: 9,
@@ -454,6 +486,7 @@ function add(
     name: input.name,
     occurredAt: at,
     path: pageUrl.path,
+    hostname: pageUrl.hostname,
     referrer: cleanReferrer(input.referrer),
     utm: pageUrl.utm,
     ...(input.properties === undefined ? {} : { properties: { ...input.properties } }),
@@ -585,7 +618,8 @@ function visit(
   source: Source,
 ): KnownUser | null {
   const { rng } = context;
-  const host = environment === "staging" ? STAGING_HOST : SITE_HOST;
+  const site = environment === "staging" ? STAGING_HOST : SITE_HOST;
+  let host = site;
   const entry = rng.weighted(source.entry);
   let path = entry in NEXT ? concretePath(rng, entry) : entry;
   let kind = kindOf(path);
@@ -597,12 +631,14 @@ function visit(
   let cartTotal = 0;
   for (let index = 0; index < 8; index += 1) {
     const first = index === 0;
+    const previousHost = host;
+    host = site === SITE_HOST && path.startsWith("/blog") ? BLOG_HOST : site;
     const url = `https://${host}${path}${first && source.utm !== undefined ? `?${source.utm}` : ""}`;
     const loadedAt = at;
     const stay = dwell(rng, path === "/checkout" ? 60_000 : 35_000);
     at = page(context, person, at, {
       url,
-      referrer: first ? source.referrer : `https://${host}/`,
+      referrer: first ? source.referrer : `https://${previousHost}/`,
       userId,
       environment,
       dwellMs: stay,

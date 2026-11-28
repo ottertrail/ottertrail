@@ -184,6 +184,8 @@ describe("POST /api/events", () => {
     expect(first).toMatchObject({
       name: "pageview",
       path: "/reset",
+      // The page's hostname is kept, for the Hostnames list.
+      hostname: SITE,
       utm_source: "newsletter",
       utm_campaign: "launch",
       utm_medium: null,

@@ -67,6 +67,7 @@ describe("storeEvents", () => {
     const event = pageview({
       occurredAt: new Date("2026-11-16T12:00:00.123Z"),
       path: "/pricing",
+      hostname: "shop.example",
       referrer: "https://news.ycombinator.com/",
       utm: {
         source: "newsletter",
@@ -96,6 +97,7 @@ describe("storeEvents", () => {
         occurred_at: "2026-11-16 12:00:00.123",
         received_at: "2026-11-16 12:00:01.500",
         path: "/pricing",
+        hostname: "shop.example",
         referrer: "https://news.ycombinator.com/",
         utm_source: "newsletter",
         utm_medium: "email",

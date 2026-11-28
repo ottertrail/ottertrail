@@ -97,6 +97,8 @@ export interface BreakdownRow {
   bounceRate: number | null;
   /** With a goal: the visitors with a visit of this value that reached it. */
   converted?: number;
+  /** Exit pages only: the page's exits divided by its pageviews; null for "Unknown". */
+  exitRate?: number | null;
 }
 
 export interface CustomEventRow {
@@ -116,7 +118,15 @@ export interface EventValueRow {
 
 export const BREAKDOWNS = [
   "source",
+  "sourceKind",
+  "referrer",
+  "channel",
+  "utmSource",
+  "utmMedium",
   "utmCampaign",
+  "utmTerm",
+  "utmContent",
+  "hostname",
   "entryPage",
   "exitPage",
   "country",
@@ -124,6 +134,7 @@ export const BREAKDOWNS = [
   "city",
   "deviceType",
   "browser",
+  "browserVersion",
   "os",
   "release",
 ] as const;
@@ -213,13 +224,22 @@ export const FILTERS = {
   page: { label: "Page", kind: "text", list: "pages" },
   entryPage: { label: "Entry page", kind: "text", list: "entryPage" },
   exitPage: { label: "Exit page", kind: "text", list: "exitPage" },
+  hostname: { label: "Hostname", kind: "text", list: "hostname" },
   source: { label: "Source", kind: "text", list: "source" },
+  sourceKind: { label: "Source from", kind: "fixed", list: "sourceKind" },
+  referrer: { label: "Referrer", kind: "text", list: "referrer" },
+  channel: { label: "Channel", kind: "fixed", list: "channel" },
+  utmSource: { label: "UTM source", kind: "text", list: "utmSource" },
+  utmMedium: { label: "UTM medium", kind: "text", list: "utmMedium" },
   utmCampaign: { label: "Campaign", kind: "text", list: "utmCampaign" },
+  utmTerm: { label: "Term", kind: "text", list: "utmTerm" },
+  utmContent: { label: "Content", kind: "text", list: "utmContent" },
   country: { label: "Country", kind: "fixed", list: "country" },
   region: { label: "Region", kind: "text", list: "region" },
   city: { label: "City", kind: "text", list: "city" },
   deviceType: { label: "Device", kind: "fixed", list: "deviceType" },
   browser: { label: "Browser", kind: "fixed", list: "browser" },
+  browserVersion: { label: "Browser version", kind: "text", list: "browserVersion" },
   os: { label: "Operating system", kind: "fixed", list: "os" },
   release: { label: "Release", kind: "text", list: "release" },
   outbound: { label: "Outbound link", kind: "text", list: "outboundLinks" },

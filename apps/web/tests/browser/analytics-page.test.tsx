@@ -103,8 +103,8 @@ describe("the analytics page", () => {
       ["/pricing", "210", "220"],
       ["/", "190", "200"],
     ]);
-    await page.getByRole("button", { name: "Campaigns" }).click();
-    expect(tableRows("Campaigns, most visitors first")[0]).toEqual(["No campaign", "700", "760"]);
+    await page.getByRole("button", { name: "Campaign", exact: true }).click();
+    expect(tableRows("Campaign, most visitors first")[0]).toEqual(["No campaign", "700", "760"]);
   });
 
   test("links each page of the Pages lists to its heatmap, keeping the period and environment", async () => {

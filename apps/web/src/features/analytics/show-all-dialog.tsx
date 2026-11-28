@@ -23,6 +23,7 @@ export function ShowAllDialog({
   report,
   nameHeading,
   secondaryHeading,
+  rateHeading,
   search,
 }: {
   open: boolean;
@@ -31,6 +32,8 @@ export function ShowAllDialog({
   report: ListReport;
   nameHeading: string;
   secondaryHeading: string;
+  /** A third figure without a goal: the exit rate. */
+  rateHeading?: string | undefined;
   search: PageSearch;
 }) {
   const { source } = useAnalyticsScope();
@@ -101,6 +104,7 @@ export function ShowAllDialog({
               nameHeading={nameHeading}
               primaryHeading="Visitors"
               secondaryHeading={secondaryHeading}
+              rateHeading={rateHeading}
               goal={withGoal}
               empty={query === "" ? "Nothing in this period." : `Nothing matches “${query}”.`}
             />

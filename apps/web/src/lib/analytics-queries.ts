@@ -71,7 +71,8 @@ const isBreakdownRow = (value: unknown): value is BreakdownRow =>
   isNumber(value.visitors) &&
   isNumber(value.visits) &&
   isNumberOrNull(value.bounceRate) &&
-  hasConverted(value);
+  hasConverted(value) &&
+  (value.exitRate === undefined || isNumberOrNull(value.exitRate));
 
 const isCustomEventRow = (value: unknown): value is CustomEventRow =>
   isRecord(value) &&
@@ -250,6 +251,8 @@ export interface ListRow {
   visitors: number;
   second: number;
   converted?: number | undefined;
+  /** Exit pages only: exits divided by pageviews. */
+  exitRate?: number | null | undefined;
 }
 
 export interface ListPage {
@@ -311,6 +314,7 @@ function listPage(report: ListReport, value: unknown): ListPage | null {
           visitors: row.visitors,
           second: row.visits,
           converted: row.converted,
+          exitRate: row.exitRate,
         })),
       }
     : null;

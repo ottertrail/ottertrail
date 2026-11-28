@@ -4,7 +4,8 @@ import { QueryParams, queryRows, type Reader } from "../clickhouse/query.ts";
 import type { Database } from "../db/schema.ts";
 import { type Step, stepSql } from "../product/steps.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
-import { COLUMN_DIMENSIONS, visitSourceSql } from "../visits/visit-source.ts";
+import { channelSql } from "../visits/channel.ts";
+import { COLUMN_DIMENSIONS, visitSourceKindSql, visitSourceSql } from "../visits/visit-source.ts";
 import {
   ENGAGEMENT,
   analyticsEvent,
@@ -583,16 +584,23 @@ export async function topPages(
 
 export const VISIT_DIMENSION_NAMES = [
   "source",
+  "sourceKind",
+  "referrer",
+  "channel",
+  "hostname",
   "entryPage",
   "exitPage",
   "utmSource",
   "utmMedium",
   "utmCampaign",
+  "utmTerm",
+  "utmContent",
   "country",
   "region",
   "city",
   "deviceType",
   "browser",
+  "browserVersion",
   "os",
   "release",
 ] as const;
@@ -607,22 +615,36 @@ export function isVisitDimension(name: string): name is VisitDimension {
  * Use fixed SQL expressions so input cannot become SQL. Share them
  * between breakdowns and filters to keep counts consistent.
  */
-const VISIT_DIMENSIONS: Record<Exclude<VisitDimension, "source">, string> = {
+const VISIT_DIMENSIONS: Record<
+  Exclude<VisitDimension, "source" | "sourceKind" | "channel">,
+  string
+> = {
+  // The stored referrer: its site and path, which browsers often cut to the site.
+  referrer: "referrer",
+  hostname: "hostname",
   entryPage: "entry_path",
   exitPage: "exit_path",
   utmSource: "utm_source",
   utmMedium: "utm_medium",
   utmCampaign: "utm_campaign",
+  utmTerm: "utm_term",
+  utmContent: "utm_content",
+  // With the browser's name, so a version row means one browser: "Chrome 142".
+  browserVersion:
+    "if(browser IS NULL OR browser_version IS NULL, NULL, concat(browser, ' ', browser_version))",
   ...COLUMN_DIMENSIONS,
 };
 
 /**
  * A visit's source: utm_source, then the referrer host without www., then
- * direct, with project hostnames as direct (visits/visit-source.ts).
+ * direct, with project hostnames as direct (visits/visit-source.ts). Its
+ * channel groups the same columns into kinds of source (visits/channel.ts).
  */
 function dimensionSql(dimension: VisitDimension, range: ReportRange, params: QueryParams): string {
-  if (dimension !== "source") return VISIT_DIMENSIONS[dimension];
-  return visitSourceSql(range.ownHostnames, params);
+  if (dimension === "source") return visitSourceSql(range.ownHostnames, params);
+  if (dimension === "sourceKind") return visitSourceKindSql(range.ownHostnames, params);
+  if (dimension === "channel") return channelSql(range.ownHostnames, params);
+  return VISIT_DIMENSIONS[dimension];
 }
 
 /** Filters by an event of the visit (EVENT_VALUES): a page viewed, a link clicked, a not found page. */
@@ -656,16 +678,23 @@ export const FILTER_KINDS = {
   download: "text",
   notFound: "text",
   source: "text",
+  sourceKind: "fixed",
+  referrer: "text",
+  channel: "fixed",
+  hostname: "text",
   entryPage: "text",
   exitPage: "text",
   utmSource: "text",
   utmMedium: "text",
   utmCampaign: "text",
+  utmTerm: "text",
+  utmContent: "text",
   country: "fixed",
   region: "text",
   city: "text",
   deviceType: "fixed",
   browser: "fixed",
+  browserVersion: "text",
   os: "fixed",
   release: "text",
 } as const satisfies Record<FilterName, FilterKind>;
@@ -778,14 +807,29 @@ export interface BreakdownRow {
   bounceRate: number | null;
   /** With a goal: the row's visitors with a visit of this value that reached the goal. */
   converted?: number;
+  /**
+   * Exit pages only: the row's visits (its exits) divided by the page's
+   * pageviews in the same visits, as Top pages counts them; null for the
+   * visits without a pageview.
+   */
+  exitRate?: number | null;
 }
 
 /**
  * An unknown value ("Unknown") comes last in its list, as on the event page
  * and in a funnel's breakdown. A visit without a campaign is "No campaign",
- * a value of its own, so it sorts by its count.
+ * a value of its own, so it sorts by its count; so is no value of every other UTM tag.
  */
-const unknownLast = (dimension: VisitDimension) => dimension !== "utmCampaign";
+const UTM_DIMENSIONS: readonly VisitDimension[] = [
+  // No referrer is a value too: how a visit came, not something unknown.
+  "referrer",
+  "utmSource",
+  "utmMedium",
+  "utmCampaign",
+  "utmTerm",
+  "utmContent",
+];
+const unknownLast = (dimension: VisitDimension) => !UTM_DIMENSIONS.includes(dimension);
 
 /**
  * Visits grouped by one dimension (see dimensionSql), most visitors first;
@@ -815,16 +859,30 @@ export async function breakdown(
       : `, uniqExactIf(visitor_id, (visitor_id, started_at) IN (
            SELECT visitor_id, started_at FROM (${reachedVisits(range, goal, visits, params)})
          )) AS converted`;
-  const rows = await queryRows<Record<string, unknown>>(
-    reader,
-    `SELECT ${value} AS value, uniqExact(visitor_id) AS visitors, count() AS visits,
+  const order = `${unknownLast(dimension) ? "value IS NULL," : ""}
+    ${goal === undefined ? "" : "converted DESC,"} visitors DESC, visits DESC, value ASC NULLS LAST`;
+  const listed = `SELECT ${value} AS value, uniqExact(visitor_id) AS visitors, count() AS visits,
             countIf(bounce) AS bounces ${converted}
      FROM (${visits})
      WHERE ${matches}
      GROUP BY value
-     ORDER BY ${unknownLast(dimension) ? "value IS NULL," : ""}
-              ${goal === undefined ? "" : "converted DESC,"} visitors DESC, visits DESC, value ASC NULLS LAST
-     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`,
+     ORDER BY ${order}
+     LIMIT ${clampLimit(limit)} OFFSET ${clampOffset(offset)}`;
+  const exits = dimension === "exitPage";
+  const rows = await queryRows<Record<string, unknown>>(
+    reader,
+    exits
+      ? // The listed pages' pageviews, as Top pages counts them, for the exit rate.
+        `SELECT listed.*, views.pageviews AS pageviews
+         FROM (${listed}) AS listed
+         LEFT JOIN (
+           SELECT path, count() AS pageviews
+           FROM (${activity(range, visits, params)})
+           WHERE name = '${PAGEVIEW}'
+           GROUP BY path
+         ) AS views ON listed.value = views.path
+         ORDER BY ${order}`
+      : listed,
     params,
   );
   return rows.map((row) => {
@@ -835,6 +893,9 @@ export async function breakdown(
       visits: visitCount,
       bounceRate: ratio(count(row.bounces), visitCount),
       ...(goal === undefined ? {} : { converted: count(row.converted) }),
+      ...(exits
+        ? { exitRate: row.value === null ? null : ratio(visitCount, count(row.pageviews)) }
+        : {}),
     };
   });
 }

@@ -27,15 +27,35 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** Campaign tags a visit can lack: having none is a value of its own, not unknown. */
+const NO_VALUE: Partial<Record<FilterName, string>> = {
+  referrer: "No referrer",
+  utmSource: "No source",
+  utmMedium: "No medium",
+  utmCampaign: "No campaign",
+  utmTerm: "No term",
+  utmContent: "No content",
+};
+
+/** How a visit got its source, as the API names it (visits/visit-source.ts). */
+const SOURCE_KINDS: Record<string, string> = {
+  tag: "Tagged (utm_source or ref)",
+  referrer: "Referrer",
+  none: "No tag, no referrer",
+};
+
 export function valueText(name: FilterName, value: string): string {
   if (value === "") {
-    return name === "utmCampaign" ? "No campaign" : "Unknown";
+    return NO_VALUE[name] ?? "Unknown";
   }
   if (name === "country") {
     return countryName(value);
   }
+  if (name === "sourceKind") {
+    return SOURCE_KINDS[value] ?? value;
+  }
   // A link without its scheme: github.com/acme/widgets.
-  if (name === "outbound" || name === "download") {
+  if (name === "outbound" || name === "download" || name === "referrer") {
     return value.replace(/^https?:\/\//u, "");
   }
   return name === "deviceType" ? capitalize(value) : value;
@@ -114,6 +134,7 @@ export function rankedRows(
       primary: row.visitors,
       secondary: row.second,
       converted: row.converted,
+      ...(row.exitRate === undefined ? {} : { exitRate: row.exitRate }),
     };
   });
 }
@@ -131,6 +152,7 @@ export const fromBreakdown = (rows: readonly BreakdownRow[]): ListRow[] =>
     visitors: row.visitors,
     second: row.visits,
     converted: row.converted,
+    exitRate: row.exitRate,
   }));
 export const fromEventValues = (rows: readonly EventValueRow[]): ListRow[] =>
   rows.map((row) => ({

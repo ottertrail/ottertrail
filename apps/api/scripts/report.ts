@@ -119,8 +119,10 @@ try {
     );
 
     for (const [title, dimension] of [
+      ["Channels", "channel"],
       ["Sources", "source"],
       ["Campaigns", "utmCampaign"],
+      ["Hostnames", "hostname"],
       ["Entry pages", "entryPage"],
       ["Exit pages", "exitPage"],
       ["Countries", "country"],

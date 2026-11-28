@@ -41,6 +41,7 @@ import {
   MINIFIED,
   RELEASE_DAYS_AGO,
   RELEASES,
+  BLOG_HOST,
   SITE_HOST,
   STAGING_HOST,
 } from "./seed-site.ts";
@@ -247,7 +248,7 @@ export async function seedDemo(options: SeedOptions): Promise<SeedResult> {
   if (replaced > 0) log(`Deleted the previous "${DEMO_PROJECT_NAME}" project.`);
   const project = await createProject(db, {
     name: DEMO_PROJECT_NAME,
-    allowedHostnames: [SITE_HOST, `www.${SITE_HOST}`, STAGING_HOST],
+    allowedHostnames: [SITE_HOST, `www.${SITE_HOST}`, BLOG_HOST, STAGING_HOST],
   });
   const projectId = project.id;
   await updateProject(db, projectId, {

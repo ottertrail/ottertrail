@@ -764,4 +764,17 @@ export const CLICKHOUSE_MIGRATIONS: ClickHouseMigration[] = [
          MATERIALIZE INDEX error_requests_trace_id_index SETTINGS mutations_sync = 1`,
     ],
   },
+  {
+    name: "0016_events_hostname",
+    /**
+     * The page's hostname, lower case, for the Hostnames list and filter
+     * (docs/web-analytics.md, "Breakdowns"). NULL for a server's event and
+     * for every row stored before this migration: the reports show those
+     * as Unknown, since the hostname was checked on arrival but not kept.
+     */
+    statements: (database) => [
+      `ALTER TABLE ${database}.events
+         ADD COLUMN IF NOT EXISTS hostname LowCardinality(Nullable(String)) AFTER path`,
+    ],
+  },
 ];

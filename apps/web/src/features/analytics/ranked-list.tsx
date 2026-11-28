@@ -3,7 +3,7 @@ import type * as React from "react";
 import { RowName } from "@/components/breakdown-table";
 import { MISSING } from "@/lib/missing";
 
-import { formatWhole } from "./format";
+import { formatPercent, formatWhole } from "./format";
 import { rowRate } from "./list-rows";
 
 export interface RankedRow {
@@ -15,6 +15,8 @@ export interface RankedRow {
   secondary?: number;
   /** With a goal: the row's converted visitors. */
   converted?: number | undefined;
+  /** Exit pages only: exits divided by pageviews. */
+  exitRate?: number | null | undefined;
   /** A small link or mark after the name, on the page only (a page's heatmap). */
   action?: React.ReactNode;
 }
@@ -30,6 +32,7 @@ export function RankedList({
   nameHeading,
   primaryHeading,
   secondaryHeading,
+  rateHeading,
   goal = false,
   empty,
 }: {
@@ -38,6 +41,8 @@ export function RankedList({
   nameHeading: string;
   primaryHeading: string;
   secondaryHeading?: string;
+  /** A third figure, each row's exit rate (exit pages), when there is no goal. */
+  rateHeading?: string | undefined;
   goal?: boolean;
   empty: string;
 }) {
@@ -46,9 +51,14 @@ export function RankedList({
   }
   const barOf = (row: RankedRow) => (goal ? (row.converted ?? 0) : row.primary);
   const max = Math.max(0, ...rows.map(barOf));
+  const rate = !goal && rateHeading !== undefined;
   const headings = goal
     ? [primaryHeading, "Converted", "Rate"]
-    : [primaryHeading, ...(secondaryHeading === undefined ? [] : [secondaryHeading])];
+    : [
+        primaryHeading,
+        ...(secondaryHeading === undefined ? [] : [secondaryHeading]),
+        ...(rate ? [rateHeading] : []),
+      ];
   const figures = (row: RankedRow) =>
     goal
       ? [formatWhole(row.primary), formatWhole(row.converted ?? 0), rowRate(row)]
@@ -57,6 +67,7 @@ export function RankedList({
           ...(secondaryHeading === undefined
             ? []
             : [row.secondary === undefined ? MISSING : formatWhole(row.secondary)]),
+          ...(rate ? [formatPercent(row.exitRate ?? null)] : []),
         ];
   // The bar's figure is in ink; the others are quieter.
   const barFigure = goal ? 1 : 0;
@@ -73,7 +84,7 @@ export function RankedList({
               key={heading}
               scope="col"
               // Three figures leave the name room on a phone.
-              className={`${goal ? "w-16" : "w-20"} pb-2 text-right font-normal`}
+              className={`${goal || rate ? "w-16" : "w-20"} pb-2 text-right font-normal`}
             >
               {heading}
             </th>

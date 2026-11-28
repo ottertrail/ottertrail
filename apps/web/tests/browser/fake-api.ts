@@ -2633,7 +2633,8 @@ export function fakeList(query: URLSearchParams) {
     if (report === "customEvents") return { name, events: visitors * 2, visitors };
     if (["outboundLinks", "fileDownloads", "notFoundPages"].includes(report))
       return { value: name, visitors, events: visitors + 3, ...converted };
-    return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5, ...converted };
+    const exits = report === "exitPage" ? { exitRate: 0.25 } : {};
+    return { value: name, visitors, visits: visitors + 1, bounceRate: 0.5, ...converted, ...exits };
   });
   return { rows, hasMore: offset + limit < names.length };
 }
@@ -2994,14 +2995,36 @@ export function analyticsFixture(overrides: Partial<Analytics> = {}): Analytics 
     ],
     breakdowns: {
       source: [row("Direct / none", 300, 320), row("google.com", 145, 150)],
+      sourceKind: [row("none", 300, 320), row("referrer", 395, 432), row("tag", 70, 72)],
+      referrer: [
+        row(null, 330, 352),
+        row("https://www.google.com/", 145, 150),
+        row("https://news.ycombinator.com/item", 40, 42),
+      ],
+      channel: [
+        row("Direct", 300, 320),
+        row("Organic search", 180, 190),
+        row("Email", 70, 72),
+        row("AI assistants", 25, 26),
+      ],
+      utmSource: [row(null, 620, 680), row("newsletter", 70, 72), row("google", 45, 44)],
+      utmMedium: [row(null, 620, 680), row("email", 70, 72), row("cpc", 45, 44)],
       utmCampaign: [row(null, 700, 760), row("launch", 65, 64)],
+      utmTerm: [row(null, 740, 800), row("web analytics", 25, 24)],
+      utmContent: [row(null, 720, 780), row("header-link", 45, 44)],
+      hostname: [
+        row("shop.example", 600, 650),
+        row("docs.shop.example", 120, 128),
+        row(null, 45, 46),
+      ],
       entryPage: [row("/pricing", 210, 220), row("/", 190, 200)],
-      exitPage: [row("/signup", 150, 160)],
+      exitPage: [{ ...row("/signup", 150, 160), exitRate: 0.42 }],
       country: [row("DE", 155, 160), row("SG", 90, 95), row(null, 125, 130)],
       region: [row("Bavaria", 80, 85)],
       city: [row("Munich", 60, 62)],
       deviceType: [row("desktop", 269, 290), row("mobile", 242, 250)],
       browser: [row("Firefox", 130, 140)],
+      browserVersion: [row("Firefox 133", 100, 108), row("Firefox 132", 30, 32)],
       os: [row("macOS", 200, 210)],
       release: [row("1.4.2", 500, 540), row(null, 265, 284)],
     },
@@ -3172,7 +3195,15 @@ export function emptyAnalytics(): Analytics {
     pages: [],
     breakdowns: {
       source: [],
+      sourceKind: [],
+      referrer: [],
+      channel: [],
+      utmSource: [],
+      utmMedium: [],
       utmCampaign: [],
+      utmTerm: [],
+      utmContent: [],
+      hostname: [],
       entryPage: [],
       exitPage: [],
       country: [],
@@ -3180,6 +3211,7 @@ export function emptyAnalytics(): Analytics {
       city: [],
       deviceType: [],
       browser: [],
+      browserVersion: [],
       os: [],
       release: [],
     },

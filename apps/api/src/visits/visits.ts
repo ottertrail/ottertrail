@@ -67,6 +67,8 @@ export interface Visit {
   entryPath: string | null;
   exitPath: string | null;
   // From the visit's first event: where it came from and who it was.
+  /** The site's hostname the visit began on; null for events stored before it was kept. */
+  hostname: string | null;
   referrer: string | null;
   utmSource: string | null;
   utmMedium: string | null;
@@ -74,6 +76,7 @@ export interface Visit {
   utmTerm: string | null;
   utmContent: string | null;
   browser: string | null;
+  browserVersion: string | null;
   os: string | null;
   deviceType: string | null;
   country: string | null;
@@ -121,6 +124,7 @@ export interface VisitRange {
 
 /** Columns a visit takes from its first event that is not an engagement event. */
 export const FIRST_EVENT_COLUMNS = [
+  "hostname",
   "referrer",
   "utm_source",
   "utm_medium",
@@ -128,6 +132,7 @@ export const FIRST_EVENT_COLUMNS = [
   "utm_term",
   "utm_content",
   "browser",
+  "browser_version",
   "os",
   "device_type",
   "country",
@@ -273,6 +278,7 @@ interface VisitRow {
   interactions: string;
   entry_path: string | null;
   exit_path: string | null;
+  hostname: string | null;
   referrer: string | null;
   utm_source: string | null;
   utm_medium: string | null;
@@ -280,6 +286,7 @@ interface VisitRow {
   utm_term: string | null;
   utm_content: string | null;
   browser: string | null;
+  browser_version: string | null;
   os: string | null;
   device_type: string | null;
   country: string | null;
@@ -313,6 +320,7 @@ export async function findVisits(reader: Reader, range: VisitRange): Promise<Vis
       bounce: pageviews <= 1 && interactions === 0,
       entryPath: row.entry_path,
       exitPath: row.exit_path,
+      hostname: row.hostname,
       referrer: row.referrer,
       utmSource: row.utm_source,
       utmMedium: row.utm_medium,
@@ -320,6 +328,7 @@ export async function findVisits(reader: Reader, range: VisitRange): Promise<Vis
       utmTerm: row.utm_term,
       utmContent: row.utm_content,
       browser: row.browser,
+      browserVersion: row.browser_version,
       os: row.os,
       deviceType: row.device_type,
       country: row.country,

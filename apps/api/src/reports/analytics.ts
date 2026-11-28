@@ -41,7 +41,15 @@ import {
 
 export const ANALYTICS_BREAKDOWNS = [
   "source",
+  "sourceKind",
+  "referrer",
+  "channel",
+  "utmSource",
+  "utmMedium",
   "utmCampaign",
+  "utmTerm",
+  "utmContent",
+  "hostname",
   "entryPage",
   "exitPage",
   "country",
@@ -49,6 +57,7 @@ export const ANALYTICS_BREAKDOWNS = [
   "city",
   "deviceType",
   "browser",
+  "browserVersion",
   "os",
   "release",
 ] as const satisfies readonly VisitDimension[];
@@ -309,7 +318,15 @@ export async function projectAnalytics(
     // One session runs one query at a time, so the reports run one after another.
     const breakdowns: Record<AnalyticsBreakdown, BreakdownRow[]> = {
       source: await by("source"),
+      sourceKind: await by("sourceKind"),
+      referrer: await by("referrer"),
+      channel: await by("channel"),
+      utmSource: await by("utmSource"),
+      utmMedium: await by("utmMedium"),
       utmCampaign: await by("utmCampaign"),
+      utmTerm: await by("utmTerm"),
+      utmContent: await by("utmContent"),
+      hostname: await by("hostname"),
       entryPage: await by("entryPage"),
       exitPage: await by("exitPage"),
       country: await by("country"),
@@ -317,6 +334,7 @@ export async function projectAnalytics(
       city: await by("city"),
       deviceType: await by("deviceType"),
       browser: await by("browser"),
+      browserVersion: await by("browserVersion"),
       os: await by("os"),
       release: await by("release"),
     };
