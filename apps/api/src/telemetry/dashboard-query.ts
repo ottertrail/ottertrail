@@ -344,6 +344,10 @@ function firstMoment(day: string, minutes: number, span: number, timeZone: strin
   return null;
 }
 
+/** The first moment of a day in a timezone: midnight, or the next valid moment if it is skipped. */
+export const dayStart = (day: string, timeZone: string): number | null =>
+  firstMoment(day, 0, 1440, timeZone);
+
 export const addDays = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 

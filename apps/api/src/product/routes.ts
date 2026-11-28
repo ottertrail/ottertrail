@@ -16,6 +16,7 @@ import { RANGE_PROPERTIES, type RangeQuery, requestDays } from "../reports/route
 import { DashboardQueryLimiter, dashboardReader } from "../telemetry/dashboard-limit.ts";
 import { dayIn } from "../visitors/visitor-ids.ts";
 import { isVisitSourceName } from "../visits/visit-source.ts";
+import { activeUsers } from "./active-users.ts";
 import {
   COUNTED,
   EVENT_DIMENSIONS,
@@ -53,7 +54,7 @@ import {
   previousReadEnd,
   trendUnit,
 } from "./funnel.ts";
-import { retention } from "./retention.ts";
+import { identifiesUsers, retention } from "./retention.ts";
 import { KEY, VALUE } from "./steps.ts";
 
 const UUID_PATTERN =
@@ -652,6 +653,56 @@ export const productRoutes: FastifyPluginCallback<{
         productEnvironments(reader, range, COUNTED.retention),
       ]);
       return { ...answer(range), environments, ...report };
+    },
+  );
+
+  /**
+   * DAU, WAU, MAU, stickiness, and lifecycle of signed-in users, per day or
+   * week (active-users.ts), and the same figures for the period before:
+   * two queries within the dashboard's query limit.
+   */
+  app.get<{ Params: { id: string }; Querystring: RangeQuery }>(
+    "/projects/:id/active-users",
+    {
+      preHandler: [signedIn, canView],
+      schema: {
+        params: {
+          type: "object",
+          required: ["id"],
+          properties: { id: { type: "string", pattern: UUID_PATTERN } },
+        },
+        querystring: { type: "object", additionalProperties: false, properties: RANGE_PROPERTIES },
+      },
+    },
+    async (request, reply) => {
+      const asked = await rangeOf(request);
+      if ("problem" in asked) return reply.code(400).send(asked.problem);
+      const { range, moment } = asked;
+      const previous = await periodBefore(range, moment);
+      const before: ProductRange = {
+        ...range,
+        firstDay: previous.firstDay,
+        lastDay: previous.lastDay,
+        from: previous.from,
+        to: previous.to,
+      };
+      const limited = dashboardReader(clickhouse, limiter, reply);
+      const unit = trendUnit(range);
+      const [report, earlier, environments] = await Promise.all([
+        activeUsers(limited, range, unit),
+        activeUsers(limited, before, "day"),
+        productEnvironments(reader, range, COUNTED.retention),
+      ]);
+      return {
+        ...answer(range),
+        environments,
+        ...report,
+        previous: { ...daysOf(previous), ...earlier.summary },
+        identifiesUsers:
+          report.summary.users > 0 ||
+          earlier.summary.users > 0 ||
+          (await identifiesUsers(reader, range.projectId)),
+      };
     },
   );
 

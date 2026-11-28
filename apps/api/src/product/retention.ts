@@ -68,7 +68,8 @@ export function averageOf(cohorts: readonly Cohort[], currentWeek: string): Week
   });
 }
 
-async function identifiesUsers(reader: Reader, projectId: string): Promise<boolean> {
+/** Whether any event of the project carries a user ID, in any environment. */
+export async function identifiesUsers(reader: Reader, projectId: string): Promise<boolean> {
   const params = new QueryParams();
   const rows = await queryRows<{ found: number }>(
     reader,
